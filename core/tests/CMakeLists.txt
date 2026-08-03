@@ -3,6 +3,7 @@ add_executable(poly_tests
   test_rng.cpp
   test_geometry.cpp
   test_content.cpp
+  test_state.cpp
 )
 
 target_include_directories(poly_tests PRIVATE .)

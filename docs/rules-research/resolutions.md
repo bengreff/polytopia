@@ -335,3 +335,13 @@ Measure by playing, in priority order — cheapest and highest-impact first:
 5. Temple growth interval and score maximum
 6. Intra-turn phase ordering beyond income (UNRESOLVED #26)
 7. Whether a captured city keeps partial population and territory (#13, #14)
+
+---
+
+## Verified in the live client
+
+**V1 — `cost(tier, numCities) = tier * numCities + 4`.** `OWNER`, verified in game (2026-08-03)
+The PolyEnv audit flagged this as "the single highest-leverage unverified number" because it drives
+the entire economy curve, and it was single-sourced from one code comment there. Now confirmed
+against the live client, which also confirms the 111/111 table match behind the Literacy variant
+`ceil(cost * 2/3)` (R11). The economy formula is settled.
