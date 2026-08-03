@@ -162,14 +162,47 @@ Swordsmen come only from **land** ruins and Pirates only from **sea** ruins. Uni
 are believed to always be **veterans**. The underlying probability distribution remains UNRESOLVED
 #17 — Ben has no read on it, so it stays flagged and uniform-by-default.
 
+## Resolved by the owner — round 4 (2026-08-03)
+
+**R29 — A naval unit is one entity with the land unit; damage carries both ways.** `OWNER`
+Closes UNRESOLVED #3. HP persists through embark → sail → upgrade → disembark in both directions.
+Confirms PolyEnv's `maxHealth: 0` encoding, where the hull carries no HP of its own.
+
+**R30 — Backwards research unlocks the direct parent, applied transitively.** `OWNER`
+Closes UNRESOLVED #6. Strict parent↔child is the rule, but Ben's clarification matters: the tree is
+only three tiers deep, so owning a T3 tech transitively makes its T2 parent and T1 grandparent
+researchable — the whole branch *upward*. The two readings the research could not distinguish turn
+out to coincide in the upward direction, which is why no source ever needed to disambiguate them.
+Implement parent↔child; the branch behaviour falls out.
+
+**R31 — Roads and bridges can be built on your own and neutral territory, never enemy territory.**
+`OWNER` Closes U-B.
+
+**R32 — In-game bot behaviour.** `OWNER` Closes UNRESOLVED #23 to the extent anything can, since no
+datamine exists. This is the specification for the `bots/scripted.cpp` sparring opponent:
+
+- **Purely reactive; no forward planning.**
+- **Expands hard and early, fights badly.** Strong at grabbing villages and teching, poor at combat
+  value assessment.
+- **But not naive.** It has real target selection: it moves units to attack other units in order to
+  take a city, and it will **pursue a city across multiple turns** — so it holds a persistent goal
+  even without lookahead. It also uses boats competently and can execute **Knight chaining**.
+- **Its characteristic failure is over-commitment:** it will throw every unit it owns at a Giant that
+  captured one of its cities.
+
+That profile is more specific than "greedy utility scorer". A faithful clone needs a per-unit
+persistent objective (a target city) layered over reactive combat scoring, plus a threat-response
+term with no cost ceiling. Cloning it as pure one-step greedy would produce a visibly *different*
+bot — it would never walk a unit three turns toward a city.
+
 ## New UNRESOLVED raised by this round
 
 Ben flagged these as things he does not know. They go on the verification list rather than into code:
 
 - **U-A: Can a unit move through a friendly unit?** He is confident units cannot pass through *enemy*
   units. Friendly pass-through is unknown and affects pathing on crowded fronts.
-- **U-B: Can roads or bridges be built inside enemy territory?** Outside-own-territory is confirmed;
-  enemy territory specifically is not.
+- ~~U-B~~ RESOLVED by R31.
+
 - **U-C: Do another player's buildings contribute to your adjacency bonuses?** Affects Market,
   Sawmill, Windmill and Forge scoring along contested borders.
 - **U-D: Which direction does a giant-pop displace the occupying unit?** (R27) Described as random.
