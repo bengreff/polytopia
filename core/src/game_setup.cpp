@@ -123,6 +123,14 @@ void describe_action(const GameState& s, const Rules& rules, int index, json::Wr
   w.begin_object();
   w.field("index", index);
 
+  // Checked FIRST: the global actor must never fall through to a typed-slot test.
+  if (s.phase == Phase::Select && index == kGlobalActorSlot) {
+    w.field("kind", "global");
+    w.field("label", "Player actions");
+    w.end_object();
+    return;
+  }
+
   if (s.phase == Phase::Verb) {
     w.field("kind", "verb");
     w.field("label", verb_name(static_cast<Verb>(index)));

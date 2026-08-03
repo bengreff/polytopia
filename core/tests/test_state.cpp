@@ -207,3 +207,19 @@ TEST("state: reset() zeroes padding so byte-hashing is valid") {
   a->cities[0].population = -9;
   CHECK(state_hash(*a) != state_hash(*b));
 }
+
+TEST("action: the global actor does not alias any typed target slot") {
+  // It was originally kActionSlots-1, which collided with CityReward::SuperUnit. The UI
+  // rendered the end-turn/research actor as "Super Unit (Giant)". Nothing crashed and no
+  // test failed -- the label was simply wrong, and only looking at the screen caught it.
+  CHECK(!slot_is_tile(kGlobalActorSlot));
+  CHECK(!slot_is_train(kGlobalActorSlot));
+  CHECK(!slot_is_research(kGlobalActorSlot));
+  CHECK(!slot_is_build(kGlobalActorSlot));
+  CHECK(!slot_is_reward(kGlobalActorSlot));
+  CHECK(kGlobalActorSlot < kActionSlots);
+  // And every real reward slot still decodes to itself.
+  for (int i = 0; i < static_cast<int>(CityReward::Count); ++i) {
+    CHECK(reward_to_slot(static_cast<CityReward>(i)) != kGlobalActorSlot);
+  }
+}

@@ -77,15 +77,23 @@ inline constexpr int kBuildSlotCount = static_cast<int>(Improvement::Count);
 inline constexpr int kRewardSlotBase = kBuildSlotBase + kBuildSlotCount;
 inline constexpr int kRewardSlotCount = static_cast<int>(CityReward::Count);
 
-inline constexpr int kNonTileSlots =
-    kTrainSlotCount + kResearchSlotCount + kBuildSlotCount + kRewardSlotCount;
-
-// The full action head. Phases reinterpret the low slots, so this is a max, not a sum.
-inline constexpr int kActionSlots = kRewardSlotBase + kRewardSlotCount;
-
 // The global pseudo-actor: research and end-turn belong to the player, not to a unit or a
 // city, and giving them a real slot avoids a separate "player action" code path.
-inline constexpr int kGlobalActorSlot = kActionSlots - 1;
+//
+// It gets its OWN slot rather than reusing the top of the range. It was originally defined
+// as `kActionSlots - 1`, which silently aliased CityReward::SuperUnit -- so slot_is_reward()
+// answered true for it and the UI rendered "End turn / Research" as "Super Unit (Giant)".
+// Nothing crashed; the label was just wrong. Found by looking at the screen, not by a test.
+inline constexpr int kGlobalActorSlot = kRewardSlotBase + kRewardSlotCount;
+
+inline constexpr int kNonTileSlots = kTrainSlotCount + kResearchSlotCount + kBuildSlotCount +
+                                     kRewardSlotCount + 1;  // +1 for the global actor
+
+// The full action head. Phases reinterpret the low slots, so this is a max, not a sum.
+inline constexpr int kActionSlots = kGlobalActorSlot + 1;
+
+static_assert(kGlobalActorSlot >= kRewardSlotBase + kRewardSlotCount,
+              "The global actor must not alias a typed target slot.");
 
 static_assert(kVerbCount <= kActionSlots, "The VERB phase reuses the same index space.");
 
