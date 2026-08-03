@@ -215,3 +215,84 @@ TEST("options: a tile with a city offers no bare-tile layer") {
   CHECK(count >= 1);
   for (int i = 0; i < count; ++i) CHECK(layers[i] != Layer::Tile);
 }
+
+TEST("knowledge: ending your turn must not hand you the opponent's view") {
+  // The RPC viewer defaulted to current_player. The instant you end your turn that is the
+  // bot, so any state query without an explicit player returned the BOT's explored map --
+  // a live knowledge leak that no test covered because it lived in the default, not the
+  // filter. Found by driving the UI.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+
+  // Give the opponent knowledge the human does not have.
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) s.explored[1].set(t);
+
+  const json::Value human = view_of(s, rules, 0);
+  const json::Value bot = view_of(s, rules, 1);
+
+  // The two views must differ, and the human's must be the smaller one.
+  const int human_tiles = static_cast<int>(human["tiles"].arr().size());
+  const int bot_tiles = static_cast<int>(bot["tiles"].arr().size());
+  CHECK(human_tiles < bot_tiles);
+  CHECK_EQ(human_tiles, 25);
+
+  // And the human's view must never carry the opponent's economy regardless of whose turn
+  // it is.
+  s.current_player = 1;
+  const json::Value after_end_turn = view_of(s, rules, 0);
+  CHECK(after_end_turn["players"].arr()[1]["stars"].is_null());
+  CHECK_EQ(static_cast<int>(after_end_turn["tiles"].arr().size()), 25);
+}
+
+TEST("options: a spent unit has no reachable tiles at all") {
+  // reachable_tiles ignored whether the unit could move, so the UI painted movement rings
+  // that apply() then refused -- engine and client disagreeing about the same unit.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+
+  UnitId unit = kNoUnit;
+  for (UnitId u = 0; u < s.unit_count; ++u) {
+    if (s.units[u].owner == 0 && s.units[u].alive()) unit = u;
+  }
+  CHECK(unit != kNoUnit);
+
+  ActionMask before;
+  reachable_tiles(s, rules, unit, before);
+  CHECK(!before.empty());
+
+  s.units[unit].add(UnitFlag::TurnEnded);
+  ActionMask after;
+  reachable_tiles(s, rules, unit, after);
+  CHECK(after.empty());
+
+  s.units[unit].remove(UnitFlag::TurnEnded);
+  s.units[unit].add(UnitFlag::FreshlyTrained);
+  ActionMask fresh;
+  reachable_tiles(s, rules, unit, fresh);
+  CHECK(fresh.empty());
+}
+
+TEST("options: self-targeting verbs carry their own tile as the target") {
+  // Capture and Examine used to carry target 0, forcing the UI to special-case which verbs
+  // target themselves -- engine knowledge leaking into the client.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+
+  UnitId unit = kNoUnit;
+  for (UnitId u = 0; u < s.unit_count; ++u) {
+    if (s.units[u].owner == 0 && s.units[u].alive()) unit = u;
+  }
+  const TileIdx tile = s.units[unit].tile;
+  // Put a village under the unit so Capture is offered.
+  s.tiles[tile].resource = Resource::Village;
+
+  std::vector<Option> options;
+  enumerate_options(s, rules, tile, Layer::Unit, true, options);
+  bool saw_capture = false;
+  for (const Option& o : options) {
+    if (o.verb != Verb::Capture) continue;
+    saw_capture = true;
+    CHECK_EQ(static_cast<int>(o.action.index), tile_to_slot(tile));
+  }
+  CHECK(saw_capture);
+}

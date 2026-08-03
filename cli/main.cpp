@@ -375,7 +375,18 @@ std::string handle_request(const json::Value& request) {
   }
 
   // The viewer defaults to the current player, so fog is applied from their perspective.
-  PlayerId viewer = static_cast<PlayerId>(params["player"].integer(g_state.current_player));
+  // Default to the FIRST HUMAN SEAT, never to current_player. Defaulting to whoever is to
+  // move means that the instant you end your turn, a StateView call without an explicit
+  // player hands back the BOT's view of the map -- including everything it has explored and
+  // you have not. Found by driving the UI, not by any test.
+  PlayerId default_viewer = kNoPlayer;
+  for (PlayerId p = 0; p < g_state.player_count; ++p) {
+    if (g_state.players[p].is_human) {
+      default_viewer = p;
+      break;
+    }
+  }
+  PlayerId viewer = static_cast<PlayerId>(params["player"].integer(default_viewer));
   if (viewer < 0 || viewer >= g_state.player_count) viewer = kNoPlayer;
 
   json::Writer w;

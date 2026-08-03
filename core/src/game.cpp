@@ -248,6 +248,15 @@ void reachable_tiles(const GameState& s, const Rules& rules, UnitId unit_id, Act
   if (unit_id == kNoUnit) return;
   const Unit& u = s.units[unit_id];
   if (u.moves_left <= 0) return;
+  // A unit that has already acted, or was bought this turn, has no reachable tiles -- not
+  // "tiles it may not use". Returning them made the UI paint movement rings that apply()
+  // then refused, so the two disagreed about the same unit.
+  if (u.has(UnitFlag::TurnEnded) || u.has(UnitFlag::FreshlyTrained)) return;
+  // Attacking ends movement unless the unit has Escape (resolutions.md R26).
+  if (u.has(UnitFlag::HasAttacked) &&
+      !has_skill(static_cast<Skill>(rules.unit(u.type).skills), Skill::Escape)) {
+    return;
+  }
 
   // Movement is destination-only; the engine routes (resolutions.md R19). So this is a
   // bounded BFS over move points rather than a path enumeration -- which is exactly why the
@@ -1233,16 +1242,23 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
       const bool can = started_here && spent == BlockReason::None;
       const auto status = can ? Availability::Available : Availability::Blocked;
       if (keep(status, include_unavailable)) {
-        out.push_back(make_option(Verb::Capture, Layer::Unit, 0, status,
-                                  can ? BlockReason::None : BlockReason::NeedsTurnStart));
+        // Self-targeting: the actor's own tile IS the target. Leaving this 0 forced the UI
+        // to special-case which verbs target themselves, which is engine knowledge leaking
+        // into the client.
+        Option o = make_option(Verb::Capture, Layer::Unit, 0, status,
+                               can ? BlockReason::None : BlockReason::NeedsTurnStart);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
       }
     }
     if (s.tiles[tile].resource == Resource::Ruin) {
       const bool can = started_here && spent == BlockReason::None;
       const auto status = can ? Availability::Available : Availability::Blocked;
       if (keep(status, include_unavailable)) {
-        out.push_back(make_option(Verb::Examine, Layer::Unit, 0, status,
-                                  can ? BlockReason::None : BlockReason::NeedsTurnStart));
+        Option o = make_option(Verb::Examine, Layer::Unit, 0, status,
+                               can ? BlockReason::None : BlockReason::NeedsTurnStart);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
       }
     }
     return;
@@ -1349,6 +1365,28 @@ CombatPreview preview_combat(const GameState& s, const Rules& rules, TileIdx fro
   if (attacker == kNoUnit || defender == kNoUnit) return preview;
   if (!s.units[attacker].alive() || !s.units[defender].alive()) return preview;
   if (s.units[attacker].owner == s.units[defender].owner) return preview;
+
+  // `valid` means THIS ATTACK IS LEGAL RIGHT NOW, not merely "two hostile units".
+  //
+  // The UI paints its red attack rings from this answer, exactly as it paints cyan move
+  // rings from reachable_tiles(). If `valid` only meant "these are enemies" the UI would
+  // have to re-derive weapon range and the spent/has-attacked rules client-side -- a second
+  // implementation of the rules, which is the one thing this project cannot have
+  // (README.md §4). So the same predicate enumerate_options() uses for Verb::Attack is
+  // applied here, and the two cannot drift because both read these flags.
+  const Unit& a = s.units[attacker];
+  if (a.owner != s.current_player) return preview;
+  if (a.has(UnitFlag::TurnEnded) || a.has(UnitFlag::FreshlyTrained)) return preview;
+  if (a.has(UnitFlag::HasAttacked)) return preview;
+
+  const UnitStats& astats = rules.unit(a.type);
+  if (astats.attack <= 0.0f) return preview;
+  const bool dash = has_skill(static_cast<Skill>(astats.skills), Skill::Dash);
+  if (a.has(UnitFlag::HasMoved) && !dash) return preview;
+
+  const Coord ac = s.dims.coord(from);
+  const Coord dc = s.dims.coord(to);
+  if (std::max(std::abs(ac.x - dc.x), std::abs(ac.y - dc.y)) > astats.range) return preview;
 
   const CombatResult result = resolve_combat(s, rules, attacker, defender);
   preview.valid = true;

@@ -67,6 +67,13 @@ result: {"options": [
 `status` is one of `available` | `cannot_afford` | `missing_tech` | `blocked`.
 **`cost` is always populated**, including when unaffordable — the price must stay legible.
 
+Two `target` caveats the UI has to absorb (both are engine gaps, not UI licence to do
+arithmetic):
+- `move` and `attack` carry `target: 0` and it is **meaningless** — those are map markers, and
+  their targets come from `reachable` and `preview_combat` respectively.
+- `capture` and `examine` also carry `target: 0`, but the phase machine's only legal target for
+  them is the actor's own tile, so the caller must send the tile it selected.
+
 ### `research_options`
 Same shape, for the tech tree. `params: {"include_unavailable": true}`
 
@@ -94,6 +101,13 @@ result: {"valid":true, "attacker_damage":5, "defender_damage":3,
          "defender_dies":false, "attacker_dies":false}
 ```
 Server-side because a client cannot see defence bonuses it has no tech for.
+
+`valid` means **this attack is legal right now** — attacker is the current player's, is not
+spent or freshly trained, has not already attacked, has not moved without Dash, and the target
+is within weapon range. It is the attack equivalent of `reachable`, and the UI paints its red
+rings straight from it. (Clarified 2026-08-03: the first implementation returned `valid` for
+any two hostile units, which made the UI either draw markers `act` then refused or re-derive
+weapon range client-side. Same reasoning as `reachable`.)
 
 ### `apply` — raw phase-machine step (agent path; UI should use `act`)
 ```jsonc

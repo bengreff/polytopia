@@ -3,104 +3,143 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polytopia engine — dev UI</title>
+<title>Polytopia engine</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2386ad5d'/><rect x='4' y='4' width='8' height='8' fill='%233fa9f5'/></svg>">
 </head>
 <body>
-<div id="app">
 
-  <header id="topbar">
-    <div class="brand">POLYTOPIA <span class="sub">dev UI</span></div>
-    <div id="engine-badge" class="badge">…</div>
-    <div id="turnbar">
-      <span class="kv"><span class="k">Turn</span><b id="turn-value">–</b></span>
-      <span class="kv"><span class="k">Player</span><b id="player-value">–</b></span>
-      <span class="kv"><span class="k">Phase</span><b id="phase-value" class="chip">–</b></span>
-    </div>
-    <div class="spacer"></div>
-    <button id="btn-endturn" class="primary">End Turn</button>
-    <button id="btn-deselect">Deselect</button>
-    <button id="btn-reload">Reload Rules</button>
-    <button id="btn-newgame">New Game…</button>
-    <button id="btn-fit" title="Fit board to view (F)">Fit</button>
-    <label class="toggle"><input type="checkbox" id="chk-ids"> tile ids</label>
-  </header>
+<!-- The map is the whole screen. Every other surface floats over it, exactly as the real
+     game does: nothing is a sidebar, because a sidebar implies a list of permitted moves and
+     that list is what made v1 unplayable. -->
+<canvas id="map"></canvas>
 
-  <main>
-    <div id="stage">
-      <canvas id="map"></canvas>
-      <div id="verbmenu" class="verbmenu" hidden></div>
-      <div id="hint" class="hint" hidden></div>
-      <div id="banner" class="banner" hidden></div>
-    </div>
+<!-- ① HUD — permanently visible. YOUR stars, YOUR income, turn, YOUR score. Never anyone
+     else's economy: see wire-protocol.md "KNOWLEDGE-FILTERED". -->
+<header id="hud">
+  <div class="hud-group">
+    <span class="stat stars" id="stat-stars" title="Your stars"><i>★</i><b>–</b></span>
+    <span class="stat income" id="stat-income" title="Your income per turn"><i>+</i><b>–</b><u>/turn</u></span>
+    <span class="stat score" id="stat-score" title="Your score"><i>◆</i><b>–</b></span>
+    <span class="stat turn" id="stat-turn" title="Turn number"><i>⟳</i><b>–</b></span>
+    <span class="stat tribe" id="stat-tribe">–</span>
+  </div>
+  <div class="hud-spacer"></div>
+  <button id="btn-tech" class="hud-btn">TECH TREE</button>
+  <button id="btn-endturn" class="hud-btn endturn">END TURN</button>
+  <button id="btn-menu" class="hud-btn ghost" title="New game / settings">☰</button>
+</header>
 
-    <aside id="sidebar">
-      <section class="panel">
-        <h2>Players</h2>
-        <div id="players"></div>
-      </section>
+<!-- Opponents. Score and city count are permanently public; stars, income and techs are
+     NEVER shown, and unknown values render as "?" — never as 0. -->
+<aside id="rivals"></aside>
 
-      <section class="panel">
-        <h2>Selection</h2>
-        <div id="selection" class="muted">Nothing selected.</div>
-      </section>
-
-      <section class="panel">
-        <h2>Actions <span id="actions-count" class="count"></span></h2>
-        <div id="actions" class="muted">–</div>
-      </section>
-
-      <section class="panel grow">
-        <h2>Log</h2>
-        <div id="log"></div>
-      </section>
-    </aside>
-  </main>
-
-  <dialog id="newgame-dialog">
-    <form id="newgame-form" method="dialog">
-      <h2>New game</h2>
-      <div class="grid">
-        <label>Width <input type="number" id="ng-width" value="11" min="4" max="40"></label>
-        <label>Height <input type="number" id="ng-height" value="11" min="4" max="40"></label>
-        <label>Seed <input type="number" id="ng-seed" value="12345"></label>
-        <label>Turn limit <input type="number" id="ng-turnlimit" value="0" min="0"></label>
-        <label>Mode
-          <select id="ng-mode">
-            <option value="domination">domination</option>
-            <option value="perfection">perfection</option>
-            <option value="glory">glory</option>
-            <option value="creative">creative</option>
-          </select>
-        </label>
-        <label>Opponents
-          <select id="ng-opponents">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-          </select>
-        </label>
-        <label>Your tribe <select id="ng-tribe"></select></label>
-        <label>Opponent tribe <select id="ng-optribe"></select></label>
-        <label>Difficulty
-          <select id="ng-difficulty">
-            <option>easy</option>
-            <option selected>normal</option>
-            <option>hard</option>
-            <option>crazy</option>
-          </select>
-        </label>
-        <label class="toggle wide"><input type="checkbox" id="ng-fog" checked> Fog of war</label>
-      </div>
-      <menu>
-        <button value="cancel" id="ng-cancel">Cancel</button>
-        <button value="start" id="ng-start" class="primary">Start</button>
-      </menu>
-    </form>
-  </dialog>
-
+<!-- ② Floating tile action button, anchored in WORLD SPACE above the selected tile. -->
+<div id="tileaction" hidden>
+  <button id="tileaction-btn" class="round">
+    <span class="ta-price" id="tileaction-price"></span>
+    <span class="ta-glyph" id="tileaction-glyph"></span>
+  </button>
+  <div class="ta-name" id="tileaction-name"></div>
+  <div class="ta-stem"></div>
 </div>
+
+<!-- ③ Interaction bar: description panel + ability/option tray, bottom-left. -->
+<section id="interaction" hidden>
+  <div id="desc" class="card">
+    <div class="desc-head">
+      <span id="desc-badge" class="desc-badge">·</span>
+      <div>
+        <div id="desc-title" class="desc-title">—</div>
+        <div id="desc-sub" class="desc-sub"></div>
+      </div>
+      <button id="desc-close" class="x" title="Deselect (Esc)">✕</button>
+    </div>
+    <div id="desc-lines" class="desc-lines"></div>
+    <div id="layer-tabs" class="layer-tabs"></div>
+  </div>
+  <div id="tray" class="tray"></div>
+</section>
+
+<!-- Combat preview, follows the cursor over an attackable enemy. -->
+<div id="combat" class="combat" hidden></div>
+
+<!-- Bot / event log. -->
+<section id="logpanel">
+  <div class="log-head"><b>LOG</b><button id="log-toggle" class="x">–</button></div>
+  <div id="log"></div>
+</section>
+
+<div id="banner" class="banner" hidden></div>
+
+<!-- Two-step confirm. There is NO UNDO in this game, so every commit is preceded by an
+     explanation of what it does and what it costs (ui-reference.md §2.1b). -->
+<div id="scrim" class="scrim" hidden>
+  <div id="popup" class="popup" role="dialog" aria-modal="true">
+    <div class="pop-head">
+      <span id="pop-title" class="pop-title"></span>
+      <span id="pop-price" class="pop-price"></span>
+    </div>
+    <div id="pop-body" class="pop-body"></div>
+    <div id="pop-note" class="pop-note" hidden></div>
+    <div class="pop-buttons">
+      <button id="pop-back" class="pop-btn back">BACK</button>
+      <button id="pop-tech" class="pop-btn tech" hidden>TECH TREE</button>
+      <button id="pop-commit" class="pop-btn commit" hidden>DO IT</button>
+    </div>
+  </div>
+</div>
+
+<!-- Full-screen tech tree, 5 branches x 5 techs. -->
+<div id="tech-overlay" class="overlay" hidden>
+  <div class="overlay-head">
+    <h1>TECH TREE</h1>
+    <span class="stat stars"><i>★</i><b id="tech-stars">–</b></span>
+    <div class="hud-spacer"></div>
+    <button id="tech-close" class="hud-btn">CLOSE</button>
+  </div>
+  <div id="tech-grid" class="tech-grid"></div>
+  <div class="overlay-foot">
+    Grey italic <i>(locked)</i> = prerequisite not researched · dark red = you cannot afford it
+    yet, the price is still shown · green = already researched.
+  </div>
+</div>
+
+<dialog id="newgame-dialog">
+  <form id="newgame-form" method="dialog">
+    <h2>New game</h2>
+    <div class="grid">
+      <label>Width <input type="number" id="ng-width" value="11" min="4" max="40"></label>
+      <label>Height <input type="number" id="ng-height" value="11" min="4" max="40"></label>
+      <label>Seed <input type="number" id="ng-seed" value="12345"></label>
+      <label>Turn limit <input type="number" id="ng-turnlimit" value="0" min="0"></label>
+      <label>Mode
+        <select id="ng-mode">
+          <option value="domination">domination</option>
+          <option value="perfection">perfection</option>
+          <option value="glory">glory</option>
+          <option value="creative">creative</option>
+        </select>
+      </label>
+      <label>Opponents
+        <select id="ng-opponents"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+      </label>
+      <label>Your tribe <select id="ng-tribe"></select></label>
+      <label>Opponent tribe <select id="ng-optribe"></select></label>
+      <label>Difficulty
+        <select id="ng-difficulty">
+          <option>easy</option><option selected>normal</option><option>hard</option><option>crazy</option>
+        </select>
+      </label>
+      <label class="toggle wide"><input type="checkbox" id="ng-fog" checked> Fog of war</label>
+    </div>
+    <menu>
+      <button value="cancel" id="ng-cancel">Cancel</button>
+      <button value="start" id="ng-start" class="primary">Start</button>
+    </menu>
+  </form>
+</dialog>
+
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

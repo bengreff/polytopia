@@ -1,43 +1,42 @@
 /*
- * state.js — StateView handling.
+ * state.js — StateView handling, wire protocol v2.
  *
- * A StateView from the engine is treated as immutable and total: every render
- * is built from the most recent response and nothing else. There is no local
- * game state, no prediction, no patching. If something looks stale, the fix is
- * to ask the engine again, never to mutate here.
+ * A StateView from the engine is treated as immutable and total: every render is built from
+ * the most recent response and nothing else. There is no local game state, no prediction, no
+ * patching. If something looks stale the fix is to ask the engine again, never to mutate here.
  *
- * The only thing this module adds is indexing (maps keyed by tile index / id)
- * so the renderer does not do linear scans per tile.
+ * v1's `legal` array is GONE and nothing in this file replaces it. Selection is never gated
+ * on an action set; `options` is fetched per selected tile and rendered whole.
+ *
+ * The only thing this module adds is indexing, plus the presentation vocabulary that turns
+ * engine enums into English. Everything here is either an index or a label — no rules.
  */
 
-/**
- * Normalised label, for the few places the protocol only identifies an action
- * by its text. Separators are folded so "End Turn", "end_turn" and "end-turn"
- * all match — the wire protocol does not give these two universal actions a
- * stable id, so text is all we have to go on.
- */
-export function labelKey(s) {
-  return String(s || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ');
+/** Normalised label, so "Free Spirit", "free_spirit" and "freespirit" all match. */
+export function key(s) {
+  return String(s == null ? '' : s).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/** Title Case from an engine enum name like "lumber_hut". */
+export function pretty(s) {
+  return String(s == null ? '' : s)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
 /**
- * The tile a legal action refers to.
+ * Verbs whose target is the acting tile itself.
  *
- * Per docs/wire-protocol.md, entries of kind "tile" carry the tile index as
- * their action index (the SELECT example uses index 47 for tile 47). We also
- * honour an explicit `tile` field if a future engine supplies one, so the
- * action index can diverge from the tile index without a UI change.
- * Returns null for non-tile actions.
+ * PROTOCOL NOTE: the engine leaves `target` at 0 for these (make_option never sets
+ * Option::action for Capture/Examine), but the phase machine's only legal target for them is
+ * the actor's own tile. So when `target` is absent or zero for one of these verbs we send the
+ * SELECTED TILE — the index the engine itself handed us as the selection — never an index we
+ * computed. See docs/wire-protocol.md rule 3.
  */
-export function actionTile(entry) {
-  if (!entry || entry.kind !== 'tile') return null;
-  if (typeof entry.tile === 'number') return entry.tile;
-  return typeof entry.index === 'number' ? entry.index : null;
-}
+export const SELF_TARGET_VERBS = new Set(['harvest', 'capture', 'examine']);
+
+/** Verbs that are map markers, not tray buttons (ui-reference.md §4.1). */
+export const MARKER_VERBS = new Set(['move', 'attack']);
 
 export class GameState {
   constructor(view) {
@@ -50,15 +49,12 @@ export class GameState {
     this.turn = v.turn ?? 0;
     this.currentPlayer = v.current_player ?? 0;
     this.phase = v.phase || 'select';
-    this.selected = typeof v.selected === 'number' ? v.selected : -1;
-    this.pendingVerb = v.pending_verb || null;
     this.outcome = v.outcome || null;
 
     this.players = Array.isArray(v.players) ? v.players : [];
     this.tiles = Array.isArray(v.tiles) ? v.tiles : [];
     this.units = Array.isArray(v.units) ? v.units : [];
     this.cities = Array.isArray(v.cities) ? v.cities : [];
-    this.legal = Array.isArray(v.legal) ? v.legal : [];
 
     this.tileByIndex = new Map();
     for (const t of this.tiles) this.tileByIndex.set(t.i, t);
@@ -80,90 +76,40 @@ export class GameState {
     this.playerById = new Map();
     for (const p of this.players) this.playerById.set(p.id, p);
 
-    // Legal actions, indexed for O(1) lookup.
-    this.legalTileIndices = new Map(); // tile index -> legal entry
-    this.legalVerbs = []; // everything that is not a map tile
-    for (const a of this.legal) {
-      const t = actionTile(a);
-      if (t !== null) {
-        if (!this.legalTileIndices.has(t)) this.legalTileIndices.set(t, a);
-      } else {
-        this.legalVerbs.push(a);
-      }
-    }
+    /** The human seat. There is exactly one in this build; the first wins if not. */
+    const human = this.players.find((p) => p.human);
+    this.me = human ? human.id : 0;
   }
 
-  tileIndex(x, y) {
-    return y * this.width + x;
-  }
+  // --- indexing -------------------------------------------------------------
 
-  tileXY(i) {
-    return { x: i % this.width, y: Math.floor(i / this.width) };
-  }
+  tileIndex(x, y) { return y * this.width + x; }
+  tileXY(i) { return { x: i % this.width, y: Math.floor(i / this.width) }; }
 
-  isExplored(i) {
-    // Fog is applied server-side: an absent tile is an unexplored tile.
-    return this.tileByIndex.has(i);
-  }
+  /** Fog is applied server-side: an absent tile is an unexplored tile. */
+  isExplored(i) { return this.tileByIndex.has(i); }
 
-  tileAt(i) {
-    return this.tileByIndex.get(i) || null;
-  }
+  tileAt(i) { return this.tileByIndex.get(i) || null; }
+  unitsAt(i) { return this.unitsByTile.get(i) || []; }
+  unitAt(i) { const l = this.unitsByTile.get(i); return l && l.length ? l[0] : null; }
+  cityAt(i) { return this.cityByTile.get(i) || null; }
 
-  unitsAt(i) {
-    return this.unitsByTile.get(i) || [];
-  }
+  // --- the viewing player ---------------------------------------------------
 
-  unitAt(i) {
-    const list = this.unitsByTile.get(i);
-    return list && list.length ? list[0] : null;
-  }
+  myPlayer() { return this.playerById.get(this.me) || null; }
+  isMyTurn() { return this.currentPlayer === this.me && !this.outcome; }
+  isMine(owner) { return owner === this.me; }
 
-  cityAt(i) {
-    return this.cityByTile.get(i) || null;
-  }
+  myUnits() { return this.units.filter((u) => u.owner === this.me); }
+  enemyUnits() { return this.units.filter((u) => u.owner !== this.me); }
 
-  /**
-   * The legal action for clicking tile index `i`, or null.
-   * NOTE: we return the entry so the caller sends entry.index — the value that
-   * came from the engine. The UI never fabricates an index.
-   */
-  legalForTile(i) {
-    return this.legalTileIndices.get(i) || null;
-  }
+  /** A unit is spent when it cannot act again this turn. */
+  static spent(u) { return !!u.turn_ended; }
 
-  /** Non-tile legal actions: verbs, train options, anything else the engine offers. */
-  verbActions() {
-    return this.legalVerbs;
-  }
+  activeUnits() { return this.myUnits().filter((u) => !GameState.spent(u)); }
 
-  /**
-   * Find a legal action by its label. The protocol identifies Deselect and End
-   * Turn only by their label text, so this is the sanctioned lookup for those
-   * two; it is never used to construct an index, only to find one.
-   */
-  findByLabel(label) {
-    const want = labelKey(label);
-    return this.legal.find((a) => labelKey(a.label) === want) || null;
-  }
-
-  deselectAction() {
-    return this.findByLabel('deselect');
-  }
-
-  endTurnAction() {
-    return this.findByLabel('end turn') || this.findByLabel('endturn') || this.findByLabel('end');
-  }
-
-  selectedUnit() {
-    return this.selected >= 0 ? this.unitAt(this.selected) : null;
-  }
-
-  selectedCity() {
-    return this.selected >= 0 ? this.cityAt(this.selected) : null;
-  }
-
-  currentPlayerObj() {
-    return this.playerById.get(this.currentPlayer) || null;
+  /** Cities of yours with an unresolved level-up choice; these block other actions. */
+  pendingRewardCities() {
+    return this.cities.filter((c) => c.owner === this.me && (c.pending_rewards || 0) > 0);
   }
 }

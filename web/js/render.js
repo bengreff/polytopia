@@ -279,13 +279,21 @@ export function drawUnitGlyph(ctx, x, y, unit, opts = {}) {
   const uy = c.y - h * 0.72 + (opts.shifted ? px * 0.1 : 0);
 
   ctx.save();
-  if (unit.turn_ended) ctx.globalAlpha = 0.55;
+  // A spent unit is greyed, hard. ui-reference.md §3.5: the white outline vanishes when a
+  // unit can no longer act, and an untouched unit carries a cyan glow.
+  const spent = opts.spent !== undefined ? !!opts.spent : !!unit.turn_ended;
+  if (spent) ctx.globalAlpha = 0.42;
+  else if (opts.mine) {
+    ctx.shadowColor = 'rgba(73,226,255,0.95)';
+    ctx.shadowBlur = px * 0.22;
+  }
 
   roundRect(ctx, ux, uy, w, h, h * 0.32);
-  ctx.fillStyle = col;
+  ctx.fillStyle = spent ? '#5c6472' : col;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-  ctx.lineWidth = Math.max(1, px * 0.02);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = spent ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = Math.max(1, px * (spent ? 0.02 : 0.028));
   ctx.stroke();
 
   if (px >= 26) {
@@ -312,10 +320,13 @@ export function drawUnitGlyph(ctx, x, y, unit, opts = {}) {
     label(ctx, hpText, c.x, by + bh + px * 0.085, Math.round(px * 0.15), '#ffffff');
   }
 
-  // Veteran pip and remaining moves.
+  // Veteran pip, remaining moves, and an explicit word for a spent unit — colour alone is
+  // not enough when the whole complaint about v1 was "I cannot tell what I can do".
   if (px >= 34) {
     if (unit.veteran) label(ctx, 'V', ux - px * 0.02, uy + h * 0.5, Math.round(px * 0.16), '#ffd76a');
-    if (typeof unit.moves_left === 'number' && !unit.turn_ended) {
+    if (spent) {
+      label(ctx, 'SPENT', c.x, uy - px * 0.11, Math.round(px * 0.13), '#c7cedb');
+    } else if (typeof unit.moves_left === 'number') {
       label(ctx, `${unit.moves_left}`, ux + w + px * 0.03, uy + h * 0.5, Math.round(px * 0.16), '#e6f0ff');
     }
   }
@@ -325,6 +336,94 @@ export function drawUnitGlyph(ctx, x, y, unit, opts = {}) {
 export function formatHp(v) {
   if (typeof v !== 'number') return '?';
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// --- movement / attack markers ---------------------------------------------
+//
+// ui-reference.md §4.1: concentric ring decals laid FLAT on the tile. Pale cyan-teal on move
+// destinations, orange-red UNDER enemy units for attack targets. They differ in hue AND in
+// placement, so they stay distinguishable without colour vision.
+
+export function drawMoveRing(ctx, x, y) {
+  const c = P.tileToScreen(x, y);
+  const px = P.tilePixels();
+  ctx.save();
+  ctx.strokeStyle = 'rgba(73,226,255,0.95)';
+  ctx.lineWidth = Math.max(2, px * 0.055);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.31, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(73,226,255,0.42)';
+  ctx.lineWidth = Math.max(1, px * 0.03);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.19, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(73,226,255,0.10)';
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.31, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Attack marker. `preview` is the engine's two-way readout; a guaranteed one-hit kill that
+ * costs you nothing gets a DISTINCT bright ring plus a skull, because it is a different
+ * decision from a trade.
+ */
+export function drawAttackRing(ctx, x, y, preview) {
+  const c = P.tileToScreen(x, y);
+  const px = P.tilePixels();
+  const cleanKill = preview && preview.defender_dies && !preview.attacker_dies;
+  const suicide = preview && preview.attacker_dies;
+
+  ctx.save();
+  ctx.lineWidth = Math.max(2.5, px * (cleanKill ? 0.085 : 0.06));
+  ctx.strokeStyle = cleanKill ? '#ffe14d' : suicide ? '#ff2d2d' : '#ff6a3d';
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.42, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = cleanKill ? 'rgba(255,225,77,0.20)' : 'rgba(255,90,60,0.20)';
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (cleanKill && px >= 30) {
+    // A skull, drawn not fetched: two eyes and a jaw under the ring.
+    const r = px * 0.1;
+    const sy = c.y + px * 0.3;
+    ctx.fillStyle = '#fffbe6';
+    ctx.beginPath();
+    ctx.arc(c.x, sy, r, Math.PI, 0);
+    ctx.rect(c.x - r, sy, r * 2, r * 0.85);
+    ctx.fill();
+    ctx.fillStyle = '#2a1c00';
+    ctx.beginPath();
+    ctx.arc(c.x - r * 0.42, sy - r * 0.12, r * 0.26, 0, Math.PI * 2);
+    ctx.arc(c.x + r * 0.42, sy - r * 0.12, r * 0.26, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (suicide && px >= 30) {
+    // Black-and-red ring: retaliation kills the attacker (ui-reference.md §4.2).
+    ctx.setLineDash([px * 0.09, px * 0.07]);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = Math.max(2, px * 0.05);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, px * 0.42, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Faint dot on every discovered tile: everything here is clickable, and it must look it. */
+export function drawSelectableDot(ctx, x, y) {
+  const px = P.tilePixels();
+  if (px < 26) return;
+  const c = P.tileToScreen(x, y);
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.13)';
+  ctx.beginPath();
+  ctx.arc(c.x, c.y + px * 0.34, Math.max(1, px * 0.022), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 export function drawHighlight(ctx, x, y, color, alpha = 0.35) {
@@ -339,17 +438,6 @@ export function drawHighlight(ctx, x, y, color, alpha = 0.35) {
   ctx.strokeStyle = color;
   ctx.lineWidth = Math.max(2, P.tilePixels() * 0.06);
   ctx.stroke();
-}
-
-export function drawSelectableMarker(ctx, x, y) {
-  const poly = P.tilePolygon(x, y);
-  ctx.save();
-  ctx.setLineDash([P.tilePixels() * 0.12, P.tilePixels() * 0.1]);
-  polyPath(ctx, poly);
-  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-  ctx.lineWidth = Math.max(1.5, P.tilePixels() * 0.035);
-  ctx.stroke();
-  ctx.restore();
 }
 
 export function drawSelectionRing(ctx, x, y) {
@@ -381,9 +469,15 @@ export function drawTileIdLabel(ctx, x, y, i) {
 // --- frame -----------------------------------------------------------------
 
 /**
- * Draw one whole frame from a GameState. Pure function of (state, ui): nothing
- * is cached between frames, which is what makes "re-render entirely from each
- * StateView" true rather than aspirational.
+ * Draw one whole frame from a GameState. Pure function of (state, ui): nothing is cached
+ * between frames, which is what makes "re-render entirely from each StateView" true rather
+ * than aspirational.
+ *
+ * `ui` carries only presentation and engine-supplied overlays:
+ *   selected   tile index of the current selection, or -1
+ *   reachable  Set<tileIdx> straight from the `reachable` RPC — never computed here
+ *   attackable Map<tileIdx, preview> straight from `preview_combat`
+ *   hover      {x, y}
  */
 export function render(ctx, state, ui = {}) {
   const { width: cw, height: ch } = ctx.canvas;
@@ -397,6 +491,8 @@ export function render(ctx, state, ui = {}) {
   if (!state || !state.width) return;
 
   const order = P.drawOrder();
+  const reachable = ui.reachable || new Set();
+  const attackable = ui.attackable || new Map();
 
   // 1. terrain / fog
   for (const { x, y } of order) {
@@ -423,16 +519,20 @@ export function render(ctx, state, ui = {}) {
     }
   }
 
-  // 3. legality layer — everything the engine says is clickable right now
-  const isTargetPhase = state.phase === 'target';
-  const targetColor = /attack|siege|burn|destroy|raze/i.test(state.pendingVerb || '')
-    ? '#ff5a5a'
-    : '#49e2ff';
-  for (const [tileIndex] of state.legalTileIndices) {
-    const { x, y } = state.tileXY(tileIndex);
-    if (!P.inBounds(x, y)) continue;
-    if (isTargetPhase) drawHighlight(ctx, x, y, targetColor, 0.32);
-    else drawSelectableMarker(ctx, x, y);
+  // 3. affordance layer.
+  //    EVERY discovered tile carries a click dot: selection is never gated on an action set,
+  //    which is the bug that made v1 unplayable. Move and attack rings sit on top of that.
+  for (const { x, y } of order) {
+    const i = state.tileIndex(x, y);
+    if (state.isExplored(i)) drawSelectableDot(ctx, x, y);
+  }
+  for (const t of reachable) {
+    const { x, y } = state.tileXY(t);
+    if (P.inBounds(x, y)) drawMoveRing(ctx, x, y);
+  }
+  for (const [t, preview] of attackable) {
+    const { x, y } = state.tileXY(t);
+    if (P.inBounds(x, y)) drawAttackRing(ctx, x, y, preview);
   }
 
   // 4. cities then units
@@ -446,7 +546,13 @@ export function render(ctx, state, ui = {}) {
     const units = state.unitsAt(i);
     if (!units.length) continue;
     const shifted = !!state.cityAt(i);
-    drawUnitGlyph(ctx, x, y, units[0], { shifted });
+    const mine = units[0].owner === state.me;
+    // "Spent" is the ENGINE's answer to "has this unit anything available", not turn_ended:
+    // a Dash unit that has moved keeps turn_ended false but is finished if nothing is in range.
+    // Only YOUR units are greyed — an enemy's leftover turn_ended flag says nothing useful
+    // about what it will do on its own turn, and dimming it would imply otherwise.
+    const spent = mine && (units[0].turn_ended || (ui.idle instanceof Set && !ui.idle.has(i)));
+    drawUnitGlyph(ctx, x, y, units[0], { shifted, mine, spent });
     if (units.length > 1 && P.tilePixels() >= 30) {
       const b = P.tileBox(x, y);
       label(ctx, `+${units.length - 1}`, b.x + b.w * 0.12, b.y + b.h * 0.88, Math.round(P.tilePixels() * 0.16), '#ffffff');
@@ -454,8 +560,8 @@ export function render(ctx, state, ui = {}) {
   }
 
   // 5. selection / hover
-  if (state.selected >= 0) {
-    const { x, y } = state.tileXY(state.selected);
+  if (typeof ui.selected === 'number' && ui.selected >= 0) {
+    const { x, y } = state.tileXY(ui.selected);
     if (P.inBounds(x, y)) drawSelectionRing(ctx, x, y);
   }
   if (ui.hover && P.inBounds(ui.hover.x, ui.hover.y)) {
