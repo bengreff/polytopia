@@ -4,6 +4,7 @@ add_executable(poly_tests
   test_geometry.cpp
   test_content.cpp
   test_state.cpp
+  test_json.cpp
 )
 
 target_include_directories(poly_tests PRIVATE .)

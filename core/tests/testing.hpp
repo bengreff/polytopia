@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace poly::testing {
@@ -32,6 +33,22 @@ inline int& failure_count() {
 struct Registrar {
   Registrar(const char* name, void (*fn)()) { registry().push_back({name, fn}); }
 };
+
+// Renders a value for a failure message. Numbers go through std::to_string; strings print
+// as themselves; anything else degrades to a placeholder rather than failing to compile.
+// CHECK_EQ is used on ints, enums, and std::string alike, so it cannot assume numeric.
+template <typename T>
+std::string describe(const T& value) {
+  if constexpr (std::is_same_v<T, std::string>) {
+    return "\"" + value + "\"";
+  } else if constexpr (std::is_enum_v<T>) {
+    return std::to_string(static_cast<long long>(value));
+  } else if constexpr (std::is_arithmetic_v<T>) {
+    return std::to_string(value);
+  } else {
+    return "<value>";
+  }
+}
 
 inline void report_failure(const char* file, int line, const std::string& what) {
   ++failure_count();
@@ -70,14 +87,15 @@ inline int run_all() {
     if (!(cond)) ::poly::testing::report_failure(__FILE__, __LINE__, #cond);     \
   } while (0)
 
-#define CHECK_EQ(a, b)                                                                  \
-  do {                                                                                  \
-    const auto poly_lhs = (a);                                                          \
-    const auto poly_rhs = (b);                                                          \
-    if (!(poly_lhs == poly_rhs)) {                                                      \
-      ::poly::testing::report_failure(__FILE__, __LINE__,                               \
-                                      std::string(#a) + " == " + #b + "  (lhs=" +       \
-                                          std::to_string(poly_lhs) + " rhs=" +          \
-                                          std::to_string(poly_rhs) + ")");              \
-    }                                                                                   \
+#define CHECK_EQ(a, b)                                                            \
+  do {                                                                            \
+    const auto poly_lhs = (a);                                                    \
+    const auto poly_rhs = (b);                                                    \
+    if (!(poly_lhs == poly_rhs)) {                                                \
+      ::poly::testing::report_failure(                                            \
+          __FILE__, __LINE__,                                                     \
+          std::string(#a) + " == " + #b + "  (lhs=" +                             \
+              ::poly::testing::describe(poly_lhs) + " rhs=" +                     \
+              ::poly::testing::describe(poly_rhs) + ")");                         \
+    }                                                                             \
   } while (0)
