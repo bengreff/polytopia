@@ -183,5 +183,3 @@ sent information the player cannot see** — a UI bug must not be able to leak t
    looks like a rules bug.
 5. `population` can be negative — render it as such (red), never clamp it.
 6. `hp` is a float and can land on `.5`.
-
-   from `legal` (VERB) → legal targets highlight (TARGET). `Deselect` always returns to SELECT.
