@@ -188,17 +188,22 @@ Rules Rules::defaults() {
   //
   // Only Bomber attack (3, nerfed in 2.8.5), Dinghy and Pirate are confirmed to me directly;
   // the rest of the naval line comes from the JSON, which is authoritative.
+  // Every Carry naval unit has Static: the hull is not a separate entity that could earn
+  // veterancy -- it IS the land unit it carries (resolutions.md R29), and Unit Skills makes
+  // Static the single authoritative flag for "cannot be promoted".
   set_unit(r, UnitType::Raft,
-           {0, 0, 0.0f, 1.0f, 2, 0, 1, Tech::Fishing, true, false, false, sk(Skill::Carry)});
+           {0, 0, 0.0f, 1.0f, 2, 0, 1, Tech::Fishing, true, false, false,
+            sk(Skill::Carry) | sk(Skill::Static)});
   set_unit(r, UnitType::Scout,
            {5, 0, 2.0f, 1.0f, 3, 2, 2, Tech::Sailing, true, false, true,
-            sk(Skill::Carry) | sk(Skill::Scout) | sk(Skill::Navigate)});
+            sk(Skill::Carry) | sk(Skill::Scout) | sk(Skill::Navigate) | sk(Skill::Static)});
   set_unit(r, UnitType::Rammer,
            {5, 0, 3.0f, 3.0f, 3, 1, 1, Tech::Ramming, true, false, true,
-            sk(Skill::Carry) | sk(Skill::Navigate)});
+            sk(Skill::Carry) | sk(Skill::Navigate) | sk(Skill::Static)});
   set_unit(r, UnitType::Bomber,
            {15, 0, 3.0f, 2.0f, 2, 3, 1, Tech::Aquatism, true, false, true,
-            sk(Skill::Carry) | sk(Skill::Splash) | sk(Skill::Navigate) | sk(Skill::Stiff)});
+            sk(Skill::Carry) | sk(Skill::Splash) | sk(Skill::Navigate) | sk(Skill::Stiff) |
+                sk(Skill::Static)});
   set_unit(r, UnitType::Juggernaut,
            {10, 40, 4.0f, 4.0f, 2, 1, 1, Tech::Aquatism, false, false, false,
             sk(Skill::Carry) | sk(Skill::Stomp) | sk(Skill::Static) | sk(Skill::Navigate)});

@@ -526,6 +526,10 @@ int run_selfplay(int games, int max_steps) {
     cfg.player_count = 2;
     cfg.tribes[0] = Tribe::Imperius;
     cfg.tribes[1] = Tribe::Bardur;
+    // A HARNESS bound, not a game rule. The game itself has no turn limit; agents choosing
+    // uniformly at random essentially never achieve domination, so without this the smoke
+    // test runs forever. Real games end by capture.
+    cfg.turn_limit = 100;
 
     GameState s;
     if (!new_game(cfg, rules, s, error)) {

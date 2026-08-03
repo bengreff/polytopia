@@ -42,8 +42,10 @@ enum class Verb : std::uint8_t {
   Train,         // Buy a unit in a city.
   UpgradeNaval,  // Raft -> Scout / Rammer / Bomber.
   Research,
-  Heal,          // Mind Bender.
-  Convert,       // Mind Bender.
+  Recover,       // Heal yourself: +4 HP in own territory, +2 elsewhere.
+  Heal,          // Mind Bender: heals ALL adjacent friendlies. Consumes its whole turn.
+  Convert,       // Mind Bender: turns an adjacent enemy friendly. Its attack is 0.
+  Promote,       // Cash in a banked veteran promotion: +5 max HP, then heal completely.
   Examine,       // Enter a ruin. Same start-of-turn requirement as Capture.
   Destroy,       // Scorched earth: remove an improvement.
   Disband,

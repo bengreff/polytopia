@@ -27,11 +27,20 @@ bool tribe_can_enter(const GameState& s, const Rules& rules, PlayerId player, co
   const Player& p = s.players[player];
   switch (tile.terrain) {
     case Terrain::Mountain: return p.has_tech(Tech::Climbing);
-    case Terrain::Water:
-    case Terrain::Ocean: return false;  // land units need a hull; naval is a later milestone
+    // Shallow water needs a hull, which Fishing provides via a Port; deep ocean additionally
+    // needs Sailing. A bridge makes the tile walkable outright.
+    case Terrain::Water: return p.has_tech(Tech::Fishing) || tile.has(TileFlag::Bridge);
+    case Terrain::Ocean: return p.has_tech(Tech::Sailing);
     default: return true;
   }
   (void)rules;
+}
+
+// Max HP in HALF-POINT units, which is what Unit::hp is stored in. Veterans get +5 whole HP.
+int max_hp_for(const Rules& rules, const Unit& u) {
+  int hp = rules.unit(u.type).hp;
+  if (u.has(UnitFlag::Veteran)) hp += static_cast<int>(rules.veteran_hp_bonus);
+  return to_hp(hp);
 }
 
 int unit_max_hp(const Rules& rules, const Unit& u) {
@@ -403,6 +412,66 @@ void claim_territory(GameState& s, CityId city_id, int radius) {
   }
 }
 
+// A city is connected when a road/port network links it to the capital. Each connection gives
+// +1 population to BOTH ends (resolutions.md R23), which is why capturing a capital is
+// devastating: it collapses the whole network at once and drives the captured capital's
+// population negative rather than dropping its level.
+void recompute_city_connections(GameState& s, const Rules& rules, PlayerId player) {
+  CityId capital = kNoCity;
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == player && s.cities[c].has(CityFlag::Capital)) capital = c;
+  }
+  // Clear first: a severed connection must actually go away, or capture would never cost
+  // the loser anything.
+  int previously = 0;
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner != player) continue;
+    if (s.cities[c].has(CityFlag::ConnectedToCapital)) ++previously;
+    s.cities[c].remove(CityFlag::ConnectedToCapital);
+  }
+  if (capital == kNoCity) return;
+
+  // Flood the road network from the capital. Roads and ports carry the link; a tile owned by
+  // an enemy never does -- sea routes may cross NEUTRAL water but not enemy territory (R22).
+  std::vector<bool> seen(static_cast<std::size_t>(s.tile_count()), false);
+  std::queue<TileIdx> frontier;
+  frontier.push(s.cities[capital].tile);
+  seen[static_cast<std::size_t>(s.cities[capital].tile)] = true;
+  int connected = 0;
+
+  while (!frontier.empty()) {
+    const TileIdx at = frontier.front();
+    frontier.pop();
+    const CityId here = city_at(s, at);
+    if (here != kNoCity && s.cities[here].owner == player && here != capital) {
+      s.cities[here].add(CityFlag::ConnectedToCapital);
+      ++connected;
+    }
+    const Coord c = s.dims.coord(at);
+    for (const Coord off : kNeighbourOffsets) {
+      const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                    static_cast<std::int16_t>(c.y + off.y)};
+      if (!s.dims.contains(n)) continue;
+      const TileIdx t = s.dims.index(n);
+      if (seen[static_cast<std::size_t>(t)]) continue;
+      const Tile& tile = s.tiles[t];
+      if (tile.owner != kNoPlayer && tile.owner != player) continue;  // never through enemies
+      const bool carries = tile.has(TileFlag::Road) || tile.has(TileFlag::Bridge) ||
+                           tile.improvement == Improvement::Port || city_at(s, t) != kNoCity;
+      if (!carries) continue;
+      seen[static_cast<std::size_t>(t)] = true;
+      frontier.push(t);
+    }
+  }
+
+  // Net change in connections adjusts the capital, each end being worth +1 (R23).
+  if (connected != previously) {
+    s.cities[capital].population = static_cast<std::int16_t>(
+        s.cities[capital].population + (connected - previously) * rules.connection_population);
+  }
+  (void)rules;
+}
+
 void update_siege_flags(GameState& s) {
   for (CityId c = 0; c < s.city_count; ++c) {
     City& city = s.cities[c];
@@ -448,8 +517,9 @@ void begin_turn(GameState& s, const Rules& rules) {
     unit.remove(UnitFlag::FreshlyTrained);
   }
 
-  // Temples grow every 2 turns to level 5 -- owner-verified, and contradicting every wiki
-  // source, which said 12 turns to max (resolutions.md R24).
+  // Temples grow on their own every 2 turns to level 5, scoring 100 per level
+  // (resolutions.md R24 -- owner-verified, and contradicting every wiki source, which said
+  // 12 turns to max rather than 8).
   if (rules.temple_growth_interval > 0 && s.turn % rules.temple_growth_interval == 0) {
     for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
       Tile& tile = s.tiles[t];
@@ -458,9 +528,28 @@ void begin_turn(GameState& s, const Rules& rules) {
                              tile.improvement == Improvement::ForestTemple ||
                              tile.improvement == Improvement::MountainTemple ||
                              tile.improvement == Improvement::WaterTemple;
-      (void)is_temple;  // temple levels are tracked in a later milestone
+      if (!is_temple) continue;
+      if (tile.improvement_level < rules.temple_max_level) {
+        tile.improvement_level = static_cast<std::uint8_t>(tile.improvement_level + 1);
+      }
     }
   }
+
+  // Auto-recover: "If a unit does not take any action in a given turn, it will automatically
+  // heal if it can do so." Applied at the START of the owner's next turn, because that is the
+  // first moment we know the unit did nothing on the previous one.
+  for (UnitId u = 0; u < s.unit_count; ++u) {
+    Unit& unit = s.units[u];
+    if (unit.owner != player || !unit.alive()) continue;
+    if (unit.moves_used == 0 && unit.hp < max_hp_for(rules, unit)) {
+      const int amount = (s.tiles[unit.tile].owner == player) ? 4 : 2;
+      unit.hp = static_cast<std::int16_t>(
+          std::min(max_hp_for(rules, unit), unit.hp + amount * kHpScale));
+    }
+    unit.moves_used = 0;
+  }
+
+  recompute_city_connections(s, rules, player);
 
   recompute_visibility(s, rules, player);
   check_meetings(s, rules, player, nullptr);
@@ -543,9 +632,91 @@ Availability can_research(const GameState& s, const Rules& rules, PlayerId playe
   return Availability::Available;
 }
 
+// Roads are a tile FLAG rather than an Improvement, because a tile may carry a road AND a
+// building. Buildable on your own or NEUTRAL territory, never enemy (resolutions.md R31).
+Availability can_build_road(const GameState& s, const Rules&, TileIdx tile_idx,
+                            BlockReason& reason) {
+  reason = BlockReason::None;
+  const Tile& tile = s.tiles[tile_idx];
+  if (tile.has(TileFlag::Road) || tile.has(TileFlag::Bridge)) {
+    reason = BlockReason::AlreadyBuilt;
+    return Availability::Blocked;
+  }
+  if (tile.terrain == Terrain::Mountain || tile.terrain == Terrain::Ocean) {
+    reason = BlockReason::WrongTerrain;  // no roads on mountains (live-rules.md §6.1)
+    return Availability::Blocked;
+  }
+  if (tile.owner != kNoPlayer && tile.owner != s.current_player) {
+    reason = BlockReason::NotYourTerritory;
+    return Availability::Blocked;
+  }
+  const bool bridge = tile.terrain == Terrain::Water;
+  if (!s.me().has_tech(bridge ? Tech::Sailing : Tech::Roads)) return Availability::MissingTech;
+  const int cost = bridge ? 5 : 2;
+  if (s.me().stars < cost) return Availability::CannotAfford;
+  return Availability::Available;
+}
+
+// Embarking: a land unit standing on a friendly Port becomes a Raft carrying it. The hull has
+// NO HP of its own -- it is the SAME entity and damage carries both ways (R29).
+Availability can_embark(const GameState& s, const Rules& rules, TileIdx tile_idx,
+                        BlockReason& reason) {
+  reason = BlockReason::None;
+  const UnitId id = s.tiles[tile_idx].unit;
+  if (id == kNoUnit) {
+    reason = BlockReason::NoResource;
+    return Availability::Blocked;
+  }
+  const Unit& u = s.units[id];
+  if (u.has(UnitFlag::Embarked) || s.tiles[tile_idx].improvement != Improvement::Port) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
+  if (s.tiles[tile_idx].owner != u.owner) {
+    reason = BlockReason::NotYourTerritory;
+    return Availability::Blocked;
+  }
+  if (!s.players[u.owner].has_tech(Tech::Fishing)) return Availability::MissingTech;
+  (void)rules;
+  return Availability::Available;
+}
+
+// Raft -> Scout / Rammer / Bomber, in your own territory. Upgrading does NOT heal.
+Availability can_upgrade_naval(const GameState& s, const Rules& rules, TileIdx tile_idx,
+                               UnitType into, BlockReason& reason) {
+  reason = BlockReason::None;
+  const UnitId id = s.tiles[tile_idx].unit;
+  if (id == kNoUnit || !s.units[id].has(UnitFlag::Embarked) ||
+      s.units[id].type != UnitType::Raft) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
+  if (into != UnitType::Scout && into != UnitType::Rammer && into != UnitType::Bomber) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
+  if (s.tiles[tile_idx].owner != s.units[id].owner) {
+    reason = BlockReason::NotYourTerritory;
+    return Availability::Blocked;
+  }
+  const UnitStats& stats = rules.unit(into);
+  if (stats.needs_tech && !s.me().has_tech(stats.tech)) return Availability::MissingTech;
+  if (s.me().stars < stats.cost) return Availability::CannotAfford;
+  return Availability::Available;
+}
+
 Availability can_build(const GameState& s, const Rules& rules, TileIdx tile_idx,
                        Improvement imp, BlockReason& reason) {
   reason = BlockReason::None;
+  if (imp == Improvement::Road || imp == Improvement::Bridge) {
+    const bool want_bridge = imp == Improvement::Bridge;
+    const bool is_water = s.tiles[tile_idx].terrain == Terrain::Water;
+    if (want_bridge != is_water) {
+      reason = BlockReason::WrongTerrain;
+      return Availability::Blocked;
+    }
+    return can_build_road(s, rules, tile_idx, reason);
+  }
   if (imp == Improvement::None) {
     reason = BlockReason::WrongTerrain;
     return Availability::Blocked;
@@ -717,6 +888,18 @@ void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
   if (can_harvest(s, rules, tile_idx, scratch) == Availability::Available) {
     mask.set(static_cast<int>(Verb::Harvest));
   }
+
+  // The agent's verb set is derived from the SAME option enumerator the UI uses, so the two
+  // cannot offer different things. This is the projection described in options.hpp.
+  {
+    std::vector<Option> options;
+    Layer layers[4];
+    const int count = tile_layers(s, tile_idx, layers);
+    for (int i = 0; i < count; ++i) {
+      enumerate_options(s, rules, tile_idx, layers[i], false, options);
+      for (const Option& o : options) mask.set(static_cast<int>(o.verb));
+    }
+  }
   for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
     if (can_build(s, rules, tile_idx, static_cast<Improvement>(i), scratch) == Availability::Available) {
       mask.set(static_cast<int>(Verb::Build));
@@ -795,6 +978,36 @@ void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
       }
       break;
     }
+    case Verb::Convert: {
+      const UnitId id = s.tiles[tile_idx].unit;
+      const Coord c = s.dims.coord(tile_idx);
+      for (const Coord off : kNeighbourOffsets) {
+        const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                      static_cast<std::int16_t>(c.y + off.y)};
+        if (!s.dims.contains(n)) continue;
+        const TileIdx t = s.dims.index(n);
+        const UnitId other = s.tiles[t].unit;
+        if (other != kNoUnit && s.units[other].alive() &&
+            s.units[other].owner != s.units[id].owner) {
+          mask.set(tile_to_slot(t));
+        }
+      }
+      break;
+    }
+    case Verb::UpgradeNaval: {
+      BlockReason why = BlockReason::None;
+      for (const UnitType into : {UnitType::Scout, UnitType::Rammer, UnitType::Bomber}) {
+        if (can_upgrade_naval(s, rules, tile_idx, into, why) == Availability::Available) {
+          mask.set(unit_type_to_slot(into));
+        }
+      }
+      break;
+    }
+    case Verb::Recover:
+    case Verb::Promote:
+    case Verb::Heal:
+    case Verb::Disband:
+    case Verb::Destroy:
     case Verb::Harvest:
     case Verb::Capture:
     case Verb::Examine:
@@ -845,6 +1058,105 @@ void kill_unit(GameState& s, UnitId id) {
   u.tile = kNoTile;
 }
 
+// Finds a free tile for a spawned unit, preferring `preferred` then its neighbours.
+TileIdx free_spawn_tile(const GameState& s, const Rules& rules, PlayerId owner, TileIdx preferred) {
+  if (preferred >= 0 && s.tiles[preferred].unit == kNoUnit &&
+      tribe_can_enter(s, rules, owner, s.tiles[preferred])) {
+    return preferred;
+  }
+  const Coord c = s.dims.coord(preferred);
+  for (const Coord off : kNeighbourOffsets) {
+    const Coord n{static_cast<std::int16_t>(c.x + off.x), static_cast<std::int16_t>(c.y + off.y)};
+    if (!s.dims.contains(n)) continue;
+    const TileIdx t = s.dims.index(n);
+    if (s.tiles[t].unit == kNoUnit && tribe_can_enter(s, rules, owner, s.tiles[t])) return t;
+  }
+  return kNoTile;
+}
+
+UnitId spawn_unit(GameState& s, const Rules& rules, UnitType type, PlayerId owner, TileIdx tile,
+                  CityId home, bool veteran) {
+  if (s.unit_count >= kMaxUnits || tile == kNoTile) return kNoUnit;
+  const UnitId id = s.unit_count++;
+  Unit& u = s.units[id];
+  u = Unit{};
+  u.type = type;
+  u.carried_type = type;
+  u.owner = owner;
+  u.tile = tile;
+  u.home_city = home;
+  if (veteran) u.add(UnitFlag::Veteran);
+  u.hp = static_cast<std::int16_t>(max_hp_for(rules, u));
+  u.add(UnitFlag::FreshlyTrained);
+  s.tiles[tile].unit = id;
+  if (home != kNoCity) {
+    s.cities[home].unit_count = static_cast<std::uint8_t>(s.cities[home].unit_count + 1);
+  }
+  return id;
+}
+
+// The Explorer is not a unit you command -- it is an EVENT. It walks its whole budget the
+// moment it is granted, revealing fog, then vanishes. Modelling it as a controllable unit is
+// why it appeared not to work at all: it spawned with no moves and nothing ever drove it.
+void run_explorer(GameState& s, const Rules& rules, PlayerId owner, TileIdx from,
+                  std::vector<std::string>* log) {
+  const int budget = rules.unit(UnitType::Explorer).move;  // 12 in v2.16.3, not the wiki's 15
+  TileIdx at = from;
+  int revealed = 0;
+  for (int step = 0; step < budget; ++step) {
+    // Walk toward unexplored ground, preferring tiles that reveal the most. Ties broken from
+    // the STATE's rng so a replay reproduces the same walk.
+    const Coord c = s.dims.coord(at);
+    TileIdx best = kNoTile;
+    int best_gain = -1;
+    for (int i = 0; i < kNeighbourCount; ++i) {
+      const Coord off = kNeighbourOffsets[(i + static_cast<int>(s.rng.bounded(kNeighbourCount))) %
+                                          kNeighbourCount];
+      const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                    static_cast<std::int16_t>(c.y + off.y)};
+      if (!s.dims.contains(n)) continue;
+      const TileIdx t = s.dims.index(n);
+      // The Explorer ignores units and terrain cost but still respects tech gating on
+      // mountains and water, per live-rules.md §4.3.
+      if (s.tiles[t].terrain == Terrain::Mountain && !s.players[owner].has_tech(Tech::Climbing)) {
+        continue;
+      }
+      if (is_water(s.tiles[t].terrain) && !s.players[owner].has_tech(Tech::Sailing)) continue;
+
+      int gain = 0;
+      const Coord tc = s.dims.coord(t);
+      for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+          const Coord look{static_cast<std::int16_t>(tc.x + dx),
+                           static_cast<std::int16_t>(tc.y + dy)};
+          if (s.dims.contains(look) && !s.explored[owner].test(s.dims.index(look))) ++gain;
+        }
+      }
+      if (gain > best_gain) {
+        best_gain = gain;
+        best = t;
+      }
+    }
+    if (best == kNoTile) break;
+    at = best;
+    const Coord ac = s.dims.coord(at);
+    for (int dy = -1; dy <= 1; ++dy) {
+      for (int dx = -1; dx <= 1; ++dx) {
+        const Coord look{static_cast<std::int16_t>(ac.x + dx),
+                         static_cast<std::int16_t>(ac.y + dy)};
+        if (!s.dims.contains(look)) continue;
+        const TileIdx t = s.dims.index(look);
+        if (!s.explored[owner].test(t)) ++revealed;
+        s.explored[owner].set(t);
+      }
+    }
+  }
+  check_meetings(s, rules, owner, log);
+  if (log) {
+    log->push_back("Explorer revealed " + std::to_string(revealed) + " tiles");
+  }
+}
+
 void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new_owner,
                   std::vector<std::string>* log) {
   City& c = s.cities[city_id];
@@ -887,11 +1199,32 @@ void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward r
       claim_territory(s, city_id, rules.grown_city_border);
       break;
     case CityReward::Park: c.park_count = static_cast<std::uint8_t>(c.park_count + 1); break;
-    case CityReward::SuperUnit:
     case CityReward::Explorer:
+      run_explorer(s, rules, c.owner, c.tile, log);
+      break;
+    case CityReward::SuperUnit: {
+      // Spawning a super unit DISPLACES whatever stands on the city, or kills it if the city
+      // is completely surrounded (resolutions.md R27). This is the counter to sitting on a
+      // city to besiege it, and is documented nowhere -- it came from the owner.
+      const TileIdx tile = c.tile;
+      const UnitId occupant = s.tiles[tile].unit;
+      if (occupant != kNoUnit) {
+        const TileIdx shove = free_spawn_tile(s, rules, s.units[occupant].owner, tile);
+        s.tiles[tile].unit = kNoUnit;
+        if (shove != kNoTile && shove != tile) {
+          s.units[occupant].tile = shove;
+          s.tiles[shove].unit = occupant;
+          if (log) log->push_back("The Giant shoved a unit aside");
+        } else {
+          kill_unit(s, occupant);
+          if (log) log->push_back("The Giant crushed a surrounded unit");
+        }
+      }
+      spawn_unit(s, rules, UnitType::Giant, c.owner, tile, city_id, false);
+      if (log) log->push_back("A Giant arrives");
+      break;
+    }
     default:
-      // Spawning displaces whatever occupies the city (resolutions.md R27) -- implemented
-      // with the rest of unit spawning in the next milestone.
       break;
   }
   c.pending_rewards = static_cast<std::int8_t>(c.pending_rewards - 1);
@@ -945,8 +1278,23 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       s.tiles[actor_tile].unit = kNoUnit;
       u.tile = destination;
       s.tiles[destination].unit = id;
+
+      // Embark / disembark. A naval unit is the SAME entity as the land unit it carries:
+      // carried_type remembers what to restore, and HP passes through untouched in both
+      // directions (resolutions.md R29).
+      const bool onto_water = is_water(s.tiles[destination].terrain);
+      if (onto_water && !u.has(UnitFlag::Embarked)) {
+        u.carried_type = u.type;
+        u.type = UnitType::Raft;
+        u.add(UnitFlag::Embarked);
+      } else if (!onto_water && u.has(UnitFlag::Embarked)) {
+        u.type = u.carried_type;
+        u.remove(UnitFlag::Embarked);
+      }
+
       u.add(UnitFlag::HasMoved);
       u.add(UnitFlag::ArrivedThisTurn);
+      u.moves_used = 1;
       u.moves_left = 0;
       // Moving ends the turn unless the unit has Dash (resolutions.md R26).
       if (!has_skill(static_cast<Skill>(rules.unit(u.type).skills), Skill::Dash) ||
@@ -975,6 +1323,12 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       }
       const TileIdx target_tile = s.units[defender].tile;
       const bool killed = !s.units[defender].alive();
+      // Kills count toward promotion by ATTACK OR RETALIATION (live-rules.md §1.13), so the
+      // defender is credited too when it kills the attacker on the counter.
+      if (killed) s.units[attacker].kills = static_cast<std::uint8_t>(s.units[attacker].kills + 1);
+      if (combat.retaliates && !s.units[attacker].alive()) {
+        s.units[defender].kills = static_cast<std::uint8_t>(s.units[defender].kills + 1);
+      }
       if (killed) kill_unit(s, defender);
       Unit& a = s.units[attacker];
 
@@ -995,6 +1349,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
         kill_unit(s, attacker);
       } else {
         a.add(UnitFlag::HasAttacked);
+        a.moves_used = 1;
         // Attacking ends the turn unless the unit has Escape (R26).
         if (!has_skill(static_cast<Skill>(rules.unit(a.type).skills), Skill::Escape)) {
           a.add(UnitFlag::TurnEnded);
@@ -1039,6 +1394,14 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
     case Verb::Build: {
       Tile& tile = s.tiles[actor_tile];
       const auto imp = slot_to_improvement(index);
+      if (imp == Improvement::Road || imp == Improvement::Bridge) {
+        const bool bridge = tile.terrain == Terrain::Water;
+        s.me().stars -= bridge ? 5 : 2;
+        tile.add(bridge ? TileFlag::Bridge : TileFlag::Road);
+        recompute_city_connections(s, rules, s.current_player);
+        if (log) log->push_back(bridge ? "Built a bridge" : "Built a road");
+        break;
+      }
       const ImprovementStats& stats = rules.improvement(imp);
       s.me().stars -= stats.cost;
       tile.improvement = imp;
@@ -1088,6 +1451,97 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
     }
     case Verb::ChooseReward: {
       grant_reward(s, rules, city_at(s, actor_tile), slot_to_reward(index), log);
+      break;
+    }
+    case Verb::Recover: {
+      const UnitId id = s.tiles[actor_tile].unit;
+      Unit& u = s.units[id];
+      // +4 in your own territory, +2 in neutral OR enemy -- both give 2 (live-rules.md §1.12).
+      const int amount = (s.tiles[actor_tile].owner == u.owner) ? 4 : 2;
+      u.hp = static_cast<std::int16_t>(
+          std::min(max_hp_for(rules, u), u.hp + amount * kHpScale));
+      u.add(UnitFlag::TurnEnded);
+      u.moves_left = 0;
+      if (log) log->push_back("Recovered " + std::to_string(amount) + " HP");
+      break;
+    }
+    case Verb::Promote: {
+      const UnitId id = s.tiles[actor_tile].unit;
+      Unit& u = s.units[id];
+      // maxHealth += 5, THEN heal completely. No other stat changes. Once per unit.
+      u.add(UnitFlag::Veteran);
+      u.hp = static_cast<std::int16_t>(max_hp_for(rules, u));
+      if (log) log->push_back("Promoted to veteran");
+      break;
+    }
+    case Verb::Heal: {
+      // Mind Bender: heals ALL adjacent friendlies by up to 4, and consumes its whole turn.
+      const UnitId id = s.tiles[actor_tile].unit;
+      Unit& healer = s.units[id];
+      const Coord c = s.dims.coord(actor_tile);
+      int healed = 0;
+      for (const Coord off : kNeighbourOffsets) {
+        const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                      static_cast<std::int16_t>(c.y + off.y)};
+        if (!s.dims.contains(n)) continue;
+        const UnitId other = s.tiles[s.dims.index(n)].unit;
+        if (other == kNoUnit || !s.units[other].alive()) continue;
+        if (s.units[other].owner != healer.owner) continue;
+        const int before = s.units[other].hp;
+        s.units[other].hp = static_cast<std::int16_t>(
+            std::min(max_hp_for(rules, s.units[other]), s.units[other].hp + 4 * kHpScale));
+        if (s.units[other].hp > before) ++healed;
+      }
+      healer.add(UnitFlag::TurnEnded);
+      healer.moves_left = 0;
+      if (log) log->push_back("Healed " + std::to_string(healed) + " nearby units");
+      break;
+    }
+    case Verb::Convert: {
+      // The Mind Bender has attack 0, so this deals no damage -- the target keeps its HP and
+      // its veteran progress, and simply changes side.
+      const UnitId id = s.tiles[actor_tile].unit;
+      const UnitId target = s.tiles[slot_to_tile(index)].unit;
+      Unit& converted = s.units[target];
+      if (converted.home_city != kNoCity && s.cities[converted.home_city].unit_count > 0) {
+        s.cities[converted.home_city].unit_count =
+            static_cast<std::uint8_t>(s.cities[converted.home_city].unit_count - 1);
+      }
+      converted.owner = s.units[id].owner;
+      converted.home_city = kNoCity;
+      converted.add(UnitFlag::TurnEnded);
+      s.units[id].add(UnitFlag::TurnEnded);
+      s.units[id].moves_left = 0;
+      recompute_visibility(s, rules, converted.owner);
+      if (log) log->push_back("Converted an enemy unit");
+      break;
+    }
+    case Verb::UpgradeNaval: {
+      const UnitId id = s.tiles[actor_tile].unit;
+      const auto into = slot_to_unit_type(index);
+      s.me().stars -= rules.unit(into).cost;
+      // Upgrading does NOT heal: the hull carries no HP of its own, so the embarked unit's
+      // health passes straight through (resolutions.md R29).
+      s.units[id].type = into;
+      s.units[id].add(UnitFlag::TurnEnded);
+      s.units[id].moves_left = 0;
+      if (log) log->push_back("Upgraded a naval unit");
+      break;
+    }
+    case Verb::Disband: {
+      const UnitId id = s.tiles[actor_tile].unit;
+      // Disband refunds half the unit's cost, rounded down.
+      s.me().stars += rules.unit(s.units[id].type).cost / 2;
+      kill_unit(s, id);
+      if (log) log->push_back("Disbanded a unit");
+      break;
+    }
+    case Verb::Destroy: {
+      // Scorched earth: the documented counterplay to losing a city, which only makes sense
+      // because a captured city otherwise inherits everything.
+      s.tiles[actor_tile].improvement = Improvement::None;
+      s.tiles[actor_tile].improvement_level = 0;
+      if (log) log->push_back("Destroyed a building");
       break;
     }
     case Verb::Examine: {
@@ -1362,6 +1816,95 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
         out.push_back(o);
       }
     }
+
+    // Recover -- always offered on a damaged unit that has not acted.
+    if (u.hp < max_hp_for(rules, u)) {
+      const bool can = spent == BlockReason::None;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        Option o = make_option(Verb::Recover, Layer::Unit, 0, status,
+                               can ? BlockReason::None : spent);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
+      }
+    }
+
+    // Promote -- BANKED, so it stays on offer indefinitely once earned. Deliberately not
+    // automatic: promotion heals completely, so holding it is a free heal in reserve.
+    const bool promotable = !has_skill(static_cast<Skill>(stats.skills), Skill::Static) &&
+                            !u.has(UnitFlag::Veteran);
+    if (promotable && (u.kills > 0 || include_unavailable)) {
+      const bool can = u.kills >= rules.veteran_kills_required;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        Option o = make_option(Verb::Promote, Layer::Unit, 0, status,
+                               can ? BlockReason::None : BlockReason::OutOfRange);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
+      }
+    }
+
+    if (has_skill(static_cast<Skill>(stats.skills), Skill::Heal)) {
+      const bool can = spent == BlockReason::None;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        Option o = make_option(Verb::Heal, Layer::Unit, 0, status,
+                               can ? BlockReason::None : spent);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
+      }
+    }
+
+    if (has_skill(static_cast<Skill>(stats.skills), Skill::Convert)) {
+      bool adjacent_enemy = false;
+      const Coord c = s.dims.coord(tile);
+      for (const Coord off : kNeighbourOffsets) {
+        const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                      static_cast<std::int16_t>(c.y + off.y)};
+        if (!s.dims.contains(n)) continue;
+        const UnitId other = s.tiles[s.dims.index(n)].unit;
+        if (other != kNoUnit && s.units[other].alive() && s.units[other].owner != u.owner) {
+          adjacent_enemy = true;
+        }
+      }
+      const bool can = spent == BlockReason::None && adjacent_enemy;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        out.push_back(make_option(Verb::Convert, Layer::Unit, 0, status,
+                                  can ? BlockReason::None : BlockReason::OutOfRange));
+      }
+    }
+
+    // Embark / naval upgrade.
+    {
+      BlockReason why = BlockReason::None;
+      const Availability status = can_embark(s, rules, tile, why);
+      if (status != Availability::Blocked && keep(status, include_unavailable)) {
+        Option o = make_option(Verb::Move, Layer::Unit, 0, status, why);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        (void)o;
+      }
+      for (const UnitType into : {UnitType::Scout, UnitType::Rammer, UnitType::Bomber}) {
+        const Availability up = can_upgrade_naval(s, rules, tile, into, why);
+        if (up == Availability::Blocked || !keep(up, include_unavailable)) continue;
+        Option o = make_option(Verb::UpgradeNaval, Layer::Unit, rules.unit(into).cost, up, why);
+        o.unit_type = into;
+        o.required_tech = rules.unit(into).tech;
+        o.action = Action{static_cast<std::int16_t>(unit_type_to_slot(into))};
+        out.push_back(o);
+      }
+    }
+
+    {
+      const bool can = spent == BlockReason::None;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        Option o = make_option(Verb::Disband, Layer::Unit, -(rules.unit(u.type).cost / 2),
+                               status, can ? BlockReason::None : spent);
+        o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+        out.push_back(o);
+      }
+    }
     return;
   }
 
@@ -1419,6 +1962,14 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
     o.improvement = imp;
     o.required_tech = rules.improvement(imp).tech;
     o.action = Action{static_cast<std::int16_t>(improvement_to_slot(imp))};
+    out.push_back(o);
+  }
+
+  if (s.tiles[tile].improvement != Improvement::None &&
+      s.tiles[tile].owner == s.current_player) {
+    Option o = make_option(Verb::Destroy, Layer::Tile, 0, Availability::Available,
+                           BlockReason::None);
+    o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
     out.push_back(o);
   }
 

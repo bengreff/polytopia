@@ -57,6 +57,10 @@ enum class Improvement : std::uint8_t {
   ForestTemple,   // Forest.
   MountainTemple, // Mountain.
   WaterTemple,    // Water or Ocean.
+  // Roads and bridges are TILE FLAGS in the state (a tile may carry a road AND a building),
+  // but they need action-space slots to be buildable, so they appear here as targets only.
+  Road,
+  Bridge,
   Count,
 };
 

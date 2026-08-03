@@ -53,6 +53,9 @@ struct Tile {
   CityId city{kNoCity};  // Which city claims this tile.
 
   UnitId unit{kNoUnit};  // Occupant, if any.
+  // Temples grow on their own every 2 turns to level 5 (resolutions.md R24). Only temples
+  // use this today, but it is the natural home for any levelled improvement.
+  std::uint8_t improvement_level{0};
   std::uint8_t flags{0};
 
   [[nodiscard]] constexpr bool has(TileFlag f) const {
@@ -89,6 +92,11 @@ struct Unit {
 
   CityId home_city{kNoCity};
   std::uint8_t moves_left{0};
+  // Kills, by attack OR retaliation. Three earns a promotion, which is BANKED and cashed in
+  // by the player -- deliberately deferrable, because promotion heals completely and so
+  // doubles as a free heal held in reserve (live-rules.md §1.13).
+  std::uint8_t kills{0};
+  std::uint8_t moves_used{0};  // Explorer budget; also distinguishes "acted" from "spent"
   std::uint16_t flags{0};
 
   [[nodiscard]] constexpr bool has(UnitFlag f) const {

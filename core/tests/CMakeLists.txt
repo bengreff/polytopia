@@ -6,6 +6,7 @@ add_executable(poly_tests
   test_state.cpp
   test_json.cpp
   test_knowledge.cpp
+  test_mechanics.cpp
   test_mapgen.cpp
 )
 
