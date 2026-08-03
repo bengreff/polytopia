@@ -16,6 +16,18 @@ option(POLY_WERROR "Treat warnings as errors" ON)
 option(POLY_ASAN "Build with address + UB sanitizers" OFF)
 
 add_library(poly_flags INTERFACE)
+
+# Float determinism across macOS ARM64, Windows x64 and WASM. See docs/rules-research/
+# resolutions.md R14. The damage formula genuinely needs floats -- Knight attack is 3.5,
+# Cloak defence 0.5 -- and IEEE-754 basic ops reproduce across those three targets ONLY if
+# the compiler may not contract a*b+c into an FMA and may not reorder under fast-math.
+# Without this the browser build and the trainer can compute different damage from the same
+# position, which is the exact divergence README.md §4 calls "the project is already broken".
+target_compile_options(poly_flags INTERFACE
+  $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-ffp-contract=off>
+  $<$<CXX_COMPILER_ID:MSVC>:/fp:precise>
+)
+
 target_compile_options(poly_flags INTERFACE
   $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic -Wshadow -Wconversion>
   $<$<AND:$<BOOL:${POLY_WERROR}>,$<CXX_COMPILER_ID:AppleClang,Clang,GNU>>:-Werror>
