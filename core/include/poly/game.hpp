@@ -72,6 +72,11 @@ CombatResult resolve_combat(const GameState& s, const Rules& rules, UnitId attac
 // a destination and the engine routes (resolutions.md R19), so this is the whole move API.
 void reachable_tiles(const GameState& s, const Rules& rules, UnitId unit, ActionMask& out);
 
+// Credits income, resets units, and recomputes visibility for the current player. Called on
+// every turn change AND once by new_game -- without that call the opening player would begin
+// the game with no income at all, since nothing has changed hands yet.
+void begin_turn(GameState& s, const Rules& rules);
+
 bool unit_can_act(const GameState& s, UnitId unit);
 CityId city_at(const GameState& s, TileIdx tile);
 void recompute_visibility(GameState& s, const Rules& rules, PlayerId player);

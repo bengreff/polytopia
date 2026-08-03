@@ -389,8 +389,6 @@ void update_siege_flags(GameState& s) {
 // Turn cycle
 // -----------------------------------------------------------------------------------------
 
-namespace {
-
 void begin_turn(GameState& s, const Rules& rules) {
   const PlayerId player = s.current_player;
   update_siege_flags(s);
@@ -432,6 +430,8 @@ void begin_turn(GameState& s, const Rules& rules) {
   s.selected = kNoTile;
   s.global_actor = false;
 }
+
+namespace {
 
 void advance_player(GameState& s, const Rules& rules) {
   for (int i = 0; i < s.player_count; ++i) {

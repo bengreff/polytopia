@@ -15,6 +15,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Panels below set display:flex, which would otherwise defeat the hidden attribute. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;

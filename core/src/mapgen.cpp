@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -822,6 +824,19 @@ void reveal_start(Gen& g) {
 // Shared config validation
 // ---------------------------------------------------------------------------------------
 
+// A BYTE-exact reset, which `state = GameState{}` is not.
+//
+// GameState is trivially copyable and therefore full of padding -- Tile alone is 9 used bytes
+// in a 10-byte struct. Padding is never initialised by member-wise construction or copy, so
+// two states built from the same config can differ in bytes no field owns. That is invisible
+// until something hashes or memcmps the state, which is exactly what the determinism test, the
+// replay format and the transposition table all do. Zeroing the storage first and then
+// constructing in place leaves the padding deterministically zero.
+void reset_state(GameState& state) {
+  std::memset(static_cast<void*>(&state), 0, sizeof(GameState));
+  new (static_cast<void*>(&state)) GameState{};
+}
+
 bool validate(const MapConfig& cfg, std::string& error) {
   if (cfg.dims.width < 3 || cfg.dims.height < 3) {
     error = "map dimensions must be at least 3x3";
@@ -943,7 +958,7 @@ bool generate_map(const MapConfig& cfg, GameState& state, std::string& error) {
   // Full reset, INCLUDING the capacity beyond the live map. Two states generated from equal
   // configs must be byte-identical, and stale bytes in the unused tail would break that for
   // any caller that hashes the whole struct.
-  state = GameState{};
+  reset_state(state);
   state.dims = cfg.dims;
   state.rng.seed(cfg.seed, 1);
   state.turn = 0;
@@ -1012,7 +1027,7 @@ bool load_fixed_map(const std::string& path, GameState& state, std::string& erro
     return false;
   }
 
-  state = GameState{};
+  reset_state(state);
   state.dims = cfg.dims;
   state.rng.seed(cfg.seed, 1);
   state.phase = Phase::Select;

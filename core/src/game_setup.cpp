@@ -207,6 +207,11 @@ bool new_game(const GameConfig& cfg, const Rules& rules, GameState& out, std::st
 
   for (PlayerId p = 0; p < out.player_count; ++p) recompute_visibility(out, rules, p);
 
+  // The opening player's turn has to be STARTED, not just entered. Income is credited at
+  // turn start (resolutions.md R1), and nothing has changed hands yet, so without this the
+  // first player begins the game on zero stars and cannot act at all on turn 1.
+  begin_turn(out, rules);
+
   out.phase = Phase::Select;
   out.selected = kNoTile;
   return true;

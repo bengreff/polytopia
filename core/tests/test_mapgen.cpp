@@ -492,7 +492,7 @@ TEST("mapgen: a fixed JSON map loads exactly as written") {
       ],
       "players": [
         {"tribe": "bardur", "capital": [2, 2]},
-        {"tribe": "luxidoor", "capital": 32}
+        {"tribe": "luxidoor", "capital": 30}
       ]
     })";
   }
@@ -508,7 +508,7 @@ TEST("mapgen: a fixed JSON map loads exactly as written") {
   CHECK_EQ(static_cast<int>(s.dims.height), 7);
   CHECK_EQ(static_cast<int>(s.player_count), 2);
   CHECK_EQ(s.cities[0].tile, s.dims.index({2, 2}));
-  CHECK_EQ(s.cities[1].tile, static_cast<TileIdx>(32));
+  CHECK_EQ(s.cities[1].tile, static_cast<TileIdx>(30));  // 7*4 + 2 = (2, 4)
   CHECK_EQ(static_cast<int>(s.cities[0].level), 1);
   CHECK_EQ(static_cast<int>(s.cities[1].level), 3);  // Luxidoor, R12
   CHECK(s.units[0].type == UnitType::Warrior);
