@@ -345,3 +345,48 @@ The PolyEnv audit flagged this as "the single highest-leverage unverified number
 the entire economy curve, and it was single-sourced from one code comment there. Now confirmed
 against the live client, which also confirms the 111/111 table match behind the Literacy variant
 `ceil(cost * 2/3)` (R11). The economy formula is settled.
+
+---
+
+## Corrections from the first playtest (2026-08-03)
+
+**C1 — Initial reveal is 5×5 explored / 3×3 owned. R18's "1 tile radius" was WRONG.**
+Owner correction on playtest, the UI research, and the turn-0 score identity now all agree on
+radius 2. This retires the conflict both parallel agents independently flagged — and the losing
+answer was the owner's own earlier one, which is worth recording: `OWNER` authority is strong
+but not infallible, and a derived arithmetic identity that reproduces 16 published values beat
+it. When a self-test disagrees with a remembered rule, the self-test deserves a real hearing.
+
+**C2 — Starting stars are PER TRIBE and were never implemented at all.**
+Xin-xi 7 · Oumaji 6 · Hoodrick 7 · Quetzali 7 · Yădakk 7 · **Luxidoor 2** · all others 5.
+Source: the official 2025 balance-pass dev blog. **The wiki's flat 5 is stale and wrong**, as
+is every pre-2025 secondary source. Map generation flagged that it was not setting
+`Player::stars` and I did not follow up, so every tribe has been starting on income alone.
+Luxidoor's 2 is the trade against its level-3 capital, independently corroborating R12.
+
+**C3 — Meeting a tribe is an EVENT, not a flag.** First sight of another tribe's unit or city
+fires a popup, reveals their identity, and **pays stars scaled to that tribe's score**. An
+economic mechanic, currently absent entirely.
+
+**C4 — Opponent information is far more restricted than implemented.** Score and city count are
+permanently public. Stars, income, techs and city population are never visible. Tribe identity
+is unknown until met or until Diplomacy. See `docs/ui-rebuild-plan.md` §3 for the full matrix.
+
+**C5 — Movement markers must be computed from TRUE state, not visible state.** Zone of control
+from a fog-hidden enemy still truncates movement. Computing reachability client-side from
+visible tiles would both draw markers the engine rejects and leak the hidden unit's position.
+
+## New UNRESOLVED from the UI research
+
+- **U-G: Is opponent income revealed by Diplomacy or by the Embassy?** Narrowed to the Embassy
+  by elimination; not confirmed. The public written record is exhausted — settle it with a
+  PolyMod patch logging `PlayerInfoPopup.Refresh`.
+- **U-H: Does an enemy city's info panel show its star production and point value?** Owner says
+  yes; the UI research says enemy cities render a bare name plate. Probably compatible — bare
+  plate on the map, detail in the panel — but implement both readings explicitly and verify.
+
+## Source hazard
+
+A widely-circulated post presenting itself as the 2.8.6 changelog contains *"Seeing opponent's
+score now only available with Strategy."* It is an **April Fools joke** (2024-04-01). It reads
+exactly like a real gating rule and must never enter the ruleset.
