@@ -164,8 +164,8 @@ sent information the player cannot see** — a UI bug must not be able to leak t
      "capital": true, "walled": false, "besieged": false,
      "units": 1, "capacity": 3, "pending_rewards": 0,
      "production": 3}
-  ],
-
+  ]
+}
 ```
 
 ### Rules the UI must honour
@@ -178,10 +178,10 @@ sent information the player cannot see** — a UI bug must not be able to leak t
    this game. Annotate `blocked` in place, e.g. a full city still LISTS the unit, suffixed
    "(too many)". Never delete an option silently.
 3. **Never construct a target index by arithmetic.** Use the `target` from an option.
-2. **Re-render entirely from each `StateView`.** Do not mutate a local copy of the game state.
+4. **Re-render entirely from each `StateView`.** Do not mutate a local copy of the game state.
    The engine is the single source of truth; a client-side prediction that drifts is a bug that
    looks like a rules bug.
-3. `population` can be negative — render it as such (red), never clamp it.
-4. `hp` is a float and can land on `.5`.
-5. The three phases drive the interaction: click a tile (SELECT) → a verb menu appears, filled
+5. `population` can be negative — render it as such (red), never clamp it.
+6. `hp` is a float and can land on `.5`.
+
    from `legal` (VERB) → legal targets highlight (TARGET). `Deselect` always returns to SELECT.
