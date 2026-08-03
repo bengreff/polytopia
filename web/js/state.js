@@ -10,9 +10,18 @@
  * so the renderer does not do linear scans per tile.
  */
 
-/** Normalised label, for the few places the protocol only identifies an action by its text. */
+/**
+ * Normalised label, for the few places the protocol only identifies an action
+ * by its text. Separators are folded so "End Turn", "end_turn" and "end-turn"
+ * all match — the wire protocol does not give these two universal actions a
+ * stable id, so text is all we have to go on.
+ */
 export function labelKey(s) {
-  return String(s || '').trim().toLowerCase();
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 /**
@@ -143,7 +152,7 @@ export class GameState {
   }
 
   endTurnAction() {
-    return this.findByLabel('end turn') || this.findByLabel('endturn');
+    return this.findByLabel('end turn') || this.findByLabel('endturn') || this.findByLabel('end');
   }
 
   selectedUnit() {

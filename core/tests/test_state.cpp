@@ -181,3 +181,29 @@ TEST("state: the phase cursor starts at Select") {
   CHECK(!s.global_actor);
   CHECK_EQ(s.current_player, 0);
 }
+
+TEST("state: reset() zeroes padding so byte-hashing is valid") {
+  // Value-initialisation alone leaves padding indeterminate: Tile declares 9 bytes of
+  // members inside a 10-byte struct. Two states from identical inputs then compare equal
+  // member-wise but hash differently. Map generation's determinism test failed on exactly
+  // this, against a correct algorithm.
+  //
+  // Build two states from deliberately dirty storage and confirm reset() makes them
+  // byte-identical while `= GameState{}` is not guaranteed to.
+  alignas(GameState) static unsigned char buffer_a[sizeof(GameState)];
+  alignas(GameState) static unsigned char buffer_b[sizeof(GameState)];
+  std::memset(buffer_a, 0xAB, sizeof(buffer_a));
+  std::memset(buffer_b, 0x17, sizeof(buffer_b));
+
+  auto* a = new (buffer_a) GameState();
+  auto* b = new (buffer_b) GameState();
+  poly::reset(*a);
+  poly::reset(*b);
+
+  CHECK_EQ(state_hash(*a), state_hash(*b));
+  CHECK_EQ(std::memcmp(a, b, sizeof(GameState)), 0);
+
+  // And that the hash actually responds to real state changes.
+  a->cities[0].population = -9;
+  CHECK(state_hash(*a) != state_hash(*b));
+}

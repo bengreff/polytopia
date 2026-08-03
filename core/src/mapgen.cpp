@@ -418,6 +418,42 @@ void split_land_and_water(Gen& g) {
     ++placed;
   }
 
+  // §10.4 guarantees Kickoo a Fish in its capital ring, and a fish needs water to sit on.
+  // Carving new water out of the map would break the land quota this function exists to
+  // honour, so instead SWAP: the driest ring tile becomes water and the wettest water tile
+  // elsewhere becomes land. The water count is identical either way.
+  const int players = static_cast<int>(g.capitals.size());
+  for (int p = 0; p < players; ++p) {
+    const int tribe_index = static_cast<int>(cfg.tribes[p]);
+    if (tribe_index < 0 || tribe_index >= kTribeCount) continue;
+    if (kGuaranteedResource[tribe_index] != Resource::Fish) continue;
+
+    const Coord centre = g.at(g.capitals[sz(p)]);
+    TileIdx driest = kNoTile;
+    bool already_coastal = false;
+    for (const Coord off : kNeighbourOffsets) {
+      const Coord c{static_cast<std::int16_t>(centre.x + off.x),
+                    static_cast<std::int16_t>(centre.y + off.y)};
+      if (!g.dims.contains(c)) continue;
+      const TileIdx t = g.dims.index(c);
+      if (is_water[sz(t)]) { already_coastal = true; break; }
+      if (forced_land[sz(t)]) continue;
+      if (driest == kNoTile || height[sz(t)] < height[sz(driest)]) driest = t;
+    }
+    if (already_coastal || driest == kNoTile) continue;
+
+    TileIdx donor = kNoTile;
+    for (int i = 0; i < g.n; ++i) {
+      if (!is_water[sz(i)]) continue;
+      if (cheb(g.at(static_cast<TileIdx>(i)), centre) <= 1) continue;
+      if (std::binary_search(corners.begin(), corners.end(), static_cast<TileIdx>(i))) continue;
+      if (donor == kNoTile || height[sz(i)] > height[sz(donor)]) donor = static_cast<TileIdx>(i);
+    }
+    if (donor == kNoTile) continue;
+    is_water[sz(driest)] = true;
+    is_water[sz(donor)] = false;
+  }
+
   for (int i = 0; i < g.n; ++i) {
     if (is_water[sz(i)]) g.st->tiles[i].terrain = Terrain::Ocean;  // reclassified below
   }

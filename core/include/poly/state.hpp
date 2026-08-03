@@ -11,6 +11,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
+#include <new>
 #include <type_traits>
 
 #include "poly/action.hpp"
@@ -235,6 +237,33 @@ struct GameState {
 
   [[nodiscard]] constexpr int tile_count() const { return dims.tile_count(); }
 };
+
+// Canonically zeroes a GameState, PADDING INCLUDED.
+//
+// `state = GameState{}` is not enough. Value-initialisation sets every declared member but
+// leaves padding bytes indeterminate -- Tile declares 9 bytes of members in a 10-byte struct,
+// and that tenth byte keeps whatever was in the allocation. Two states built from identical
+// inputs then compare equal member-wise but hash differently under memcmp or a byte hash.
+//
+// This was found the hard way: map generation's determinism test failed against a correct
+// algorithm. Anything that byte-hashes or memcmps a GameState -- replay verification,
+// transposition tables, the golden-trace harness -- depends on this function having been
+// used. Reach for reset() rather than `= GameState{}` everywhere.
+inline void reset(GameState& s) {
+  std::memset(static_cast<void*>(&s), 0, sizeof(GameState));
+  new (&s) GameState();
+}
+
+// FNV-1a over the whole state. Valid only on a state that came from reset(); see above.
+inline std::uint64_t state_hash(const GameState& s) {
+  const auto* bytes = reinterpret_cast<const unsigned char*>(&s);
+  std::uint64_t hash = 1469598103934665603ULL;
+  for (std::size_t i = 0; i < sizeof(GameState); ++i) {
+    hash ^= bytes[i];
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
 
 // The constraint the whole design rests on. If this ever fails, someone added a std::vector
 // or a pointer to the state and the forward model just became uncloneable.
