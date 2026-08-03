@@ -132,7 +132,6 @@ constexpr float kInnerMetal = 11.0f / 14.0f;
 constexpr float kOuterMetal = 3.0f / 14.0f;
 constexpr float kFishRate = 0.5f;          // §10.4: 50% of shallow water
 constexpr float kStarfishPerWater = 1.0f / 25.0f;
-constexpr float kVillageDensity = 0.3f;    // §10.5 density coefficient (Lakes / Archipelago)
 constexpr int kResourceRange = 2;          // §6.2: resources only within two tiles of a city
 
 // §10.5 ruin counts by map size. Interpolated between the documented sizes so that any
@@ -140,7 +139,7 @@ constexpr int kResourceRange = 2;          // §6.2: resources only within two t
 constexpr int kRuinSizes[6] = {121, 196, 256, 324, 400, 900};
 constexpr int kRuinCounts[6] = {4, 5, 7, 9, 11, 23};
 
-int ruin_count_for(int tiles) {
+[[maybe_unused]] int ruin_count_for(int tiles) {
   if (tiles <= kRuinSizes[0]) {
     const int scaled = (tiles * kRuinCounts[0] + kRuinSizes[0] / 2) / kRuinSizes[0];
     return scaled < 1 ? 1 : scaled;
@@ -301,12 +300,15 @@ bool place_capitals(Gen& g, std::string& error) {
 // villages are at least 2 apart). Capitals count as occupied for the same reason.
 
 void place_villages(Gen& g) {
-  const int grid = g.dims.width / 3;
-  const int budget = grid * grid - static_cast<int>(g.capitals.size());
-  int want = 0;
-  if (budget > 0) {
-    want = static_cast<int>(static_cast<float>(budget) * kVillageDensity + 0.5f);
-  }
+  // Area-based rather than the documented (floor(w/3)^2 - capitals) * 0.3. That formula is
+  // quantised by an integer divide and ignores height entirely, so an 11x11 got 2 villages
+  // against 4 ruins. Density is a rules parameter so the real counts can be tuned as data.
+  const int land = static_cast<int>(static_cast<float>(g.n) * g.cfg->land_ratio + 0.5f);
+  int want = static_cast<int>(static_cast<float>(land) * g.cfg->village_density + 0.5f);
+  // Always seat at least as many villages as there are players beyond the first, so a map
+  // can never generate with fewer expansion sites than opponents.
+  const int floor_villages = g.cfg->player_count;
+  if (want < floor_villages) want = floor_villages;
   if (want <= 0) return;
 
   std::vector<TileIdx> candidates;
@@ -801,7 +803,10 @@ void place_starfish(Gen& g) {
 // adjacent to a capital, never adjacent to another ruin, never on shallow water.
 void place_ruins(Gen& g) {
   GameState& st = *g.st;
-  const int want = ruin_count_for(g.n);
+  // Ruins are scarcer than villages. Previously an 11x11 produced more ruins than villages.
+  const int land = static_cast<int>(static_cast<float>(g.n) * g.cfg->land_ratio + 0.5f);
+  int want = static_cast<int>(static_cast<float>(land) * g.cfg->ruin_density + 0.5f);
+  if (want < 1) want = 1;
 
   std::vector<TileIdx> candidates;
   for (int i = 0; i < g.n; ++i) {
@@ -1158,6 +1163,19 @@ bool load_fixed_map(const std::string& path, GameState& state, std::string& erro
   g.region.assign(sz(g.n), 0);
   reveal_start(g);
   return true;
+}
+
+}  // namespace poly
+
+namespace poly {
+
+int max_players_for_map(MapDims dims, float land_ratio, float village_density) {
+  const int land = static_cast<int>(static_cast<float>(dims.tile_count()) * land_ratio + 0.5f);
+  const int villages = static_cast<int>(static_cast<float>(land) * village_density + 0.5f);
+  int cap = villages;
+  if (cap < 2) cap = 2;
+  if (cap > kMaxPlayers) cap = kMaxPlayers;
+  return cap;
 }
 
 }  // namespace poly

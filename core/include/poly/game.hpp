@@ -90,6 +90,13 @@ void check_meetings(GameState& s, const Rules& rules, PlayerId player,
 // Serialises a StateView per docs/wire-protocol.md. `viewer` = kNoPlayer for full
 // observability. Fog is applied HERE, server-side: unexplored tiles are omitted entirely,
 // so a UI bug cannot leak the map.
+// True while the current player still has ANY available action anywhere -- units, cities,
+// tiles or research. Drives when End Turn lights up.
+bool has_any_available_action(const GameState& s, const Rules& rules);
+
+// The city with an unresolved level-up, or kNoCity. Must be answered immediately.
+CityId pending_reward_city(const GameState& s);
+
 void enumerate_research(const GameState& s, const Rules& rules, bool include_unavailable,
                         std::vector<Option>& out);
 

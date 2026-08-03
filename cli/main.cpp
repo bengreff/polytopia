@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "poly/game.hpp"
+#include "poly/mapgen.hpp"
 #include "poly/json.hpp"
 #include "poly/version.hpp"
 
@@ -203,12 +204,33 @@ std::string handle_request(const json::Value& request) {
   const std::string method = request["method"].str();
   const json::Value& params = request["params"];
 
+  if (method == "map_info") {
+    // How many players a map of this size can seat, so the UI can bound its opponent picker
+    // instead of offering counts that generation will then refuse.
+    MapDims dims{static_cast<std::int16_t>(params["width"].integer(11)),
+                 static_cast<std::int16_t>(params["height"].integer(11))};
+    const auto land = static_cast<float>(params["land_ratio"].num(0.6));
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.field("max_players", max_players_for_map(dims, land, g_rules.village_density));
+    w.field("expected_villages",
+            static_cast<int>(static_cast<float>(dims.tile_count()) * land *
+                                 g_rules.village_density + 0.5f));
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
   if (method == "new_game") {
     GameConfig cfg;
     cfg.dims.width = static_cast<std::int16_t>(params["width"].integer(11));
     cfg.dims.height = static_cast<std::int16_t>(params["height"].integer(11));
     cfg.seed = static_cast<std::uint64_t>(params["seed"].integer(1));
     cfg.mode = parse_mode(params["mode"].str());
+    // No turn limit by default -- games end by domination. Perfection still sets one.
     cfg.turn_limit = params["turn_limit"].integer(0);
     cfg.fog = params["fog"].boolean(true);
     cfg.land_ratio = static_cast<float>(params["land_ratio"].num(0.6));
@@ -221,12 +243,41 @@ std::string handle_request(const json::Value& request) {
       cfg.tribes[1] = Tribe::Bardur;
       cfg.is_human[0] = true;
     } else {
+      // "random" picks an unused tribe. The UI randomises opponents; training pins them
+      // explicitly by name, so the same entry point serves both without a second code path.
+      bool taken[kTribeCount] = {};
+      std::vector<int> random_seats;
       for (int i = 0; i < cfg.player_count && i < kMaxPlayers; ++i) {
-        cfg.tribes[i] = parse_tribe(players[static_cast<std::size_t>(i)]["tribe"].str(),
-                                    static_cast<Tribe>(i % kTribeCount));
+        const std::string name = players[static_cast<std::size_t>(i)]["tribe"].str();
         cfg.is_human[i] = players[static_cast<std::size_t>(i)]["human"].boolean(i == 0);
         cfg.difficulty[i] =
             parse_difficulty(players[static_cast<std::size_t>(i)]["difficulty"].str());
+        if (name.empty() || name == "random") {
+          random_seats.push_back(i);
+          continue;
+        }
+        cfg.tribes[i] = parse_tribe(name, static_cast<Tribe>(i % kTribeCount));
+        taken[static_cast<int>(cfg.tribes[i])] = true;
+      }
+      // Drawn from a seeded generator so a given seed reproduces the whole matchup.
+      Pcg32 picker;
+      picker.seed(cfg.seed, 0xA11CE);
+      for (const int seat : random_seats) {
+        int choice = 0;
+        for (int attempt = 0; attempt < 64; ++attempt) {
+          choice = static_cast<int>(picker.bounded(kTribeCount));
+          if (!taken[choice]) break;
+        }
+        if (taken[choice]) {
+          for (int t = 0; t < kTribeCount; ++t) {
+            if (!taken[t]) {
+              choice = t;
+              break;
+            }
+          }
+        }
+        taken[choice] = true;
+        cfg.tribes[seat] = static_cast<Tribe>(choice);
       }
     }
 
@@ -460,7 +511,6 @@ int run_selfplay(int games, int max_steps) {
     cfg.player_count = 2;
     cfg.tribes[0] = Tribe::Imperius;
     cfg.tribes[1] = Tribe::Bardur;
-    cfg.turn_limit = 60;
 
     GameState s;
     if (!new_game(cfg, rules, s, error)) {

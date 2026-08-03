@@ -103,6 +103,15 @@ struct Rules {
   // (resolutions.md C1). An earlier owner answer said radius 1 and was wrong; the turn-0
   // score identity, which reproduces all 16 published scores, requires 25 explored tiles.
   int initial_vision_radius{2};
+
+  // Settlement density, per LAND tile. The documented formula is (floor(w/3)^2 - capitals)
+  // * 0.3, which is integer-quantised and ignores height: on an 11x11 it yields 2 villages
+  // against 4 ruins, i.e. more ruins than villages on a small map, which is plainly wrong
+  // and caps a duel at 2 possible opponents. Replaced with a smooth area-based density.
+  // UNVERIFIED -- these are tunable data precisely so the real counts can be dialled in
+  // without a rebuild once measured in game.
+  float village_density{0.062f};
+  float ruin_density{0.030f};
   int new_city_border{1};      // 3x3 = radius 1
   int grown_city_border{2};    // 5x5 = radius 2 (resolutions.md R3)
   int connection_population{1};  // +1 to BOTH ends (R23)

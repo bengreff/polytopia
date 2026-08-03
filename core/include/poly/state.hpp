@@ -168,6 +168,10 @@ struct Player {
   // unknown -- and their stars, income and techs are never visible at all.
   std::uint16_t met{0};
 
+  // Starting stars ARE the opening position, so income is not credited on a player's first
+  // turn -- otherwise Imperius shows 7 on turn 1 instead of its actual 5.
+  bool has_started{false};
+
   [[nodiscard]] constexpr bool has_met(PlayerId other) const {
     return (met & (1u << other)) != 0;
   }

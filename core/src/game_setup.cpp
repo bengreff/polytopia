@@ -183,11 +183,19 @@ bool new_game(const GameConfig& cfg, const Rules& rules, GameState& out, std::st
     error = "player_count must be between 2 and " + std::to_string(kMaxPlayers);
     return false;
   }
+  // Opponents are bounded by settlement sites, not by the array size.
+  const int seats = max_players_for_map(cfg.dims, cfg.land_ratio, rules.village_density);
+  if (cfg.player_count > seats) {
+    error = "this map seats at most " + std::to_string(seats) + " players";
+    return false;
+  }
 
   MapConfig map;
   map.dims = cfg.dims;
   map.seed = cfg.seed;
   map.land_ratio = cfg.land_ratio;
+  map.village_density = rules.village_density;
+  map.ruin_density = rules.ruin_density;
   map.player_count = cfg.player_count;
   for (int p = 0; p < cfg.player_count; ++p) map.tribes[p] = cfg.tribes[p];
 
@@ -247,6 +255,11 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
   w.field("phase", phase_name(s.phase));
   w.field("selected", static_cast<int>(s.selected));
   w.field("pending_verb", verb_name(s.pending_verb));
+  // A level-up must be resolved IMMEDIATELY; the engine refuses every other verb until it is,
+  // so the UI has to raise a modal rather than leave the player wondering why nothing works.
+  w.field("pending_reward_city", static_cast<int>(pending_reward_city(s)));
+  // End Turn lights up only when NOTHING at all remains -- not merely when units are spent.
+  w.field("has_actions", has_any_available_action(s, rules));
 
   const MaybeOutcome result = outcome(s, rules);
   w.key("outcome");

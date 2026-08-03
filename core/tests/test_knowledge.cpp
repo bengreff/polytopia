@@ -8,6 +8,7 @@
 #include <string>
 
 #include "poly/game.hpp"
+#include "poly/mapgen.hpp"
 #include "poly/json.hpp"
 #include "testing.hpp"
 
@@ -295,4 +296,71 @@ TEST("options: self-targeting verbs carry their own tile as the target") {
     CHECK_EQ(static_cast<int>(o.action.index), tile_to_slot(tile));
   }
   CHECK(saw_capture);
+}
+
+TEST("rules: a tribe's starting stars are exactly its opening position") {
+  // Income is credited at turn start (R1), but crediting it on a player's FIRST turn made
+  // Imperius open on 7 instead of its actual 5 -- the starting stars ARE the opening.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+  CHECK_EQ(s.players[0].stars, rules.tribe(Tribe::Imperius).start_stars);
+  CHECK_EQ(s.players[0].stars, 5);
+}
+
+TEST("combat: a melee unit advances onto the tile it cleared, a ranged one does not") {
+  // live-rules.md §1.7. The wiki never defines melee numerically; every melee unit has
+  // range 1 and the Archer (range 2) is the stated counterexample.
+  const Rules rules = Rules::defaults();
+  CHECK_EQ(rules.unit(UnitType::Warrior).range, 1);   // melee
+  CHECK_EQ(rules.unit(UnitType::Archer).range, 2);    // ranged, the counterexample
+  CHECK_EQ(rules.unit(UnitType::Catapult).range, 3);
+}
+
+TEST("worldgen: villages outnumber ruins, and seats are bounded by villages") {
+  // An 11x11 previously generated 2 villages against 4 ruins -- more ruins than villages on
+  // a small map -- and accepted 16 players on 121 tiles. The documented
+  // (floor(w/3)^2 - capitals)*0.3 formula is integer-quantised and ignores height.
+  const Rules rules = Rules::defaults();
+  for (const int dim : {11, 16, 24}) {
+    const MapDims dims{static_cast<std::int16_t>(dim), static_cast<std::int16_t>(dim)};
+    const int seats = max_players_for_map(dims, 0.6f, rules.village_density);
+    CHECK(seats >= 2);
+    CHECK(seats <= kMaxPlayers);
+
+    GameConfig cfg;
+    cfg.dims = dims;
+    cfg.seed = 5;
+    cfg.player_count = 2;
+    cfg.tribes[0] = Tribe::Imperius;
+    cfg.tribes[1] = Tribe::Bardur;
+    GameState s;
+    std::string error;
+    CHECK(new_game(cfg, rules, s, error));
+
+    int villages = 0, ruins = 0;
+    for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+      if (s.tiles[t].resource == Resource::Village) ++villages;
+      if (s.tiles[t].resource == Resource::Ruin) ++ruins;
+    }
+    CHECK(villages > ruins);
+    CHECK(villages >= 2);
+  }
+  // 11x11 seats 5, not 16.
+  CHECK(max_players_for_map(MapDims{11, 11}, 0.6f, rules.village_density) < 8);
+}
+
+TEST("worldgen: a map refuses more players than it can seat") {
+  const Rules rules = Rules::defaults();
+  const int seats = max_players_for_map(MapDims{11, 11}, 0.6f, rules.village_density);
+  GameConfig cfg;
+  cfg.dims = MapDims{11, 11};
+  cfg.seed = 1;
+  cfg.player_count = seats + 1;
+  for (int i = 0; i < cfg.player_count && i < kMaxPlayers; ++i) {
+    cfg.tribes[i] = static_cast<Tribe>(i % kTribeCount);
+  }
+  GameState s;
+  std::string error;
+  CHECK(!new_game(cfg, rules, s, error));
+  CHECK(!error.empty());
 }

@@ -428,10 +428,13 @@ void begin_turn(GameState& s, const Rules& rules) {
   update_siege_flags(s);
 
   // Income at the START of the turn (resolutions.md R1), so a city captured last turn is
-  // spendable this turn.
-  if (rules.income_at_turn_start) {
+  // spendable this turn -- EXCEPT on a player's very first turn, where the tribe's starting
+  // stars already are the opening position. Crediting income there made Imperius open on 7
+  // rather than its actual 5.
+  if (rules.income_at_turn_start && s.players[player].has_started) {
     s.players[player].stars += player_income(s, rules, player);
   }
+  s.players[player].has_started = true;
 
   for (UnitId u = 0; u < s.unit_count; ++u) {
     Unit& unit = s.units[u];
@@ -970,8 +973,24 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
                             ? ", retaliation " + std::to_string(combat.defender_damage / kHpScale)
                             : ", no retaliation"));
       }
-      if (!s.units[defender].alive()) kill_unit(s, defender);
+      const TileIdx target_tile = s.units[defender].tile;
+      const bool killed = !s.units[defender].alive();
+      if (killed) kill_unit(s, defender);
       Unit& a = s.units[attacker];
+
+      // Advance after kill: a MELEE unit takes the place of what it killed (live-rules.md
+      // §1.7). The wiki never defines melee numerically, but every melee unit has range 1 and
+      // the Archer (range 2) is the stated counterexample, so range == 1 is the definition.
+      if (killed && a.alive() && rules.unit(a.type).range == 1 &&
+          s.tiles[target_tile].unit == kNoUnit &&
+          tribe_can_enter(s, rules, a.owner, s.tiles[target_tile])) {
+        s.tiles[a.tile].unit = kNoUnit;
+        a.tile = target_tile;
+        s.tiles[target_tile].unit = attacker;
+        a.add(UnitFlag::ArrivedThisTurn);
+        recompute_visibility(s, rules, a.owner);
+        check_meetings(s, rules, a.owner, log);
+      }
       if (!a.alive()) {
         kill_unit(s, attacker);
       } else {
@@ -1074,11 +1093,93 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
     case Verb::Examine: {
       Tile& tile = s.tiles[actor_tile];
       tile.resource = Resource::None;
-      // Uniform reward selection, drawn from the STATE's rng so replays reproduce
-      // (UNRESOLVED #17: the wiki says uniform, v2.16.3 says the calculation changed).
-      s.me().stars += 5 + static_cast<int>(s.rng.bounded(6));
+
+      // Uniform over the ELIGIBLE options (live-rules.md §8.2) -- the eligible set is
+      // state-dependent, so the effective distribution shifts with game state. Drawn from the
+      // STATE's rng so replays reproduce. UNRESOLVED #17: v2.16.3 says "changed how ruin
+      // rewards are calculated" with no detail, so the uniform claim may be stale.
+      enum Reward { kResources, kScrolls, kPopulation, kNewFriends, kRewardCount };
+      int eligible[kRewardCount];
+      int count = 0;
+      eligible[count++] = kResources;  // always available
+
+      Tech free_tech = Tech::Climbing;
+      bool has_free_tech = false;
+      for (int i = 0; i < kTechCount; ++i) {
+        const auto t = static_cast<Tech>(i);
+        BlockReason why = BlockReason::None;
+        if (!s.me().has_tech(t) && (tech_is_root(t) || s.me().has_tech(tech_parent(t)))) {
+          free_tech = t;
+          has_free_tech = true;
+          (void)why;
+          break;
+        }
+      }
+      if (has_free_tech) eligible[count++] = kScrolls;
+
+      CityId capital = kNoCity;
+      for (CityId c = 0; c < s.city_count; ++c) {
+        if (s.cities[c].owner == s.current_player && s.cities[c].has(CityFlag::Capital)) {
+          capital = c;
+        }
+      }
+      if (capital != kNoCity) eligible[count++] = kPopulation;
+
+      const bool on_water = tile.terrain == Terrain::Water || tile.terrain == Terrain::Ocean;
+      if (!on_water && s.unit_count < kMaxUnits) eligible[count++] = kNewFriends;
+
+      const int choice = eligible[s.rng.bounded(static_cast<std::uint32_t>(count))];
+      switch (choice) {
+        case kScrolls:
+          s.me().grant_tech(free_tech);
+          if (log) log->push_back("Ruin: Scrolls of Wisdom -- a free technology");
+          break;
+        case kPopulation:
+          add_population(s, rules, capital, 3, log);
+          if (log) log->push_back("Ruin: Population -- +3 to your capital");
+          break;
+        case kNewFriends: {
+          // A VETERAN Swordsman. Before 2.0.58 this was a Giant; do not reintroduce that.
+          const UnitId id = s.unit_count++;
+          Unit& u = s.units[id];
+          u = Unit{};
+          u.type = UnitType::Swordsman;
+          u.carried_type = UnitType::Swordsman;
+          u.owner = s.current_player;
+          u.tile = kNoTile;
+          u.hp = to_hp(rules.unit(UnitType::Swordsman).hp +
+                       static_cast<int>(rules.veteran_hp_bonus));
+          u.add(UnitFlag::Veteran);
+          u.add(UnitFlag::FreshlyTrained);
+          // The examining unit still occupies the ruin tile, so place the gift adjacent.
+          const Coord c = s.dims.coord(actor_tile);
+          for (const Coord off : kNeighbourOffsets) {
+            const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                          static_cast<std::int16_t>(c.y + off.y)};
+            if (!s.dims.contains(n)) continue;
+            const TileIdx t = s.dims.index(n);
+            if (s.tiles[t].unit == kNoUnit && tribe_can_enter(s, rules, u.owner, s.tiles[t])) {
+              u.tile = t;
+              s.tiles[t].unit = id;
+              break;
+            }
+          }
+          if (u.tile == kNoTile) {
+            --s.unit_count;  // nowhere to stand; fall back to stars
+            s.me().stars += 10;
+            if (log) log->push_back("Ruin: Resources -- +10 stars");
+          } else if (log) {
+            log->push_back("Ruin: New Friends -- a veteran Swordsman");
+          }
+          break;
+        }
+        default:
+          s.me().stars += 10;
+          if (log) log->push_back("Ruin: Resources -- +10 stars");
+          break;
+      }
+
       s.units[s.tiles[actor_tile].unit].add(UnitFlag::TurnEnded);
-      if (log) log->push_back("Explored a ruin");
       break;
     }
     default: break;
@@ -1352,6 +1453,38 @@ void enumerate_research(const GameState& s, const Rules& rules, bool include_una
     o.action = Action{static_cast<std::int16_t>(tech_to_slot(tech))};
     out.push_back(o);
   }
+}
+
+bool has_any_available_action(const GameState& s, const Rules& rules) {
+  // "Nothing left to do" means NOTHING -- not merely "no unit can move". A player with stars
+  // for a building, a harvest, a unit or a technology still has a turn to take, so lighting
+  // End Turn on unit-exhaustion alone would rush them past real decisions.
+  std::vector<Option> options;
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner != s.current_player) continue;
+    if (s.cities[c].pending_rewards > 0) return true;
+  }
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+    Layer layers[4];
+    const int count = tile_layers(s, t, layers);
+    for (int i = 0; i < count; ++i) {
+      enumerate_options(s, rules, t, layers[i], false, options);
+      if (!options.empty()) return true;
+    }
+  }
+  enumerate_research(s, rules, false, options);
+  return !options.empty();
+}
+
+// The city holding an unresolved level-up, or kNoCity. A level-up must be answered
+// IMMEDIATELY -- the real game makes it a true modal, and the engine already refuses every
+// other verb while one is outstanding, so the UI has to surface it rather than let the player
+// wander off.
+CityId pending_reward_city(const GameState& s) {
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == s.current_player && s.cities[c].pending_rewards > 0) return c;
+  }
+  return kNoCity;
 }
 
 CombatPreview preview_combat(const GameState& s, const Rules& rules, TileIdx from, TileIdx to) {

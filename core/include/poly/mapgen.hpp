@@ -30,7 +30,10 @@ namespace poly {
 struct MapConfig {
   MapDims dims{11, 11};
   std::uint64_t seed{0};
-  float land_ratio{0.5f};  // fraction of tiles that end up land; honoured as an exact quota
+  float land_ratio{0.5f};
+  // Per LAND tile. Passed down from Rules so settlement counts stay tunable data.
+  float village_density{0.062f};
+  float ruin_density{0.030f};  // fraction of tiles that end up land; honoured as an exact quota
   int player_count{2};
   Tribe tribes[kMaxPlayers]{};
 
@@ -56,6 +59,10 @@ inline constexpr int kInitialVisionRadius = 2;
 // On success `state` is fully overwritten -- including the unused capacity beyond the live
 // map -- so that two states generated from equal configs are byte-identical.
 bool generate_map(const MapConfig& cfg, GameState& state, std::string& error);
+
+// How many players a map of this size can seat. Bounded by settlement sites: you can add
+// opponents up to the number of villages the map would naturally generate.
+int max_players_for_map(MapDims dims, float land_ratio, float village_density);
 
 // Reads a hand-written JSON map so specific positions become permanent regression fixtures.
 // Format (see data/maps):
