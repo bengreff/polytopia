@@ -1,0 +1,668 @@
+{
+  "version": "live-2.16.3",
+
+  "combat": {
+    "accelerator": 4.5,
+    "defence_bonus_none": 1.0,
+    "defence_bonus_standard": 1.5,
+    "defence_bonus_wall": 4.0,
+    "damage_rounding": "half_away_from_zero",
+    "hp_scale": 2,
+    "splash_divisor": 2,
+    "splash_rounding": null,
+    "splash_recomputed_per_target": true,
+    "splash_target_retaliates_only": true,
+    "stomp_damage": null,
+    "stomp_fires_on_embark_and_disembark": true,
+    "range_metric": "chebyshev",
+    "melee_max_range": 1,
+    "advance_after_kill_melee_only": true,
+    "attacker_defence_stat_unused": true,
+    "defender_attack_stat_unused": true,
+    "results_computed_from_pre_combat_state": true,
+    "retaliation_requires_attacker_in_defender_range": true,
+    "retaliation_requires_attacker_visible": true,
+    "zero_total_damage_yields_zero": true,
+    "city_bonus_requires_fortify": true,
+    "village_gives_no_defence_bonus": true,
+    "besieging_unit_gets_no_defence_bonus": true,
+    "attacker_terrain_bonus_applies": false,
+    "terrain_defence_bonus_tech": {
+      "forest": "archery",
+      "mountain": "climbing",
+      "water": "aquatism",
+      "ocean": "aquatism"
+    },
+    "heal_own_territory": 4,
+    "heal_neutral_or_enemy_territory": 2,
+    "heal_others_amount": 4,
+    "auto_heal_when_idle": true,
+    "veteran_kills_required": 3,
+    "veteran_hp_bonus": 5,
+    "veteran_heals_to_full": true,
+    "veteran_once_per_unit": true,
+    "veteran_progress_survives_convert": true,
+    "base_sight_radius": 1,
+    "mountain_sight_radius": 2,
+    "scout_skill_sight_radius": 2,
+    "revealed_tiles_stay_live_visible": true,
+    "infiltrate_steals_city_income": true,
+    "infiltrate_target_income_zeroed_next_turn": true,
+    "infiltrate_damage_uses_attacker_full_health": true,
+    "infiltrate_dagger_count_equals_city_level": true,
+    "infiltrate_dagger_cap": 5
+  },
+
+  "economy": {
+    "tech_cost_tier_multiplier": 1,
+    "tech_cost_base": 4,
+    "literacy_numerator": 2,
+    "literacy_denominator": 3,
+    "literacy_rounding": "ceil",
+    "literacy_tech": "philosophy",
+    "research_grants_stars": false,
+    "stars_have_cap": false,
+    "star_income_phase": "start_of_turn",
+    "tech_cost_falls_when_city_lost": true,
+    "backwards_research_enabled": true,
+    "backwards_research_adjacency": "parent_child",
+    "adjacency_neighbourhood": 8,
+    "adjacency_scope": "own_territory",
+    "adjacency_counts_other_players_buildings": null,
+    "city_connection_population_source": "capital",
+    "city_connection_sea_route_through_enemy_territory": false,
+    "city_connection_sea_route_through_neutral_territory": true,
+    "clear_forest_stars": 1,
+    "disband_refund_divisor": 2,
+    "disband_refund_rounding": "floor",
+    "resources_upgrade_stars": 5,
+    "starfish_stars": 8,
+    "ruin_resources_stars": 10,
+    "meet_tribe_stars_base": 1,
+    "meet_tribe_stars_per_1000_score": 2,
+    "meet_tribe_stars_max": 11,
+    "ability_costs": {
+      "clear_forest": { "cost": 0, "star_gain": 1, "tech": "forestry" },
+      "burn_forest": { "cost": 3, "star_gain": 0, "tech": "construction" },
+      "grow_forest": { "cost": 5, "star_gain": 0, "tech": "spiritualism" },
+      "destroy": { "cost": 0, "star_gain": 0, "tech": "chivalry" }
+    }
+  },
+
+  "movement": {
+    "distance_metric": "chebyshev",
+    "base_move_cost": 1.0,
+    "road_move_cost": 0.5,
+    "movement_cost_rounds_up": true,
+    "rough_terrain": ["forest", "mountain"],
+    "rough_terrain_stops_movement": true,
+    "road_negates_forest_stop": true,
+    "roads_allowed_terrain": ["field", "forest"],
+    "one_unit_per_tile": true,
+    "zoc_consumes_all_remaining_movement": true,
+    "zoc_applies_to_fogged_enemies": true,
+    "zoc_blocks_dash_attack": false,
+    "creep_negates_zoc": false,
+    "creep_ignores_terrain_cost": true,
+    "creep_disables_road_bonus": true,
+    "hide_negates_zoc": true,
+    "hide_moves_through_enemies": true,
+    "can_pass_through_enemy_unit": false,
+    "can_pass_through_friendly_unit": null,
+    "mountain_requires_tech": "climbing",
+    "water_requires_tech": "fishing",
+    "ocean_requires_tech": "sailing",
+    "embark_ends_turn": true,
+    "disembark_ends_turn": true,
+    "embark_cancels_dash": true,
+    "move_ends_turn_unless_dash": true,
+    "attack_ends_turn_unless_escape": true,
+    "capture_ends_turn": true,
+    "take_temple_ends_turn": true,
+    "explore_ruin_ends_turn": true,
+    "explorer_traverses_water_without_tech": null,
+    "forced_spawn_push_order": [
+      "friendly_moved_same_direction",
+      "enemy_moved_opposite_direction",
+      "ranged_last_move_or_attack",
+      "not_moved_toward_map_centre",
+      "map_centre_push_south",
+      "then_counterclockwise_then_clockwise",
+      "remove_from_game_if_no_free_tile"
+    ],
+    "giant_pop_displacement_direction": null
+  },
+
+  "units": {
+    "warrior": {
+      "cost": 2, "hp": 10, "attack": 2.0, "defence": 2.0, "move": 1, "range": 1,
+      "tech": null, "skills": ["dash", "fortify"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "rider": {
+      "cost": 3, "hp": 10, "attack": 2.0, "defence": 1.0, "move": 2, "range": 1,
+      "tech": "riding", "skills": ["dash", "escape", "fortify"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "archer": {
+      "cost": 3, "hp": 10, "attack": 2.0, "defence": 1.0, "move": 1, "range": 2,
+      "tech": "archery", "skills": ["dash", "fortify"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "defender": {
+      "cost": 3, "hp": 15, "attack": 1.0, "defence": 3.0, "move": 1, "range": 1,
+      "tech": "strategy", "skills": ["fortify"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "swordsman": {
+      "cost": 5, "hp": 15, "attack": 3.0, "defence": 3.0, "move": 1, "range": 1,
+      "tech": "smithery", "skills": ["dash"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "mind_bender": {
+      "cost": 5, "hp": 10, "attack": 0.0, "defence": 1.0, "move": 1, "range": 1,
+      "tech": "philosophy", "skills": ["heal", "convert", "stiff"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "catapult": {
+      "cost": 8, "hp": 10, "attack": 4.0, "defence": 0.0, "move": 1, "range": 3,
+      "tech": "mathematics", "skills": ["stiff"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "knight": {
+      "cost": 8, "hp": 10, "attack": 3.5, "defence": 1.0, "move": 3, "range": 1,
+      "tech": "chivalry", "skills": ["dash", "persist", "fortify"], "can_promote": true,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "cloak": {
+      "cost": 8, "hp": 5, "attack": 2.0, "defence": 0.5, "move": 2, "range": 1,
+      "tech": "diplomacy",
+      "skills": ["hide", "infiltrate", "dash", "scout", "creep", "stiff", "static"],
+      "can_promote": false,
+      "trainable": true, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "dagger": {
+      "cost": 2, "hp": 10, "attack": 2.0, "defence": 2.0, "move": 1, "range": 1,
+      "tech": "diplomacy", "skills": ["dash", "surprise", "independent", "static"],
+      "can_promote": false,
+      "trainable": false, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "giant": {
+      "cost": 10, "hp": 40, "attack": 5.0, "defence": 4.0, "move": 1, "range": 1,
+      "tech": null, "skills": ["static"], "can_promote": false,
+      "trainable": false, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "explorer": {
+      "cost": 0, "hp": null, "attack": null, "defence": null, "move": 12, "range": null,
+      "tech": null, "skills": [], "can_promote": false,
+      "trainable": false, "naval": false, "upgrade_from": null, "hp_from_carried_unit": false
+    },
+    "raft": {
+      "cost": 0, "hp": 0, "attack": 0.0, "defence": 1.0, "move": 2, "range": 0,
+      "tech": "fishing", "skills": ["carry", "stiff", "static"], "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": null, "hp_from_carried_unit": true
+    },
+    "scout": {
+      "cost": 5, "hp": 0, "attack": 2.0, "defence": 1.0, "move": 3, "range": 2,
+      "tech": "sailing", "skills": ["dash", "carry", "scout", "static"], "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": "raft", "hp_from_carried_unit": true
+    },
+    "rammer": {
+      "cost": 5, "hp": 0, "attack": 3.0, "defence": 3.0, "move": 3, "range": 1,
+      "tech": "ramming", "skills": ["dash", "carry", "static"], "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": "raft", "hp_from_carried_unit": true
+    },
+    "bomber": {
+      "cost": 15, "hp": 0, "attack": 3.0, "defence": 2.0, "move": 2, "range": 3,
+      "tech": "navigation", "skills": ["carry", "splash", "stiff", "static"], "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": "raft", "hp_from_carried_unit": true
+    },
+    "juggernaut": {
+      "cost": 0, "hp": 40, "attack": 4.0, "defence": 4.0, "move": 2, "range": 1,
+      "tech": "fishing", "skills": ["carry", "stiff", "stomp", "static"], "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": null, "hp_from_carried_unit": true
+    },
+    "dinghy": {
+      "cost": 0, "hp": 5, "attack": 2.0, "defence": 0.5, "move": 2, "range": 1,
+      "tech": "diplomacy",
+      "skills": ["carry", "hide", "infiltrate", "dash", "scout", "stiff", "static"],
+      "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": null, "hp_from_carried_unit": true
+    },
+    "pirate": {
+      "cost": 0, "hp": 10, "attack": 2.0, "defence": 2.0, "move": 2, "range": 1,
+      "tech": "diplomacy", "skills": ["carry", "dash", "surprise", "independent", "static"],
+      "can_promote": false,
+      "trainable": false, "naval": true, "upgrade_from": null, "hp_from_carried_unit": true
+    },
+    "_naval": {
+      "requires_port": true,
+      "hp_from_carried_unit": true,
+      "hp_carries_both_ways": true,
+      "carried_unit_stats_discarded": true,
+      "upgrade_requires_own_or_allied_territory": true,
+      "upgrade_does_not_heal": true,
+      "upgrade_lost_on_reembark": true,
+      "embark_map": {
+        "default": "raft",
+        "giant": "juggernaut",
+        "cloak": "dinghy",
+        "dagger": "pirate"
+      }
+    }
+  },
+
+  "improvements": {
+    "lumber_hut": {
+      "cost": 3, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "forestry", "terrain": ["forest"], "requires_resource": null, "per_city_limit": 0
+    },
+    "sawmill": {
+      "cost": 5, "population": 0, "population_per_adjacent": 1, "adjacent_source": "lumber_hut",
+      "tech": "mathematics", "terrain": ["field"], "requires_resource": null, "per_city_limit": 1
+    },
+    "farm": {
+      "cost": 5, "population": 2, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "farming", "terrain": ["field"], "requires_resource": "crop", "per_city_limit": 0
+    },
+    "windmill": {
+      "cost": 5, "population": 0, "population_per_adjacent": 1, "adjacent_source": "farm",
+      "tech": "construction", "terrain": ["field"], "requires_resource": null, "per_city_limit": 1
+    },
+    "mine": {
+      "cost": 5, "population": 2, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "mining", "terrain": ["mountain"], "requires_resource": "metal", "per_city_limit": 0
+    },
+    "forge": {
+      "cost": 5, "population": 0, "population_per_adjacent": 2, "adjacent_source": "mine",
+      "tech": "smithery", "terrain": ["field", "forest"], "requires_resource": null,
+      "per_city_limit": 1
+    },
+    "port": {
+      "cost": 7, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "fishing", "terrain": ["water"], "requires_resource": null, "per_city_limit": 0
+    },
+    "market": {
+      "cost": 5, "population": 0, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "trade", "terrain": ["field"], "requires_resource": null, "per_city_limit": 1,
+      "income_sources": ["sawmill", "windmill", "forge"],
+      "income_per_source_level": 1,
+      "income_counts_levels_not_buildings": true,
+      "max_level": 8
+    },
+    "temple": {
+      "cost": 20, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "free_spirit", "terrain": ["field"], "requires_resource": null, "per_city_limit": 0
+    },
+    "forest_temple": {
+      "cost": 15, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "spiritualism", "terrain": ["forest"], "requires_resource": null, "per_city_limit": 0
+    },
+    "mountain_temple": {
+      "cost": 20, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "meditation", "terrain": ["mountain"], "requires_resource": null, "per_city_limit": 0
+    },
+    "water_temple": {
+      "cost": 20, "population": 1, "population_per_adjacent": 0, "adjacent_source": null,
+      "tech": "aquatism", "terrain": ["water", "ocean"], "requires_resource": null,
+      "per_city_limit": 0
+    },
+    "_temple_growth": {
+      "members": ["temple", "forest_temple", "mountain_temple", "water_temple"],
+      "population_on_build": 1,
+      "start_level": 1,
+      "max_level": 5,
+      "growth_interval_turns": 2,
+      "turns_to_max": 8,
+      "score_per_level": 100,
+      "max_score": 500,
+      "counts_turn_of_construction": true
+    },
+    "_road": {
+      "cost": 3, "population": 0, "tech": "roads", "terrain": ["field", "forest"],
+      "move_cost": 0.5, "destructible": false,
+      "buildable_on_own_territory": true,
+      "buildable_on_neutral_territory": true,
+      "buildable_on_enemy_territory": false,
+      "city_tiles_act_as_roads": true
+    },
+    "_bridge": {
+      "cost": 5, "population": 0, "tech": "roads", "terrain": ["water"],
+      "move_cost": 0.5, "destructible": true,
+      "requires_two_opposite_orthogonal_land_tiles": true,
+      "diagonal_allowed": false,
+      "buildable_on_own_territory": true,
+      "buildable_on_neutral_territory": true,
+      "buildable_on_enemy_territory": false
+    },
+    "_embassy": {
+      "cost": null, "population": 0, "tech": "diplomacy",
+      "income": 2, "income_under_peace_treaty": 4,
+      "host_must_be_original_capital": true,
+      "one_per_tribe": true,
+      "reveal_radius": 1
+    },
+    "_monument": {
+      "cost": 0, "population": 3, "score": 400,
+      "terrain": ["field", "water"],
+      "once_per_game": true,
+      "tasks": {
+        "altar_of_peace": { "task": "pacifist", "unlocked_by": "meditation", "condition": "no attacks for 5 consecutive turns" },
+        "emperors_tomb": { "task": "wealth", "unlocked_by": "trade", "condition": "hold 100 stars at one time" },
+        "eye_of_god": { "task": "explorer", "unlocked_by": "finding a lighthouse", "condition": "discover all 4 lighthouses" },
+        "gate_of_power": { "task": "killer", "unlocked_by": "killing an enemy unit", "condition": "kill 10 enemy units" },
+        "grand_bazaar": { "task": "network", "unlocked_by": "first city connection", "condition": "connect 5 cities to the capital" },
+        "park_of_fortune": { "task": "metropolis", "unlocked_by": "having a level 2 city", "condition": "have a level 5+ city" },
+        "tower_of_wisdom": { "task": "genius", "unlocked_by": "philosophy", "condition": "research all technologies" }
+      }
+    }
+  },
+
+  "resources": {
+    "fruit": {
+      "harvest_cost": 2, "population": 1, "stars": 0, "tech": "organization",
+      "terrain": ["field"], "harvested_by": null, "revealed_by": null
+    },
+    "crop": {
+      "harvest_cost": 5, "population": 2, "stars": 0, "tech": "farming",
+      "terrain": ["field"], "harvested_by": "farm", "revealed_by": "organization"
+    },
+    "game": {
+      "harvest_cost": 2, "population": 1, "stars": 0, "tech": "hunting",
+      "terrain": ["forest"], "harvested_by": null, "revealed_by": null
+    },
+    "fish": {
+      "harvest_cost": 2, "population": 1, "stars": 0, "tech": "fishing",
+      "terrain": ["water", "ocean"], "harvested_by": null, "revealed_by": null
+    },
+    "starfish": {
+      "harvest_cost": 0, "population": 0, "stars": 8, "tech": "navigation",
+      "terrain": ["water", "ocean"], "harvested_by": null, "revealed_by": null,
+      "harvestable_in_neutral_or_enemy_territory": true,
+      "consumes_unit_turn": true
+    },
+    "metal": {
+      "harvest_cost": 5, "population": 2, "stars": 0, "tech": "mining",
+      "terrain": ["mountain"], "harvested_by": "mine", "revealed_by": "climbing"
+    },
+    "ruin": {
+      "harvest_cost": 0, "population": 0, "stars": 0, "tech": null,
+      "terrain": ["field", "forest", "mountain", "ocean"],
+      "harvested_by": null, "revealed_by": null,
+      "requires_start_of_turn": true,
+      "consumes_unit_turn": true,
+      "blocks_tile_development_until_examined": true,
+      "reward_distribution": "uniform",
+      "granted_units_are_veteran": true,
+      "land_reward_unit": "swordsman",
+      "water_reward_unit": "rammer",
+      "rewards": ["resources", "scrolls_of_wisdom", "population", "explorer", "new_friends", "rammer"],
+      "resources_reward_stars": 10,
+      "population_reward": 3,
+      "population_reward_target": "highest_level_capital"
+    },
+    "village": {
+      "harvest_cost": 0, "population": 0, "stars": 0, "tech": null,
+      "terrain": ["field", "forest", "mountain"],
+      "harvested_by": null, "revealed_by": null,
+      "capture_city_level": 1,
+      "capture_city_population": 0,
+      "gives_defence_bonus": false
+    },
+    "lighthouse": {
+      "harvest_cost": 0, "population": 1, "stars": 0, "tech": null,
+      "terrain": null, "harvested_by": null, "revealed_by": null,
+      "map_corners_only": true,
+      "population_target": "capital"
+    }
+  },
+
+  "city": {
+    "population_thresholds": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "population_for_level_n_equals_n": true,
+    "has_level_cap": false,
+    "surplus_population_carries_over": true,
+    "population_can_be_negative": true,
+    "level_is_monotonic": true,
+    "income_per_level": 1,
+    "capital_income_bonus_human": 1,
+    "capital_income_bonus_persists_all_game": true,
+    "besieged_produces_nothing": true,
+    "negative_population_income_penalty_per_point": 1,
+    "income_floor": 0,
+    "unit_capacity_offset": 1,
+    "starting_capital_level": 1,
+    "starting_territory_radius": 1,
+    "starting_vision_radius": 2,
+    "border_growth_radius": 2,
+    "border_growth_claims_owned_tiles": false,
+    "connection_population_capital": 1,
+    "connection_population_city": 1,
+    "trained_unit_can_act_same_turn": false,
+    "capture_requires_start_of_turn": true,
+    "capture_ends_turn": true,
+    "capture_cooldown_turns": 0,
+    "capture_keeps_level": true,
+    "capture_keeps_territory": true,
+    "capture_keeps_population": true,
+    "capture_keeps_border_growth": true,
+    "capture_keeps_buildings": true,
+    "capture_keeps_city_wall": true,
+    "capture_migrates_unit_origin": true,
+    "level_up_is_immediate": true,
+    "super_unit_spawn_displaces_occupant": true,
+    "converted_units_may_exceed_capacity": true,
+    "ruin_units_do_not_count_against_capacity": true,
+    "level_rewards": {
+      "2": ["workshop", "explorer"],
+      "3": ["city_wall", "resources"],
+      "4": ["population_growth", "border_growth"],
+      "5": ["park", "super_unit"]
+    },
+    "level_rewards_repeat_from_level": 5,
+    "reward_effects": {
+      "workshop": { "income": 1 },
+      "explorer": { "unit": "explorer" },
+      "city_wall": { "defence_bonus": 4.0 },
+      "resources": { "stars": 5 },
+      "population_growth": { "population": 3 },
+      "border_growth": { "radius": 2 },
+      "park": { "income": 1, "score": 250 },
+      "super_unit": { "unit": "giant" }
+    }
+  },
+
+  "score": {
+    "unit_per_star_of_cost": 5,
+    "super_unit": 50,
+    "territory_per_tile": 20,
+    "explored_per_tile": 5,
+    "city_base": 100,
+    "city_per_level_above_1": 50,
+    "population_each": 5,
+    "city_level_bonus_formula": "50 - 5 * level",
+    "park": 250,
+    "monument": 400,
+    "temple_base": 100,
+    "temple_per_level_above_1": 100,
+    "temple_max": 500,
+    "tech_per_tier": 100,
+    "turn0_base": 405,
+    "converted_units_change_score": false,
+    "naval_upgrade_grants_score": null
+  },
+
+  "tribes": {
+    "xin_xi": {
+      "start_tech": "climbing", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 7, "guaranteed_capital_resource": "metal",
+      "terrain_bias": { "mountain": 1.5, "forest": 1.0, "fruit": 1.0, "crop": 1.0, "game": 1.0, "metal": 1.5, "fish": 1.0, "water": 1.0 }
+    },
+    "imperius": {
+      "start_tech": "organization", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "fruit",
+      "terrain_bias": { "mountain": 1.0, "forest": 1.0, "fruit": 2.0, "crop": 1.0, "game": 0.5, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "bardur": {
+      "start_tech": "hunting", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "game",
+      "terrain_bias": { "mountain": 1.0, "forest": 0.8, "fruit": 1.0, "crop": 0.0, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "oumaji": {
+      "start_tech": "riding", "start_unit": "rider", "capital_level": 1,
+      "start_stars": 6, "guaranteed_capital_resource": "fruit",
+      "terrain_bias": { "mountain": 0.5, "forest": 0.2, "fruit": 1.0, "crop": 1.0, "game": 0.2, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "kickoo": {
+      "start_tech": "fishing", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "fish",
+      "terrain_bias": { "mountain": 0.5, "forest": 1.0, "fruit": 1.0, "crop": 1.0, "game": 1.0, "metal": 1.0, "fish": 1.5, "water": 1.0 }
+    },
+    "hoodrick": {
+      "start_tech": "archery", "start_unit": "archer", "capital_level": 1,
+      "start_stars": 7, "guaranteed_capital_resource": "game",
+      "terrain_bias": { "mountain": 0.5, "forest": 1.5, "fruit": 1.0, "crop": 1.0, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "luxidoor": {
+      "start_tech": null, "start_unit": "warrior", "capital_level": 3,
+      "start_stars": 2, "guaranteed_capital_resource": "game",
+      "terrain_bias": { "mountain": 1.0, "forest": 1.0, "fruit": 1.0, "crop": 1.0, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "vengir": {
+      "start_tech": "smithery", "start_unit": "swordsman", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "game",
+      "terrain_bias": { "mountain": 1.0, "forest": 1.0, "fruit": 0.1, "crop": 1.0, "game": 0.1, "metal": 2.0, "fish": 0.1, "water": 1.0 }
+    },
+    "zebasi": {
+      "start_tech": "farming", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "crop",
+      "terrain_bias": { "mountain": 0.5, "forest": 0.5, "fruit": 0.5, "crop": 1.0, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "ai_mo": {
+      "start_tech": "philosophy", "start_unit": "mind_bender", "capital_level": 1,
+      "start_stars": 5, "guaranteed_capital_resource": "game",
+      "terrain_bias": { "mountain": 1.5, "forest": 1.0, "fruit": 1.0, "crop": 0.1, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "quetzali": {
+      "start_tech": "strategy", "start_unit": "defender", "capital_level": 1,
+      "start_stars": 7, "guaranteed_capital_resource": "fruit",
+      "terrain_bias": { "mountain": 1.0, "forest": 1.0, "fruit": 2.0, "crop": 0.1, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "yadakk": {
+      "start_tech": "roads", "start_unit": "warrior", "capital_level": 1,
+      "start_stars": 7, "guaranteed_capital_resource": "fruit",
+      "terrain_bias": { "mountain": 0.5, "forest": 0.5, "fruit": 1.5, "crop": 1.0, "game": 1.0, "metal": 1.0, "fish": 1.0, "water": 1.0 }
+    },
+    "_base_rates": {
+      "inner_city": { "field": 0.48, "fruit": 0.18, "crop": 0.18, "empty_field": 0.12, "forest": 0.38, "game": 0.19, "empty_forest": 0.19, "mountain": 0.14, "metal": 0.11, "empty_mountain": 0.03 },
+      "outer_city": { "field": 0.48, "fruit": 0.06, "crop": 0.06, "empty_field": 0.36, "forest": 0.38, "game": 0.06, "empty_forest": 0.32, "mountain": 0.14, "metal": 0.03, "empty_mountain": 0.11 },
+      "fish_rate_shallow_water": 0.5,
+      "starfish_per_water_tiles": 25,
+      "resource_spawn_radius_from_city": 2,
+      "multiplier_order": ["mountain", "forest", "field_is_derived"],
+      "water_multipliers_are_no_ops": true
+    }
+  },
+
+  "modes": {
+    "domination": {
+      "turn_limit": null,
+      "victory": "eliminate_all_opponents",
+      "multiplayer_variant_victory": "capture_all_capitals",
+      "elimination_when_all_cities_lost": true,
+      "map_size_by_opponents": { "1": 121, "2": 196, "3": 256, "4": 324 },
+      "rating_difficulty_weight": { "easy": 0.25, "normal": 0.5, "hard": 0.75, "crazy": 1.0 },
+      "rating_speed_turns_per_enemy_for_full": 10
+    },
+    "perfection": {
+      "turn_limit": 30,
+      "victory": "highest_score",
+      "map_size": 256,
+      "difficulty_bonus_base": 1.0,
+      "difficulty_bonus_ln_coefficient": 0.41,
+      "difficulty_bonus_max": 2.91
+    },
+    "glory": {
+      "turn_limit": null,
+      "victory": "score_threshold",
+      "score_threshold": 10000,
+      "tiebreak": "most_points_at_end_of_turn"
+    },
+    "creative": {
+      "turn_limit": null,
+      "victory": null,
+      "host_chooses_map_size": true
+    },
+    "_map_sizes": { "tiny": 121, "small": 196, "normal": 256, "large": 324, "huge": 400, "massive": 900 },
+    "_ruin_counts": { "121": 4, "196": 5, "256": 7, "324": 9, "400": 11, "900": 23 }
+  },
+
+  "difficulty": {
+    "easy": { "capital_income_bonus": 0, "perfection_score_bonus": 0.0, "domination_rating": 0.25, "aggression": null },
+    "normal": { "capital_income_bonus": 1, "perfection_score_bonus": 0.2, "domination_rating": 0.5, "aggression": null },
+    "hard": { "capital_income_bonus": 2, "perfection_score_bonus": 0.4, "domination_rating": 0.75, "aggression": null },
+    "crazy": { "capital_income_bonus": 4, "perfection_score_bonus": 0.8, "domination_rating": 1.0, "aggression": null }
+  },
+
+  "_unverified": [
+    "combat.hp_scale",
+    "combat.splash_rounding",
+    "combat.stomp_damage",
+    "combat.revealed_tiles_stay_live_visible",
+    "combat.infiltrate_steals_city_income",
+    "combat.infiltrate_target_income_zeroed_next_turn",
+    "economy.star_income_phase",
+    "economy.tech_cost_falls_when_city_lost",
+    "economy.backwards_research_adjacency",
+    "economy.adjacency_counts_other_players_buildings",
+    "economy.city_connection_sea_route_through_enemy_territory",
+    "economy.city_connection_sea_route_through_neutral_territory",
+    "movement.zoc_consumes_all_remaining_movement",
+    "movement.creep_negates_zoc",
+    "movement.can_pass_through_enemy_unit",
+    "movement.can_pass_through_friendly_unit",
+    "movement.move_ends_turn_unless_dash",
+    "movement.attack_ends_turn_unless_escape",
+    "movement.take_temple_ends_turn",
+    "movement.explorer_traverses_water_without_tech",
+    "movement.giant_pop_displacement_direction",
+    "units.explorer.hp",
+    "units.explorer.attack",
+    "units.explorer.defence",
+    "units.explorer.range",
+    "units.explorer.move",
+    "units._naval.hp_carries_both_ways",
+    "improvements.market.per_city_limit",
+    "improvements._temple_growth.growth_interval_turns",
+    "improvements._temple_growth.turns_to_max",
+    "improvements._temple_growth.score_per_level",
+    "improvements._temple_growth.max_score",
+    "improvements._road.buildable_on_enemy_territory",
+    "improvements._bridge.buildable_on_enemy_territory",
+    "improvements._embassy.cost",
+    "resources.lighthouse.terrain",
+    "resources.ruin.reward_distribution",
+    "resources.ruin.granted_units_are_veteran",
+    "city.besieged_produces_nothing",
+    "city.border_growth_radius",
+    "city.border_growth_claims_owned_tiles",
+    "city.surplus_population_carries_over",
+    "city.level_is_monotonic",
+    "city.starting_vision_radius",
+    "city.capital_income_bonus_persists_all_game",
+    "city.connection_population_capital",
+    "city.connection_population_city",
+    "city.trained_unit_can_act_same_turn",
+    "city.capture_requires_start_of_turn",
+    "city.capture_cooldown_turns",
+    "city.capture_keeps_territory",
+    "city.capture_keeps_population",
+    "city.capture_keeps_border_growth",
+    "city.super_unit_spawn_displaces_occupant",
+    "score.naval_upgrade_grants_score",
+    "difficulty.easy.aggression",
+    "difficulty.normal.aggression",
+    "difficulty.hard.aggression",
+    "difficulty.crazy.aggression"
+  ]
+}

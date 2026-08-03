@@ -1,6 +1,10 @@
 add_library(poly STATIC
   src/version.cpp
   src/json.cpp
+  src/rules.cpp
+  src/game.cpp
+  src/game_setup.cpp
+  src/mapgen.cpp
 )
 
 target_include_directories(poly PUBLIC include)

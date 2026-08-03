@@ -41,6 +41,7 @@ if(POLY_ASAN)
 endif()
 
 add_subdirectory(core)
+add_subdirectory(cli)
 
 if(POLY_TESTS)
   enable_testing()

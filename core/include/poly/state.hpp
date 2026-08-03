@@ -206,6 +206,14 @@ struct GameState {
   std::int16_t unit_count{0};
   std::int16_t city_count{0};
 
+  // Victory conditions travel with the state rather than living in the engine, so "any game
+  // mode" is a configuration rather than a code change (docs/phase0-plan.md §4). A search
+  // that clones a position must carry them too, or a cloned node would score differently
+  // from its parent.
+  GameMode mode{GameMode::Domination};
+  std::int32_t turn_limit{0};  // 0 = none
+  bool fog{true};
+
   // Phase-machine cursor.
   Phase phase{Phase::Select};
   TileIdx selected{kNoTile};    // kNoTile with phase != Select means the global pseudo-actor.
