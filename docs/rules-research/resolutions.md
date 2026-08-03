@@ -46,6 +46,141 @@ interaction precisely rather than paraphrasing. Tagged `_unverified`.
 
 ---
 
+## Resolved by the owner — round 2 (2026-08-03)
+
+This round changed the data model three times. Each is recorded with the consequence, because in
+every case the obvious implementation would have compiled, passed tests, and been wrong.
+
+**R15 — Surplus population carries over on level-up.** `OWNER`
+Closes UNRESOLVED #8. Population is a running total that a level-up subtracts from, not a bar that
+resets. Overshooting a threshold wastes nothing.
+
+**R16 — A captured city keeps its territory, its partial population, and its Border Growth.** `OWNER`
+Closes UNRESOLVED #13 and #14. All three transfer intact.
+
+**R17 — City level is monotonic. Population can go NEGATIVE relative to the current level.** `OWNER`
+This is the most consequential answer of the round and no source hints at it.
+
+Capture moves a city into the new owner's trade network, which recomputes its connection population —
+and a captured capital can lose a great deal. But **the city does not drop a level**. Instead the
+population bar goes negative, displayed as red markers, and the owner must climb back to zero before
+making progress toward the next level.
+
+Consequences, both load-bearing:
+- `population` is a **signed** running total, not an unsigned counter. An unsigned type here would
+  underflow to a huge positive on the exact turn a capital is captured — a spectacular bug that would
+  only ever fire in the single most important moment of a Might game.
+- `level` is **monotonically non-decreasing** and must never be recomputed from population. Deriving
+  level from population — the natural implementation — would silently demote captured cities.
+
+**R18 — Fog: once revealed, a tile is permanently and LIVE visible.** `OWNER`
+Closes UNRESOLVED #27 and #28, and substantially simplifies the imperfect-information model.
+
+- At game start each player sees a 1-tile radius around their capital. That initial reveal is the
+  only city-based vision; cities do not project vision thereafter.
+- Units and territory reveal fog.
+- **Revealed tiles never re-fog, and the player continues to see live events in them** — enemy
+  movement included. There is no "last known state" memory to maintain.
+- Unit vision varies by type (Scout notably), and **standing on a mountain grants +1 vision**.
+- A unit reveals every tile it passes through during a multi-tile move.
+
+Consequence: fog is a **single `explored` bitset per player**, not the usual explored + currently-
+visible pair with remembered stale state. Imperfect information in this game is exclusively about
+*unexplored* regions, never about staleness in explored ones. That is a materially easier belief-state
+problem than README §5 Phase 5 assumes, and it should make the Phase 5 fog work cheaper than planned.
+
+**R19 — Movement is destination-only; the engine chooses the path.** `OWNER`
+Unlike Civ, the player picks a destination and the game routes the unit. **This confirms the
+SELECT→VERB→TARGET action space is the right shape**: TARGET is a destination tile, and no path
+encoding is needed in the action space at all. Had paths been player-controlled, the action space
+would have needed either per-step decisions or a path enumeration, and the ~201 head would not hold.
+
+**R20 — Zone of Control: moving into a tile adjacent to an enemy unit consumes ALL remaining
+movement.** `OWNER` Consistent with the wiki's ZoC section.
+
+**R21 — Market: one per city (verified in game), and income is the SUM OF LEVELS of nearby
+Windmills, Sawmills and Forges.** `OWNER`, verified
+Closes UNRESOLVED #16 and settles the Market income conflict flagged in the PolyEnv audit — with an
+instructive twist. PolyEnv contains two incompatible Market implementations: `StarsSystem` uses
+`2 × unique adjacent building types` and is the one actually wired up, while `BuildingSystem`
+computes a sum-of-levels model that is dead code. **The dead code was the correct one.** Had we
+lifted PolyEnv's live behaviour as a cross-check we would have taken the wrong model; had we taken
+the wiki's silence as agreement with the other adjacency buildings, likewise.
+
+**R22 — Trade routes / city connections.** `OWNER`, partial
+- Sea routes **cannot** pass through enemy territory; they **can** pass through neutral territory.
+- Capture re-parents the city into the captor's network and recomputes connection population.
+- Roads and bridges **can** be built outside your own territory.
+
+## Resolved by the owner — round 3 (2026-08-03)
+
+**R23 — A city connection gives +1 population to BOTH the capital and the connected city.** `OWNER`
+This is why capturing a capital is devastating: it collapses the entire network at once, and combined
+with R17 drives the captured capital's population negative rather than dropping its level.
+
+**R24 — Temples: 2-turn growth, 5 levels, 8 turns to max, 100 points per level, 500 maximum.**
+`OWNER`, verified in game. Closes UNRESOLVED #11 — and corrects the research.
+
+A Temple produces 1 population **only when built**, then starts at level 1 and grows every 2 turns to
+level 5. Score is 100 per level.
+
+**Every wiki source said max level arrives at 12 turns, and that figure is wrong.** The researcher
+used it to argue for a 3-turn interval, since 12 is divisible by 3 and not by 2 — sound reasoning
+from a false premise. The real answer is 4 growths × 2 turns = 8. Both the interval *and* the figure
+that was being used to cross-check it were wrong, which is a good argument for preferring one
+in-game measurement over four agreeing documents.
+
+**R25 — There is no city-level capture cooldown. The restriction is on units.** `OWNER`
+Closes UNRESOLVED #12, and the correct model is more general than the question assumed.
+
+**Capturing a city or exploring a ruin cannot happen on the turn the unit moved onto that tile.**
+The unit must *start* its turn there. Combined with the turn-ending rules below, this produces the
+observed rhythm: move onto a city turn N, capture turn N+1, an enemy kills the unit and steps on
+turn N+2, recaptures turn N+3. Cities genuinely can ping-pong — just never within one turn.
+
+**R26 — The unit turn-ending model.** `OWNER` These actions end a unit's turn:
+
+| Action | Ends turn unless |
+|---|---|
+| Moving | the unit has **Dash** |
+| Attacking | the unit has **Escape** |
+| Capturing a city | always |
+| Taking a temple | always |
+
+This is the rule the SELECT→VERB→TARGET machine enforces at the VERB phase: after a turn-ending
+action the unit leaves the legal SELECT set entirely. Dash and Escape are not stat modifiers, they
+are **action-space modifiers** — they change which verbs remain legal after another verb resolves.
+
+**R27 — Super-unit spawning displaces whatever occupies the city ("giant-popping").** `OWNER`
+Spawning a super unit pushes the unit standing on that city to an adjacent tile, **or kills it if the
+city is completely surrounded**. This is a real counter to the R25 sit-on-the-city rhythm and is not
+documented in any source consulted. Displacement direction is described as random — the exact rule
+goes on the verification list, since a deterministic engine needs it pinned down.
+
+**R28 — Ruin rewards are terrain-gated.** `OWNER`, partial
+Swordsmen come only from **land** ruins and Pirates only from **sea** ruins. Units granted by ruins
+are believed to always be **veterans**. The underlying probability distribution remains UNRESOLVED
+#17 — Ben has no read on it, so it stays flagged and uniform-by-default.
+
+## New UNRESOLVED raised by this round
+
+Ben flagged these as things he does not know. They go on the verification list rather than into code:
+
+- **U-A: Can a unit move through a friendly unit?** He is confident units cannot pass through *enemy*
+  units. Friendly pass-through is unknown and affects pathing on crowded fronts.
+- **U-B: Can roads or bridges be built inside enemy territory?** Outside-own-territory is confirmed;
+  enemy territory specifically is not.
+- **U-C: Do another player's buildings contribute to your adjacency bonuses?** Affects Market,
+  Sawmill, Windmill and Forge scoring along contested borders.
+- **U-D: Which direction does a giant-pop displace the occupying unit?** (R27) Described as random.
+  A deterministic engine needs the exact selection rule, and "random" must be drawn from the state's
+  own PCG32 stream so replays reproduce.
+- **U-E: Can the neutral roaming Explorer traverse water without the relevant tech?** Ben believes it
+  is gated on the tech but flagged it for double-checking.
+- **U-F: Are ruin-granted units always veterans?** Believed yes, not certain.
+
+---
+
 ## Resolved by cross-check (wiki + PolyEnv agreeing independently)
 
 **R6 — The combat formula is confirmed.** `CORROBORATED`
