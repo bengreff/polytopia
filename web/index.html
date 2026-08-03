@@ -90,6 +90,33 @@
   </div>
 </div>
 
+<!-- Ruin / event result. Raised over everything so what the ENGINE just handed you is read,
+     not lost among the bot chatter in the log panel. -->
+<div id="result-scrim" class="scrim result-scrim" hidden>
+  <div class="popup result-popup" role="dialog" aria-modal="true">
+    <div id="result-kicker" class="result-kicker">ANCIENT RUINS</div>
+    <div id="result-title" class="result-title"></div>
+    <div id="result-body" class="result-body"></div>
+    <div class="pop-buttons">
+      <button id="result-ok" class="pop-btn commit">TAKE IT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ④ CITY LEVEL-UP. A TRUE MODAL: the engine refuses every other verb while a reward is
+     outstanding, so there is deliberately no close button, no backdrop dismiss and no Esc.
+     Its scrim sits above every other surface, which is what makes the rest of the UI inert
+     rather than merely discouraged. -->
+<div id="levelup-scrim" class="scrim levelup-scrim" hidden>
+  <div class="popup levelup-popup" role="dialog" aria-modal="true">
+    <div class="lvl-kicker">CITY LEVEL UP</div>
+    <div id="lvl-title" class="lvl-title">Level 2</div>
+    <div id="lvl-sub" class="lvl-sub"></div>
+    <div id="lvl-options" class="lvl-options"></div>
+    <div class="lvl-foot">You must choose. Nothing else can happen until you do.</div>
+  </div>
+</div>
+
 <!-- Full-screen tech tree, 5 branches x 5 techs. -->
 <div id="tech-overlay" class="overlay" hidden>
   <div class="overlay-head">
@@ -112,7 +139,6 @@
       <label>Width <input type="number" id="ng-width" value="11" min="4" max="40"></label>
       <label>Height <input type="number" id="ng-height" value="11" min="4" max="40"></label>
       <label>Seed <input type="number" id="ng-seed" value="12345"></label>
-      <label>Turn limit <input type="number" id="ng-turnlimit" value="0" min="0"></label>
       <label>Mode
         <select id="ng-mode">
           <option value="domination">domination</option>
@@ -121,17 +147,19 @@
           <option value="creative">creative</option>
         </select>
       </label>
-      <label>Opponents
-        <select id="ng-opponents"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
-      </label>
+      <!-- Bounded by map_info: the engine refuses more players than the map has settlement
+           sites, so the picker is clamped rather than offering counts generation will reject. -->
+      <label>Opponents <input type="number" id="ng-opponents" value="1" min="1" max="4" step="1"></label>
       <label>Your tribe <select id="ng-tribe"></select></label>
-      <label>Opponent tribe <select id="ng-optribe"></select></label>
       <label>Difficulty
         <select id="ng-difficulty">
           <option>easy</option><option selected>normal</option><option>hard</option><option>crazy</option>
         </select>
       </label>
       <label class="toggle wide"><input type="checkbox" id="ng-fog" checked> Fog of war</label>
+      <div id="ng-seats" class="ng-note wide">—</div>
+      <div class="ng-note wide">Every opponent's tribe is drawn at random and stays hidden
+        until you meet them.</div>
     </div>
     <menu>
       <button value="cancel" id="ng-cancel">Cancel</button>

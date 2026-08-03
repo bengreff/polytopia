@@ -440,6 +440,21 @@ std::string handle_request(const json::Value& request) {
   PlayerId viewer = static_cast<PlayerId>(params["player"].integer(default_viewer));
   if (viewer < 0 || viewer >= g_state.player_count) viewer = kNoPlayer;
 
+  // The log lines apply_compound() and the bot loop produced. `act` needs them as much as
+  // `advance_bots` does: a ruin reward is chosen by the ENGINE, so the only way the player
+  // learns what came out of the ruins they just walked into is this array.
+  const auto log_array = [&log]() {
+    std::string out = "[";
+    for (std::size_t i = 0; i < log.size(); ++i) {
+      if (i != 0) out += ',';
+      json::Writer escaped;
+      escaped.value(log[i]);
+      out += escaped.text();
+    }
+    out += ']';
+    return out;
+  };
+
   json::Writer w;
   w.begin_object();
   w.field("id", id);
@@ -452,20 +467,20 @@ std::string handle_request(const json::Value& request) {
     std::string body = w.text();
     body.resize(body.size() - 1);  // drop the closing brace of `result`
     body += state_view_json(g_state, g_rules, viewer);
-    body += ",\"log\":[";
-    for (std::size_t i = 0; i < log.size(); ++i) {
-      if (i != 0) body += ',';
-      json::Writer escaped;
-      escaped.value(log[i]);
-      body += escaped.text();
-    }
-    body += "]}}";
+    body += ",\"log\":" + log_array() + "}}";
     return body;
   }
   w.end_object();
   std::string body = w.text();
   body.resize(body.size() - 1);
-  body += state_view_json(g_state, g_rules, viewer);
+  std::string view = state_view_json(g_state, g_rules, viewer);
+  if (method == "act") {
+    // A StateView with one extra key, not a new envelope: `act` still answers a StateView,
+    // so nothing that already reads it has to change.
+    view.resize(view.size() - 1);
+    view += ",\"log\":" + log_array() + "}";
+  }
+  body += view;
   body += "}";
   return body;
 }

@@ -102,79 +102,6 @@ const char* phase_name(Phase p) {
   }
 }
 
-const char* reward_name(CityReward r) {
-  switch (r) {
-    case CityReward::Workshop: return "Workshop (+1 star/turn)";
-    case CityReward::Explorer: return "Explorer";
-    case CityReward::CityWall: return "City Wall";
-    case CityReward::Resources: return "Resources (+5 stars)";
-    case CityReward::PopulationGrowth: return "Population Growth (+3)";
-    case CityReward::BorderGrowth: return "Border Growth";
-    case CityReward::Park: return "Park (+250 score)";
-    case CityReward::SuperUnit: return "Super Unit (Giant)";
-    default: return "reward";
-  }
-}
-
-// A human-readable label for one legal action, so the UI never has to decode slot indices
-// itself. Keeping this server-side is what lets the UI honour "never construct an action
-// index by arithmetic" -- it only ever echoes back an index it was handed.
-void describe_action(const GameState& s, const Rules& rules, int index, json::Writer& w) {
-  w.begin_object();
-  w.field("index", index);
-
-  // Checked FIRST: the global actor must never fall through to a typed-slot test.
-  if (s.phase == Phase::Select && index == kGlobalActorSlot) {
-    w.field("kind", "global");
-    w.field("label", "Player actions");
-    w.end_object();
-    return;
-  }
-
-  if (s.phase == Phase::Verb) {
-    w.field("kind", "verb");
-    w.field("label", verb_name(static_cast<Verb>(index)));
-    w.end_object();
-    return;
-  }
-  if (slot_is_train(index)) {
-    const UnitType type = slot_to_unit_type(index);
-    w.field("kind", "train");
-    w.field("label", std::string(unit_name(type)) + " (" +
-                         std::to_string(rules.unit(type).cost) + "*)");
-    w.end_object();
-    return;
-  }
-  if (slot_is_research(index)) {
-    const Tech tech = slot_to_tech(index);
-    int cities = 0;
-    for (CityId c = 0; c < s.city_count; ++c) {
-      if (s.cities[c].owner == s.current_player) ++cities;
-    }
-    const int cost = rules.tech_cost(tech, cities, s.me().has_tech(Tech::Philosophy));
-    w.field("kind", "research");
-    w.field("label", std::string(tech_name(tech)) + " (" + std::to_string(cost) + "*)");
-    w.end_object();
-    return;
-  }
-  if (slot_is_build(index)) {
-    const Improvement imp = slot_to_improvement(index);
-    w.field("kind", "build");
-    w.field("label", std::string(improvement_name(imp)) + " (" +
-                         std::to_string(rules.improvement(imp).cost) + "*)");
-    w.end_object();
-    return;
-  }
-  if (slot_is_reward(index)) {
-    w.field("kind", "reward");
-    w.field("label", reward_name(slot_to_reward(index)));
-    w.end_object();
-    return;
-  }
-  w.field("kind", "tile");
-  w.field("label", "");
-  w.end_object();
-}
 
 }  // namespace
 
@@ -397,21 +324,22 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
     w.field("besieged", city.has(CityFlag::Besieged));
     w.field("units", static_cast<int>(city.unit_count));
     w.field("capacity", city.unit_capacity());
-    w.field("pending_rewards", static_cast<int>(city.pending_rewards));
+    // pending_rewards is purely your own bookkeeping -- an enemy's unresolved level-up is
+    // not something you can see, and leaking it would telegraph exactly when they grew.
+    w.field("pending_rewards", mine ? static_cast<int>(city.pending_rewards) : 0);
+    // production IS visible on an enemy city. This looks like a leak and is not: the owner
+    // confirmed that an enemy city's info panel shows its star production, point value and
+    // capital status, even though the map decoration is a bare name plate. That is a sharper
+    // distinction than "you cannot see their economy" -- the PLAYER's total stars and income
+    // stay hidden; a single city you can SEE reports its own output. Tracked as U-H in
+    // resolutions.md; if it turns out to be wrong, gate this on `mine`.
     w.field("production", city_income(s, rules, c));
     w.end_object();
   }
   w.end_array();
 
-  w.key("legal");
-  w.begin_array();
-  ActionMask mask;
-  legal_actions(s, rules, mask);
-  std::int16_t slots[kActionSlots];
-  const int count = mask.collect(slots, kActionSlots);
-  for (int i = 0; i < count; ++i) describe_action(s, rules, slots[i], w);
-  w.end_array();
-
+  // The v1 `legal` array is GONE. It handed the UI the agent's legality mask, which can only
+  // say no -- see docs/ui-rebuild-plan.md §1. Clients use `options` instead.
   w.end_object();
   return w.text();
 }

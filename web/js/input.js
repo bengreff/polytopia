@@ -83,6 +83,13 @@ export function initInput(app, canvas) {
 
   window.addEventListener('keydown', (e) => {
     if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    // A city level-up is a TRUE modal: the engine refuses every other verb until it is
+    // answered, so no hotkey may reach past it — Esc included. The scrim already blocks the
+    // pointer; this is the same rule for the keyboard.
+    if (app.modalOpen()) { e.preventDefault(); return; }
+    // The ruin result is dismissable, but only deliberately: Esc and Enter acknowledge it,
+    // nothing else reaches the board behind it.
+    if (app.resultOpen() && e.key !== 'Escape' && e.key !== 'Enter') { e.preventDefault(); return; }
     switch (e.key) {
       case 'Escape':
         e.preventDefault();

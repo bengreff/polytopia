@@ -158,25 +158,33 @@ export function updateHud(app) {
   tribeEl.textContent = tribeName(me);
   tribeEl.style.color = playerColor(s.me);
 
-  // The End Turn cue uses the ENGINE's readiness scan (app.idleUnits), not `turn_ended`:
-  // see App.syncReadiness for why the flag alone would never fire the cue.
+  // END TURN lights up on the ENGINE's `has_actions`, and on nothing else.
+  //
+  // "Have my units moved" is the wrong question and was the bug: it declares you finished
+  // while you still have stars for a Farm, a tech you can afford and a city that can train.
+  // has_actions scans units, cities, tiles AND research, so the cue fires exactly when the
+  // player can do literally nothing. The idle-unit count is kept only as a secondary hint.
   const btn = $('btn-endturn');
   const mine = s.isMyTurn();
   const idle = app.idleUnits instanceof Set ? app.idleUnits.size : s.activeUnits().length;
-  const spentAll = mine && idle === 0;
+  const done = mine && !s.hasActions;
   btn.disabled = !mine;
-  btn.classList.toggle('ready', spentAll);
+  btn.classList.toggle('ready', done);
   btn.textContent = !mine
     ? 'WAITING…'
-    : spentAll
-      ? 'NO MORE MOVES AVAILABLE, END TURN'
-      : `END TURN (${idle} unit${idle === 1 ? '' : 's'} still active)`;
+    : done
+      ? 'NOTHING LEFT TO DO — END TURN'
+      : idle > 0
+        ? `END TURN (${idle} unit${idle === 1 ? '' : 's'} still active)`
+        : 'END TURN';
 
   renderRivals(s);
 
   if (s.outcome) {
+    const winner = s.playerById.get(s.outcome.winner);
     showBanner(
-      `Game over — ${s.outcome.how || 'finished'}, winner: player ${s.outcome.winner}` +
+      `Game over — ${s.outcome.how || 'finished'}, winner: ` +
+      `${tribeName(winner)}${s.outcome.winner === s.me ? ' (you)' : ''}` +
       (s.outcome.turn != null ? ` on turn ${s.outcome.turn}` : ''),
       'ok'
     );
@@ -623,6 +631,84 @@ export function openOption(app, o, ctx = {}) {
   $('scrim').hidden = false;
 }
 
+// --- ruin / event result popup ------------------------------------------------
+
+/**
+ * What the ENGINE just gave you, said out loud. The reward is rolled server-side, so the log
+ * line is the only place the answer exists — and a line in the log panel, under the bot
+ * chatter, is not an answer the player will read. Raised over the map instead.
+ */
+export function resultOpen() { return !$('result-scrim').hidden; }
+export function closeResult() { $('result-scrim').hidden = true; }
+
+export function showResult(kicker, title, body, buttonText = 'TAKE IT') {
+  $('result-kicker').textContent = kicker;
+  $('result-title').textContent = title;
+  $('result-body').textContent = body || '';
+  $('result-ok').textContent = buttonText;
+  $('result-scrim').hidden = false;
+}
+
+/**
+ * Split an engine ruin line — "Ruin: Scrolls of Wisdom -- a free technology" — into its
+ * headline and its explanation. Anything that does not match is shown whole rather than
+ * dropped: an unrecognised reward must still reach the player.
+ */
+export function parseRuinLine(line) {
+  const text = String(line).replace(/^Ruin:\s*/, '');
+  const m = text.match(/^(.*?)\s*--\s*(.*)$/);
+  return m ? { title: m[1], body: m[2] } : { title: text, body: '' };
+}
+
+// --- city level-up: a TRUE modal ----------------------------------------------
+
+let levelUpFor = -1;
+
+export function levelUpOpen() { return !$('levelup-scrim').hidden; }
+export function levelUpCity() { return levelUpFor; }
+export function closeLevelUp() {
+  $('levelup-scrim').hidden = true;
+  levelUpFor = -1;
+}
+
+/** What each reward actually does, so the choice is informed rather than a coin flip. */
+const REWARD_TEXT = {
+  workshop: 'This city produces one more star every turn, permanently.',
+  explorer: 'Spawns an Explorer that reveals a large area of the map around it.',
+  citywall: 'Walls this city: defenders here get a large defence bonus, and the city cannot be captured while any unit stands in it.',
+  resources: 'Immediately gives you ★5.',
+  populationgrowth: 'Adds 3 population to this city right now, pushing it towards the next level.',
+  bordergrowth: "Expands this city's borders by one ring, claiming the tiles around it.",
+  park: 'A Grand Park: a large, permanent score bonus.',
+  superunit: 'Trains a Giant — the strongest unit in the game.',
+};
+
+/**
+ * Raise the level-up choice. There is no dismiss path on purpose: the engine refuses every
+ * other verb while a reward is outstanding, so a closable dialog would leave the player
+ * clicking a board that silently does nothing — which reads as the game being frozen.
+ */
+export function openLevelUp(app, city, options) {
+  levelUpFor = city.id;
+  $('lvl-title').textContent = `${city.capital ? 'Your capital' : 'Your city'} reached level ${city.level}`;
+  $('lvl-sub').textContent = 'Choose its reward.';
+
+  const box = $('lvl-options');
+  box.replaceChildren();
+  if (!options.length) {
+    box.appendChild(el('div', 'lvl-foot', 'The engine offered no choices for this level-up.'));
+  }
+  for (const o of options) {
+    const b = el('button', `lvl-opt${o.status === 'available' ? '' : ' blocked'}`);
+    b.appendChild(el('span', 'ln', o.label));
+    b.appendChild(el('span', 'ld', REWARD_TEXT[key(o.label)] || ''));
+    if (o.status !== 'available' && o.reason) b.appendChild(el('span', 'ld', `(${o.reason})`));
+    b.addEventListener('click', () => app.chooseReward(city, o));
+    box.appendChild(b);
+  }
+  $('levelup-scrim').hidden = false;
+}
+
 // --- tech tree overlay --------------------------------------------------------
 
 export function techTreeOpen() { return !$('tech-overlay').hidden; }
@@ -692,33 +778,79 @@ export function initHud(app) {
   });
   $('scrim').addEventListener('click', (e) => { if (e.target.id === 'scrim') closePopup(); });
 
+  $('result-ok').addEventListener('click', closeResult);
+
   const dlg = $('newgame-dialog');
-  $('btn-menu').addEventListener('click', () => dlg.showModal());
+  $('btn-menu').addEventListener('click', () => {
+    if (levelUpOpen()) return;
+    dlg.showModal();
+    refreshMapInfo(app);
+  });
+
+  // The 12 tribes, for YOUR seat only. Opponents are always sent as "random": the engine
+  // picks an unused tribe from a seeded generator and then HIDES its identity until you meet
+  // them, which is the whole point — letting the player pick them would spoil it.
   const tribes = ['imperius', 'bardur', 'xin_xi', 'oumaji', 'kickoo', 'hoodrick',
                   'luxidoor', 'vengir', 'zebasi', 'ai_mo', 'quetzali', 'yadakk'];
-  for (const id of ['ng-tribe', 'ng-optribe']) {
-    const sel = $(id);
-    sel.replaceChildren();
-    for (const t of tribes) sel.appendChild(new Option(pretty(t), t));
+  const mine = $('ng-tribe');
+  mine.replaceChildren();
+  for (const t of tribes) mine.appendChild(new Option(pretty(t), t));
+  mine.value = 'imperius';
+
+  for (const id of ['ng-width', 'ng-height']) {
+    $(id).addEventListener('change', () => refreshMapInfo(app));
+    $(id).addEventListener('input', () => refreshMapInfo(app));
   }
-  $('ng-tribe').value = 'imperius';
-  $('ng-optribe').value = 'bardur';
+  $('ng-opponents').addEventListener('change', () => clampOpponents());
 
   $('newgame-form').addEventListener('submit', (e) => {
     if (e.submitter && e.submitter.value === 'cancel') return;
-    const n = Number($('ng-opponents').value);
-    const players = [{ tribe: $('ng-tribe').value, human: true, difficulty: $('ng-difficulty').value }];
-    for (let i = 0; i < n; i++) {
-      players.push({ tribe: $('ng-optribe').value, human: false, difficulty: $('ng-difficulty').value });
-    }
+    const n = clampOpponents();
+    const difficulty = $('ng-difficulty').value;
+    const players = [{ tribe: mine.value, human: true, difficulty }];
+    for (let i = 0; i < n; i++) players.push({ tribe: 'random', human: false, difficulty });
+    // No turn_limit key at all: games end by domination, and Perfection sets its own.
     app.newGame({
       width: Number($('ng-width').value),
       height: Number($('ng-height').value),
       seed: Number($('ng-seed').value),
       mode: $('ng-mode').value,
-      turn_limit: Number($('ng-turnlimit').value),
       fog: $('ng-fog').checked,
       players,
     });
   });
+}
+
+/** Hold the opponent count inside what the map can actually seat. */
+function clampOpponents() {
+  const box = $('ng-opponents');
+  const max = Number(box.max) || 1;
+  let n = Math.round(Number(box.value) || 1);
+  if (!Number.isFinite(n) || n < 1) n = 1;
+  if (n > max) n = max;
+  box.value = String(n);
+  return n;
+}
+
+/**
+ * Ask the ENGINE how many players this map seats. Player count is bounded by settlement
+ * sites, and generation refuses a game with more players than villages — so the picker is
+ * clamped from `map_info` rather than offering counts that will be rejected on Start.
+ */
+async function refreshMapInfo(app) {
+  const note = $('ng-seats');
+  const w = Number($('ng-width').value);
+  const h = Number($('ng-height').value);
+  if (!(w > 0 && h > 0)) { note.textContent = 'Enter a map size.'; return; }
+  try {
+    const r = await app.rpc('map_info', { width: w, height: h, land_ratio: 0.6 });
+    const seats = Math.max(2, Number(r.max_players) || 2);
+    $('ng-opponents').max = String(seats - 1);
+    const n = clampOpponents();
+    note.textContent =
+      `This ${w}×${h} map seats up to ${seats} players — ${seats - 1} opponent` +
+      `${seats === 2 ? '' : 's'} (about ${r.expected_villages} villages). You have ${n}.`;
+  } catch (e) {
+    note.textContent = `Could not read the map limit: ${e.message}`;
+  }
 }

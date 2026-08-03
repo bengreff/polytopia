@@ -261,9 +261,11 @@ export function drawCityGlyph(ctx, x, y, city) {
   label(ctx, lvl, cx + px * 0.05, mid, fs, city.capital ? '#ffd76a' : '#ffffff', '800', 'left');
 
   // Population, which CAN BE NEGATIVE and is never clamped — red when below zero.
+  // An enemy city's population is NULL, not zero, and nothing is drawn for it: printing a 0
+  // there would be a fabricated number the player would read as real.
   if (px >= 34 && typeof city.population === 'number') {
     const pop = city.population;
-    const txt = city.next_level_at !== undefined ? `${pop}/${city.next_level_at}` : `${pop}`;
+    const txt = city.next_level_at != null ? `${pop}/${city.next_level_at}` : `${pop}`;
     label(ctx, txt, cx + w - px * 0.05, mid, fs, pop < 0 ? '#ff6b6b' : '#cfe0f5', '700', 'right');
   }
 }

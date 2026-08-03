@@ -49,18 +49,32 @@ UI cannot run against it. Build the C++ engine instead; `--mock` needs porting t
   targets; a **bright yellow ring plus a skull** is a guaranteed one-hit kill. Hovering an
   attackable enemy shows the two-way damage preview with a death warning for both sides.
 - Every commit is **two taps** — an info popup, then `DO IT`. There is no undo in this game.
+- A **city level-up is a true modal**. When the engine reports `pending_reward_city` the two
+  rewards are raised over everything with **no close button, no backdrop dismiss and no Esc** —
+  the engine refuses every other verb until you answer, so a dialog you could wander away from
+  would just make the board look frozen.
+- **Examining a ruin raises what you got** as a popup, from the `log` the `act` response
+  carries. The reward is rolled server-side; the log line is the only place the answer exists.
+- **END TURN lights up on `has_actions`**, the engine's "is there anything left anywhere"
+  answer — not on whether your units have moved. It reads `NOTHING LEFT TO DO — END TURN` only
+  when there is no buildable tile, no affordable unit, no researchable tech and no unit action.
 - `Esc` deselects (and closes the popup / tech tree), `Enter` ends the turn, `T` opens the tech
   tree, `Space` jumps to your next unit that still has something to do, `F` fits the board.
-  Mouse wheel zooms, drag pans, right-click deselects.
+  Mouse wheel zooms, drag pans, right-click deselects. **None of them reach past the level-up
+  modal.**
+- **New game**: you pick your own tribe from the 12; every opponent is sent as
+  `"tribe":"random"` and stays `Unknown tribe` until you meet them. The opponent count is
+  clamped from `map_info` and the dialog states the limit — an 11x11 seats 5, a 20x20 seats 15.
+  There is no turn limit.
 
 Bots run automatically via `advance_bots` whenever the decision belongs to a non-human player;
 their log lines land in the Log panel.
 
 **The UI never constructs an action index.** Targets come from the `target` field of an option
-or from the tile list returned by `reachable`. The one exception is documented in `js/state.js`
-(`SELF_TARGET_VERBS`) and `js/app.js` (`targetFor`): the engine leaves `target` at 0 for the
-self-targeting verbs, so the UI falls back to the tile the engine already told it was selected.
-That is a protocol gap, not a licence to compute indices.
+or from the tile list returned by `reachable`, with no exceptions: `targetFor` in `js/app.js`
+is now just "the engine's `target`". The old `SELF_TARGET_VERBS` fallback is gone — the engine
+fills `target` for Capture, Examine and Harvest too, so the client knows nothing about which
+verbs target themselves.
 
 **Knowledge.** The StateView is already filtered server-side. The UI shows only *your* stars and
 income; an opponent's stars render as `?`, never as `0`, and their income and techs are not
@@ -83,7 +97,7 @@ cached between frames are the engine's own answers to `options`, `reachable` and
 | `js/render.js` | **all** canvas drawing; one named function per glyph |
 | `js/projection.js` | **all** tile ↔ screen maths; nothing else knows the coordinate system |
 | `js/input.js` | pointer and keyboard → tile indices |
-| `js/hud.js` | HUD, description panel, option tray, confirm popup, tech tree overlay |
+| `js/hud.js` | HUD, description panel, option tray, confirm popup, level-up modal, ruin result, tech tree overlay, new-game dialog |
 
 ## Swapping to isometric
 

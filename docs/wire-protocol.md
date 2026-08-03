@@ -23,20 +23,36 @@ the WASM target lands and the renderer talks to the module directly.
 
 ## Methods
 
+### `map_info` — how many players this map can seat
+Player count is bounded by settlement sites, and `new_game` REFUSES a game with more players
+than the map can seat. The UI calls this when the map size changes and clamps its opponent
+picker, rather than offering counts generation will then reject.
+```jsonc
+params: {"width": 11, "height": 11, "land_ratio": 0.6}
+result: {"max_players": 5, "expected_villages": 5}
+```
+Needs no game in progress. An 11x11 seats 5; a 20x20 seats 15.
+
 ### `new_game`
 ```jsonc
 params: {
   "width": 11, "height": 11, "seed": 12345,
   "mode": "domination",              // domination | perfection | glory | creative
-  "turn_limit": 0,                   // 0 = none
+  "turn_limit": 0,                   // 0 = none, and 0 is the default. The UI sends no
+                                     // turn limit at all; games end by domination and
+                                     // Perfection sets its own.
   "fog": true,
   "players": [
     {"tribe": "imperius", "human": true,  "difficulty": "normal"},
-    {"tribe": "bardur",   "human": false, "difficulty": "normal"}
+    {"tribe": "random",   "human": false, "difficulty": "normal"}
   ]
 }
 result: <StateView>
 ```
+`"tribe": "random"` (or an empty/unknown name) picks an unused tribe from a generator seeded
+off `seed`, so a seed reproduces the whole matchup. The UI sends `random` for EVERY opponent:
+an unmet tribe's identity is hidden by the knowledge filter, and letting the player pick it
+would spoil that. Training pins tribes by name through the same entry point.
 
 ### `state`
 ```jsonc
@@ -50,8 +66,13 @@ One complete action, driven through the phase machine server-side. The UI thinks
 `apply()`, so there is one implementation of what an action *does*. Rolls back on failure.
 ```jsonc
 params: {"tile": 47, "verb": "build", "target": 1091}   // tile: -1 for research / end turn
-result: <StateView>
+result: <StateView> + {"log": ["Ruin: Resources -- +10 stars"]}
 ```
+The result is a StateView with one extra key, `log`: the lines this action produced. It is not
+decoration. A ruin's reward is rolled SERVER-SIDE, so the log line is the only place the answer
+exists, and the UI raises it as a popup rather than filing it under the bot chatter. Lines are
+`"Ruin: <name> -- <what you got>"`, `"City reached level N"`, `"Attack for N, retaliation M"`,
+and generic summaries (`"Trained a unit"`) that the UI already says in more detail.
 
 ### `options` — what can happen here, and why not
 Returns the FULL option set, annotated. This is the core of v2.
@@ -67,12 +88,13 @@ result: {"options": [
 `status` is one of `available` | `cannot_afford` | `missing_tech` | `blocked`.
 **`cost` is always populated**, including when unaffordable — the price must stay legible.
 
-Two `target` caveats the UI has to absorb (both are engine gaps, not UI licence to do
-arithmetic):
+One `target` caveat the UI has to absorb:
 - `move` and `attack` carry `target: 0` and it is **meaningless** — those are map markers, and
   their targets come from `reachable` and `preview_combat` respectively.
-- `capture` and `examine` also carry `target: 0`, but the phase machine's only legal target for
-  them is the actor's own tile, so the caller must send the tile it selected.
+
+The self-targeting verbs (`capture`, `examine`, `harvest`) now carry their own tile as
+`target`, so the client sends back what the engine gave it and knows nothing about which verbs
+target themselves. (Fixed 2026-08-03; the UI's `SELF_TARGET_VERBS` workaround is deleted.)
 
 ### `research_options`
 Same shape, for the tech tree. `params: {"include_unavailable": true}`
@@ -148,6 +170,16 @@ sent information the player cannot see** — a UI bug must not be able to leak t
   "pending_verb": "move",            // meaningful in the target phase
   "outcome": null,                   // null while ongoing; else {"how","winner","turn"}
 
+  // A city with an UNRESOLVED level-up, or -1. The engine refuses every other verb while one
+  // is outstanding, so this is not a hint: the UI must raise a TRUE MODAL on it with no
+  // dismiss path. Without one the board silently stops responding and the game looks frozen.
+  "pending_reward_city": -1,
+
+  // Is there ANYTHING at all left to do — units, cities, tiles AND research. This, and never
+  // "have my units moved", is what lights up End Turn. Unit exhaustion alone rushes the
+  // player past buildings, harvests and tech they can still afford.
+  "has_actions": true,
+
   // KNOWLEDGE-FILTERED. Score and city count are permanently public; stars, income and
   // techs are NEVER visible for anyone but yourself, and tribe identity requires having
   // met them (or Diplomacy). Unknown fields are null, not zero — a zero is
@@ -197,3 +229,13 @@ sent information the player cannot see** — a UI bug must not be able to leak t
    looks like a rules bug.
 5. `population` can be negative — render it as such (red), never clamp it.
 6. `hp` is a float and can land on `.5`.
+7. **`pending_reward_city` is blocking.** Raise a modal with no way out but an answer. Every
+   other verb is refused until it is resolved, so anything less presents as a frozen game.
+8. **`has_actions` owns the End Turn cue.** Do not re-derive "am I finished" from `turn_ended`.
+
+### Known gaps (engine side, harmless to the current UI)
+
+- The StateView still carries the v1 `legal` array. Nothing reads it; it is dead payload.
+- `production` and `pending_rewards` are serialised for cities you do not own. The UI renders
+  neither for an enemy city, but the knowledge filter should be covering them like
+  `population`.

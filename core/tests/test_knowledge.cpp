@@ -364,3 +364,30 @@ TEST("worldgen: a map refuses more players than it can seat") {
   CHECK(!new_game(cfg, rules, s, error));
   CHECK(!error.empty());
 }
+
+TEST("knowledge: an enemy city's pending level-up is not visible") {
+  // pending_rewards is your own bookkeeping. Leaking it would telegraph exactly when an
+  // opponent's city grew -- a timing tell you have no way to observe in the real game.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) s.explored[0].set(t);
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == 1) s.cities[c].pending_rewards = 2;
+  }
+  const json::Value view = view_of(s, rules, 0);
+  for (const auto& city : view["cities"].arr()) {
+    if (city["owner"].integer() != 0) CHECK_EQ(city["pending_rewards"].integer(), 0);
+  }
+}
+
+TEST("wire: the v1 legal array is gone from the payload") {
+  // It handed the UI the agent's legality mask, which can only say no. Removing it also made
+  // its two label helpers provably dead -- the compiler found them, which is the tidiest
+  // possible confirmation that the whole v1 path is unreferenced.
+  const Rules rules = Rules::defaults();
+  GameState s = fresh_game(rules);
+  const json::Value view = view_of(s, rules, 0);
+  CHECK(!view.contains("legal"));
+  CHECK(view.contains("has_actions"));
+  CHECK(view.contains("pending_reward_city"));
+}

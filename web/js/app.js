@@ -16,7 +16,7 @@
  *      thrown away and re-fetched the moment anything changes.
  */
 
-import { GameState, SELF_TARGET_VERBS } from './state.js';
+import { GameState } from './state.js';
 import * as P from './projection.js';
 import { render } from './render.js';
 import { initInput } from './input.js';
@@ -24,23 +24,36 @@ import {
   initHud, updateHud, renderSelection, positionTileAction, appendLog, showBanner, hideBanner,
   showCombatPreview, hideCombatPreview, openOption, closePopup, popupOpen,
   renderTechTree, closeTechTree, techTreeOpen,
+  openLevelUp, closeLevelUp, levelUpOpen, levelUpCity,
+  showResult, closeResult, resultOpen, parseRuinLine,
 } from './hud.js';
 
+// No turn_limit key: games end by domination, and Perfection sets its own limit engine-side.
+// The opponent's tribe is "random" — the engine draws an unused one from a seeded generator
+// and hides its identity until you meet them.
 const DEFAULT_CONFIG = {
   width: 11,
   height: 11,
   seed: 12345,
   mode: 'domination',
-  turn_limit: 0,
   fog: true,
   players: [
     { tribe: 'imperius', human: true, difficulty: 'normal' },
-    { tribe: 'bardur', human: false, difficulty: 'normal' },
+    { tribe: 'random', human: false, difficulty: 'normal' },
   ],
 };
 
 /** How many enemy units we will probe with preview_combat on one selection. */
 const MAX_PREVIEWS = 40;
+
+/** How many of your units the per-unit readiness scan will probe on one StateView. */
+const SCAN_BUDGET = 40;
+
+/**
+ * Engine log lines the UI has already said, in more detail, from the option it committed.
+ * Everything else the engine reports is kept verbatim.
+ */
+const ENGINE_LINE_ALREADY_SAID = /^(Trained a unit|Researched a technology|Captured a village)$/;
 
 class App {
   constructor() {
@@ -130,24 +143,82 @@ class App {
     await this.syncReadiness();
     updateHud(this);
     this.draw();
+    await this.syncLevelUp();
   }
+
+  /**
+   * FIX A — the level-up is a TRUE MODAL.
+   *
+   * `pending_reward_city` is not advice. The engine refuses every other verb while a reward
+   * is outstanding, so if the UI leaves the choice buried in a city's option tray the board
+   * simply stops responding and the game looks frozen. Every StateView is checked, so a
+   * level-up caused by a bot's turn, by a harvest, or by a chain of two level-ups all raise
+   * the same blocking dialog the moment they happen.
+   */
+  async syncLevelUp() {
+    const s = this.state;
+    const city = s ? s.pendingReward() : null;
+    if (!city) { closeLevelUp(); return; }
+    if (levelUpOpen() && levelUpCity() === city.id) return; // already asking about this one
+    const r = await this.rpc('options', { tile: city.tile, layer: 'city', include_unavailable: true });
+    const rewards = (Array.isArray(r.options) ? r.options : []).filter((o) => o.verb === 'choose_reward');
+    if (!rewards.length) {
+      // A dismissless dialog with no answer in it would be a dead end. Say so loudly instead:
+      // this can only mean the engine and the UI disagree, and the game IS stuck either way.
+      const msg = `City ${city.id} has a level-up pending but the engine offered no rewards.`;
+      showBanner(msg, '');
+      appendLog(msg, 'err');
+      closeLevelUp();
+      return;
+    }
+    // Everything else is closed under it: a half-open confirm popup behind a modal is a way
+    // to commit an action the engine is currently refusing.
+    closePopup();
+    closeTechTree();
+    openLevelUp(this, city, rewards);
+  }
+
+  /** Answer the level-up. This is the ONLY action reachable while the modal is up. */
+  async chooseReward(city, o) {
+    if (!this.state || !o || o.status !== 'available') return;
+    await this.guarded(async () => {
+      const view = await this.rpc('act', {
+        tile: city.tile, verb: 'choose_reward', target: this.targetFor(o),
+      });
+      closeLevelUp();
+      appendLog(`Level-up: chose ${o.label}`, 'you', this.state.turn);
+      await this.setState(view);   // may immediately raise the NEXT pending level-up
+      if (this.sel) await this.loadSelection(this.sel.tile, this.sel.li);
+      await this.runBotsIfNeeded();
+    });
+  }
+
+  /** True while a surface is up that the rest of the UI must not act behind at all. */
+  modalOpen() { return levelUpOpen(); }
+
+  /** True while the ruin/event result is up; dismissable, but only on purpose. */
+  resultOpen() { return resultOpen(); }
 
   /**
    * Which of your units still have something they can do — asked of the ENGINE, one
    * `options` call per unit with include_unavailable=false, so it is exactly the set the
-   * engine would accept.
+   * engine would accept. It drives the greyed-out unit glyphs and the Space hotkey ONLY;
+   * whether the TURN is finished is `has_actions`, which also weighs cities, tiles and tech.
    *
-   * This is not cosmetic. `turn_ended` alone is the wrong signal: a Warrior has Dash, so
-   * moving leaves turn_ended false even when there is nothing left in range to attack. Using
-   * it for the End Turn cue would mean the cue never fires. The engine's own "is any action
-   * available here" answer is the only honest version.
+   * `turn_ended` alone is the wrong signal for this too: a Warrior has Dash, so moving leaves
+   * turn_ended false even when there is nothing left in range to attack.
    */
   async syncReadiness() {
     this.idleUnits = new Set();
     const s = this.state;
     if (!s || !s.isMyTurn()) return;
-    for (const u of s.myUnits().slice(0, 24)) {
+    const units = s.myUnits();
+    for (let n = 0; n < units.length; n++) {
+      const u = units[n];
       if (u.turn_ended) continue;
+      // Past the scan budget, a unit is assumed ACTIVE rather than spent. Greying a unit we
+      // never asked about would tell the player it is finished on no evidence at all.
+      if (n >= SCAN_BUDGET) { this.idleUnits.add(u.tile); continue; }
       try {
         const r = await this.rpc('options', { tile: u.tile, layer: 'unit', include_unavailable: false });
         if (Array.isArray(r.options) && r.options.length) this.idleUnits.add(u.tile);
@@ -194,7 +265,7 @@ class App {
    */
   async onTileClick(i) {
     if (!this.state || i < 0) return;
-    if (popupOpen() || techTreeOpen()) return;
+    if (this.modalOpen() || popupOpen() || techTreeOpen() || resultOpen()) return;
 
     const sel = this.sel;
     if (sel && sel.layer === 'unit' && this.state.isMyTurn()) {
@@ -276,7 +347,7 @@ class App {
   }
 
   selectNextIdleUnit() {
-    if (!this.state) return;
+    if (!this.state || this.modalOpen()) return;
     const ready = this.idleUnits;
     const idle = this.state.myUnits().filter((u) => (ready ? ready.has(u.tile) : !u.turn_ended));
     if (!idle.length) { showBanner('No units left to move — end your turn.', 'ok'); return; }
@@ -297,37 +368,77 @@ class App {
   // --- acting ---------------------------------------------------------------
 
   /**
-   * Resolve the target index for an option.
+   * The target index for an option: the engine's own `target`, and nothing else.
    *
-   * PROTOCOL NOTE: the engine leaves `target` at 0 for the self-targeting verbs (Capture,
-   * Examine) because Option::action is never filled in for them, yet the phase machine's only
-   * legal target is the actor's own tile. Falling back to the SELECTED tile is not arithmetic
-   * — it is the same index the engine gave us as the selection.
+   * The Capture/Examine special case that used to live here is GONE — the engine now fills
+   * Option::action for the self-targeting verbs too, so there is no verb the UI has to know
+   * anything about. Move and attack still carry a meaningless 0, but neither reaches this
+   * function: their targets come from `reachable` and `preview_combat`.
    */
   targetFor(o) {
-    if (typeof o.target === 'number' && o.target !== 0) return o.target;
-    if (SELF_TARGET_VERBS.has(o.verb) && this.sel) return this.sel.tile;
     return typeof o.target === 'number' ? o.target : 0;
+  }
+
+  /**
+   * Surface anything the engine reported about an action it just resolved. Ruin rewards are
+   * rolled SERVER-SIDE, so this log line is the only place the answer exists — and it must be
+   * shown, not filed in the log panel under the bot chatter.
+   */
+  reportActionLog(view) {
+    const lines = view && Array.isArray(view.log) ? view.log : [];
+    for (const line of lines) {
+      // The engine's generic summaries duplicate the line the UI just wrote, which already
+      // names the unit, the tech and the price. Its SPECIFIC lines — level-ups, ruin
+      // rewards, damage — say things the UI cannot know and are always kept.
+      if (ENGINE_LINE_ALREADY_SAID.test(String(line))) continue;
+      appendLog(line, 'sys', this.state ? this.state.turn : undefined);
+    }
+    const ruin = lines.find((l) => /^Ruin:/i.test(String(l)));
+    if (ruin) {
+      const { title, body } = parseRuinLine(ruin);
+      showResult('ANCIENT RUINS', title, body);
+    }
+    return lines;
   }
 
   /** Commit an option that the engine reported as `available`. */
   async commit(o) {
     if (!this.state || !o) return;
     if (o.status !== 'available') return; // the popup already explained why
+    if (this.modalOpen()) return;
     const global = o.verb === 'research' || o.verb === 'end_turn';
     const tile = global ? -1 : (this.sel ? this.sel.tile : -1);
     const target = this.targetFor(o);
     const keepTile = this.sel ? this.sel.tile : -1;
     const keepLayer = this.sel ? this.sel.li : 0;
+    // The unit that is about to act, so we can follow it if the engine MOVES it — a melee
+    // unit advances onto the tile of what it killed, and re-selecting the tile it left would
+    // show an empty square and quietly drop the selection.
+    const actor = keepTile >= 0 ? this.state.unitAt(keepTile) : null;
+    const actorId = actor && actor.owner === this.state.me ? actor.id : null;
 
     await this.guarded(async () => {
       const view = await this.rpc('act', { tile, verb: o.verb, target });
       await this.setState(view);
       appendLog(`${labelForLog(o)}${o.cost ? ` (★${o.cost})` : ''}`, 'you', this.state.turn);
+      this.reportActionLog(view);
       if (techTreeOpen()) await this.refreshTechTree();
-      if (keepTile >= 0) await this.loadSelection(keepTile, keepLayer);
+      if (!this.modalOpen() && keepTile >= 0) {
+        await this.loadSelection(this.followTile(actorId, keepTile), keepLayer);
+      }
       await this.runBotsIfNeeded();
     });
+  }
+
+  /**
+   * Where the actor ended up. The engine advances a melee unit onto the tile it cleared, so
+   * "the tile I clicked" is not where the unit is any more. Found by id from the new
+   * StateView — never predicted, never computed from a direction.
+   */
+  followTile(actorId, fallback) {
+    if (actorId == null || !this.state) return fallback;
+    const u = this.state.units.find((x) => x.id === actorId);
+    return u ? u.tile : fallback;
   }
 
   async doMove(to) {
@@ -336,8 +447,9 @@ class App {
       const view = await this.rpc('act', { tile: from, verb: 'move', target: to });
       await this.setState(view);
       appendLog(`Moved ${from} → ${to}`, 'you', this.state.turn);
+      this.reportActionLog(view);
       // Follow the unit: it is almost always what you want to look at next.
-      await this.loadSelection(to, 0);
+      if (!this.modalOpen()) await this.loadSelection(to, 0);
     });
   }
 
@@ -384,18 +496,17 @@ class App {
 
   async endTurn() {
     if (!this.state || !this.state.isMyTurn()) return;
-    const pending = this.state.pendingRewardCities();
-    if (pending.length) {
-      showBanner('A city has a level-up reward waiting. Select it and choose before ending the turn.', '');
-      this.centreOn(pending[0].tile);
-      await this.loadSelection(pending[0].tile, 0);
-      return;
-    }
+    // The engine refuses end_turn while a level-up is outstanding; the modal is already up,
+    // so there is nothing to explain — just refuse to act behind it.
+    if (this.modalOpen()) return;
+    // Enter is both "end turn" and "acknowledge"; acknowledging first is never destructive.
+    if (resultOpen()) { closeResult(); return; }
     await this.guarded(async () => {
       const view = await this.rpc('act', { tile: -1, verb: 'end_turn', target: 0 });
+      appendLog('Ended turn.', 'you', this.state.turn);
       await this.setState(view);
       this.clearSelection();
-      appendLog('Ended turn.', 'you');
+      this.reportActionLog(view);
       await this.runBotsIfNeeded();
     });
   }
@@ -403,6 +514,7 @@ class App {
   // --- tech tree ------------------------------------------------------------
 
   async openTechTree(highlight) {
+    if (this.modalOpen()) return;
     await this.guarded(async () => {
       const r = await this.rpc('research_options', { include_unavailable: true });
       renderTechTree(this, Array.isArray(r.options) ? r.options : [], highlight);
@@ -415,6 +527,7 @@ class App {
   }
 
   toggleTechTree() {
+    if (this.modalOpen()) return;
     if (techTreeOpen()) closeTechTree();
     else this.openTechTree();
   }
@@ -422,6 +535,10 @@ class App {
   popupOpen() { return popupOpen(); }
 
   onEscape() {
+    // Esc does NOT dismiss the level-up. It is the one thing in this UI with no way out but
+    // an answer, because that is what the engine enforces.
+    if (this.modalOpen()) return;
+    if (resultOpen()) { closeResult(); return; }
     if (popupOpen()) { closePopup(); return; }
     if (techTreeOpen()) { closeTechTree(); return; }
     this.deselect();
@@ -497,15 +614,23 @@ class App {
     this.lastConfig = config || this.lastConfig;
     this.me = 0;
     await this.guarded(async () => {
+      // Nothing from the previous game may survive into the next one.
+      closeLevelUp();
+      closeResult();
+      closePopup();
+      closeTechTree();
       const view = await this.rpc('new_game', this.lastConfig);
       document.getElementById('log').textContent = '';
       this.state = null;
-      await this.setState(view, { refit: true });
+      this.idleUnits = new Set();
       this.clearSelection();
+      await this.setState(view, { refit: true });
       hideBanner();
+      const foes = Math.max(0, (this.lastConfig.players || []).length - 1);
       appendLog(
         `New game — ${this.lastConfig.width}x${this.lastConfig.height}, seed ${this.lastConfig.seed}, ` +
-        `${this.lastConfig.mode}, fog ${this.lastConfig.fog ? 'on' : 'off'}`,
+        `${this.lastConfig.mode}, fog ${this.lastConfig.fog ? 'on' : 'off'}, ` +
+        `${foes} opponent${foes === 1 ? '' : 's'} of unknown tribe`,
         'sys'
       );
       appendLog('Click any discovered tile to inspect it. Space selects your next idle unit.', 'sys');

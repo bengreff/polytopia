@@ -24,17 +24,6 @@ export function pretty(s) {
     .replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
-/**
- * Verbs whose target is the acting tile itself.
- *
- * PROTOCOL NOTE: the engine leaves `target` at 0 for these (make_option never sets
- * Option::action for Capture/Examine), but the phase machine's only legal target for them is
- * the actor's own tile. So when `target` is absent or zero for one of these verbs we send the
- * SELECTED TILE — the index the engine itself handed us as the selection — never an index we
- * computed. See docs/wire-protocol.md rule 3.
- */
-export const SELF_TARGET_VERBS = new Set(['harvest', 'capture', 'examine']);
-
 /** Verbs that are map markers, not tray buttons (ui-reference.md §4.1). */
 export const MARKER_VERBS = new Set(['move', 'attack']);
 
@@ -50,6 +39,21 @@ export class GameState {
     this.currentPlayer = v.current_player ?? 0;
     this.phase = v.phase || 'select';
     this.outcome = v.outcome || null;
+
+    /**
+     * The city holding an unresolved level-up, or -1. The engine REFUSES every other verb
+     * while one is outstanding, so this is not a hint — it is the only thing the player may
+     * answer, and the UI raises a true modal on it.
+     */
+    this.pendingRewardCity = typeof v.pending_reward_city === 'number' ? v.pending_reward_city : -1;
+
+    /**
+     * "Is there anything at all left to do" — units, cities, tiles AND research, answered by
+     * the engine. This, and never "have my units moved", is what lights up End Turn.
+     * Absent (an older engine) is read as "yes, something remains", which is the safe way to
+     * be wrong: it never tells you you are finished when you are not.
+     */
+    this.hasActions = v.has_actions !== false;
 
     this.players = Array.isArray(v.players) ? v.players : [];
     this.tiles = Array.isArray(v.tiles) ? v.tiles : [];
@@ -108,8 +112,14 @@ export class GameState {
 
   activeUnits() { return this.myUnits().filter((u) => !GameState.spent(u)); }
 
-  /** Cities of yours with an unresolved level-up choice; these block other actions. */
-  pendingRewardCities() {
-    return this.cities.filter((c) => c.owner === this.me && (c.pending_rewards || 0) > 0);
+  /**
+   * The city whose level-up must be answered before anything else can happen, or null.
+   * Read from `pending_reward_city`, the engine's own answer — not re-derived from
+   * `pending_rewards` counters, which say how many are queued but not whose turn it is.
+   */
+  pendingReward() {
+    if (this.pendingRewardCity < 0 || !this.isMyTurn()) return null;
+    const c = this.cityById.get(this.pendingRewardCity);
+    return c && c.owner === this.me ? c : null;
   }
 }
