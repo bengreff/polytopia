@@ -43,7 +43,11 @@ struct MapConfig {
 // that initial reveal is the ONLY city-based vision they will ever get. Named because
 // live-rules.md §10.6 claims 25 starting tiles (a 5x5) and the two sources disagree; R18 is
 // the owner ruling and therefore wins.
-inline constexpr int kInitialVisionRadius = 1;
+// 5x5 EXPLORED around the capital (radius 2), while only 3x3 is OWNED.
+// resolutions.md C1: an earlier owner answer said radius 1 and was wrong. The turn-0 score
+// identity, which reproduces all 16 published scores, requires 25 explored tiles -- and the
+// UI research confirmed 5x5 independently.
+inline constexpr int kInitialVisionRadius = 2;
 
 // Fills terrain, resources, villages, capitals, starting units, starting territory and each
 // player's initial explored set. Returns false and fills `error` on an impossible config

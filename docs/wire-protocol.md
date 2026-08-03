@@ -1,4 +1,10 @@
-# Wire protocol
+# Wire protocol v2
+
+**v2 supersedes v1.** The `legal` array is GONE. v1 handed the UI the agent's legality mask,
+which can only say *no* — see `docs/ui-rebuild-plan.md` §1. v2 exposes annotated options
+instead, and adds the queries a human interface needs: layers, reachability, and combat
+preview.
+
 
 The contract between the C++ core and the browser UI. Frozen so the UI and the engine can be
 built in parallel.
@@ -38,9 +44,60 @@ params: {"player": 0}    // omit or -1 for full observability (god view)
 result: <StateView>
 ```
 
-### `apply`
+### `act` — the human-scale action
+One complete action, driven through the phase machine server-side. The UI thinks in
+"build a Farm here"; the agent thinks in three micro-decisions. Both route through the same
+`apply()`, so there is one implementation of what an action *does*. Rolls back on failure.
 ```jsonc
-params: {"index": 47}    // an action slot index; must be legal
+params: {"tile": 47, "verb": "build", "target": 1091}   // tile: -1 for research / end turn
+result: <StateView>
+```
+
+### `options` — what can happen here, and why not
+Returns the FULL option set, annotated. This is the core of v2.
+```jsonc
+params: {"tile": 47, "layer": "unit" | "city" | "tile", "include_unavailable": true}
+result: {"options": [
+  {"verb":"train", "label":"Warrior",  "status":"available",     "cost":2, "target":1024},
+  {"verb":"train", "label":"Rider",    "status":"missing_tech",  "cost":3, "needs_tech":"Riding"},
+  {"verb":"train", "label":"Defender", "status":"cannot_afford", "cost":3, "target":1027},
+  {"verb":"train", "label":"Archer",   "status":"blocked",       "cost":3, "reason":"too many"}
+]}
+```
+`status` is one of `available` | `cannot_afford` | `missing_tech` | `blocked`.
+**`cost` is always populated**, including when unaffordable — the price must stay legible.
+
+### `research_options`
+Same shape, for the tech tree. `params: {"include_unavailable": true}`
+
+### `layers` — what a tile has, in tap-cycle order
+```jsonc
+params: {"tile": 47}
+result: {"layers": ["unit", "city"]}
+```
+**A city tile never yields a `tile` layer.** You cannot build under your own city, and the
+real game offers no such layer — a phantom third layer would cost an extra tap on every city.
+
+### `reachable` — movement markers
+```jsonc
+params: {"tile": 47}                  // tile holding the selected unit
+result: {"tiles": [12, 13, 24, ...]}
+```
+Computed by the ENGINE from true state, never by the client. Zone of control from a
+fog-hidden enemy still truncates movement, so a client computing this from visible tiles
+would both draw markers the engine rejects and leak the hidden unit's position.
+
+### `preview_combat` — the hover readout
+```jsonc
+params: {"from": 47, "to": 58}
+result: {"valid":true, "attacker_damage":5, "defender_damage":3,
+         "defender_dies":false, "attacker_dies":false}
+```
+Server-side because a client cannot see defence bonuses it has no tech for.
+
+### `apply` — raw phase-machine step (agent path; UI should use `act`)
+```jsonc
+params: {"index": 47}
 result: <StateView>
 ```
 
@@ -77,10 +134,15 @@ sent information the player cannot see** — a UI bug must not be able to leak t
   "pending_verb": "move",            // meaningful in the target phase
   "outcome": null,                   // null while ongoing; else {"how","winner","turn"}
 
+  // KNOWLEDGE-FILTERED. Score and city count are permanently public; stars, income and
+  // techs are NEVER visible for anyone but yourself, and tribe identity requires having
+  // met them (or Diplomacy). Unknown fields are null, not zero — a zero is
+  // indistinguishable from a real value and is still a leak the moment it stops being zero.
   "players": [
-    {"id": 0, "tribe": "imperius", "human": true, "alive": true,
-     "stars": 5, "score": 1200, "income": 3,
-     "techs": ["organization", "riding"]}
+    {"id": 0, "known": true,  "tribe": "imperius", "human": true, "alive": true,
+     "score": 1200, "cities": 1, "stars": 5, "income": 3, "techs": ["organization"]},
+    {"id": 1, "known": false, "tribe": null,       "human": false, "alive": true,
+     "score": 1100, "cities": 1, "stars": null, "income": null, "techs": null}
   ],
 
   // Only explored tiles when fog is on. Absent index = unexplored, render as cloud.
@@ -97,27 +159,25 @@ sent information the player cannot see** — a UI bug must not be able to leak t
 
   "cities": [
     {"id": 2, "owner": 0, "tile": 47, "level": 2,
+     // population and next_level_at are null on cities you do not own.
      "population": 3, "next_level_at": 4,     // population may be NEGATIVE
      "capital": true, "walled": false, "besieged": false,
      "units": 1, "capacity": 3, "pending_rewards": 0,
      "production": 3}
   ],
 
-  // The legal action set for the CURRENT decision only.
-  "legal": [
-    {"index": 47, "kind": "tile",   "label": "Warrior"},
-    {"index": 1030, "kind": "verb", "label": "Move"},
-    {"index": 1024, "kind": "train","label": "Warrior (2*)"}
-  ]
-}
 ```
 
 ### Rules the UI must honour
 
-1. **Never construct an action index by arithmetic.** Only ever send an `index` that came from
-   `legal`. Legality is the engine's job; the UI ranks and displays, nothing more. This is the
-   same contract the agent will operate under, which is the point — the human plays through the
-   identical interface, so a UI that feels wrong is evidence the action space is wrong.
+1. **Every discovered tile is selectable.** Selection is NOT gated on any action set. That was
+   the core interaction bug in v1: tiles with no legal action became unclickable, so most of
+   the board was inert.
+2. **Render the full option set.** Show `cannot_afford` in red with the price still legible.
+   Show `missing_tech` with the requirement and no commit button — there is no padlock icon in
+   this game. Annotate `blocked` in place, e.g. a full city still LISTS the unit, suffixed
+   "(too many)". Never delete an option silently.
+3. **Never construct a target index by arithmetic.** Use the `target` from an option.
 2. **Re-render entirely from each `StateView`.** Do not mutate a local copy of the game state.
    The engine is the single source of truth; a client-side prediction that drifts is a bug that
    looks like a rules bug.

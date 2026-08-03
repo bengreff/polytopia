@@ -67,6 +67,11 @@ struct TribeStats {
   Tech start_tech{Tech::Climbing};
   UnitType start_unit{UnitType::Warrior};
   int capital_level{1};  // Luxidoor is 3 (resolutions.md R12)
+  // Varies BY TRIBE, balanced against starting tech. The wiki's flat 5 is stale; the
+  // official 2025 balance pass is the source (resolutions.md C2). Luxidoor's 2 is the
+  // trade against its level-3 capital, which independently corroborates R12.
+  int start_stars{5};
+  bool has_start_tech{true};  // Luxidoor starts with none
 };
 
 struct Rules {
@@ -94,6 +99,10 @@ struct Rules {
   int city_base_score{100};
   int city_score_per_level{50};
   int population_per_score{5};
+  // Initial reveal is 5x5 EXPLORED around the capital while only 3x3 is OWNED
+  // (resolutions.md C1). An earlier owner answer said radius 1 and was wrong; the turn-0
+  // score identity, which reproduces all 16 published scores, requires 25 explored tiles.
+  int initial_vision_radius{2};
   int new_city_border{1};      // 3x3 = radius 1
   int grown_city_border{2};    // 5x5 = radius 2 (resolutions.md R3)
   int connection_population{1};  // +1 to BOTH ends (R23)

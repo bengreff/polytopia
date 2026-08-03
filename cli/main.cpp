@@ -58,6 +58,118 @@ GameMode parse_mode(const std::string& name) {
   return GameMode::Domination;
 }
 
+const char* verb_name_public(Verb v) {
+  static const char* kNames[] = {"move",  "attack", "capture", "harvest", "build",
+                                 "train", "upgrade_naval", "research", "heal", "convert",
+                                 "examine", "destroy", "disband", "choose_reward",
+                                 "end_turn", "deselect"};
+  const int i = static_cast<int>(v);
+  return (i >= 0 && i < kVerbCount) ? kNames[i] : "move";
+}
+
+const char* unit_name_public(UnitType t) {
+  static const char* kNames[] = {"Warrior", "Rider", "Archer", "Defender", "Swordsman",
+                                 "Mind Bender", "Catapult", "Knight", "Cloak", "Dagger",
+                                 "Giant", "Explorer", "Raft", "Scout", "Rammer", "Bomber",
+                                 "Juggernaut", "Dinghy", "Pirate"};
+  const int i = static_cast<int>(t);
+  return (i >= 0 && i < kUnitTypeCount) ? kNames[i] : "Warrior";
+}
+
+const char* improvement_name_public(Improvement imp) {
+  static const char* kNames[] = {"None", "Lumber Hut", "Sawmill", "Farm", "Windmill", "Mine",
+                                 "Forge", "Port", "Market", "Temple", "Forest Temple",
+                                 "Mountain Temple", "Water Temple"};
+  const int i = static_cast<int>(imp);
+  return (i >= 0 && i < static_cast<int>(Improvement::Count)) ? kNames[i] : "None";
+}
+
+const char* tech_name_public(Tech t) {
+  static const char* kNames[] = {
+      "Climbing", "Mining", "Smithery", "Meditation", "Philosophy", "Fishing", "Sailing",
+      "Navigation", "Ramming", "Aquatism", "Hunting", "Archery", "Spiritualism", "Forestry",
+      "Mathematics", "Organization", "Farming", "Construction", "Strategy", "Diplomacy",
+      "Riding", "Roads", "Trade", "Free Spirit", "Chivalry"};
+  const int i = static_cast<int>(t);
+  return (i >= 0 && i < kTechCount) ? kNames[i] : "Climbing";
+}
+
+const char* reward_name_public(CityReward r) {
+  switch (r) {
+    case CityReward::Workshop: return "Workshop";
+    case CityReward::Explorer: return "Explorer";
+    case CityReward::CityWall: return "City Wall";
+    case CityReward::Resources: return "Resources";
+    case CityReward::PopulationGrowth: return "Population Growth";
+    case CityReward::BorderGrowth: return "Border Growth";
+    case CityReward::Park: return "Park";
+    default: return "Super Unit";
+  }
+}
+
+// The display name for one option. Built server-side so the UI never has to decode a slot
+// index -- the same reason labels ship with legal actions.
+std::string option_label(const Rules&, const Option& o) {
+  switch (o.verb) {
+    case Verb::Train: return unit_name_public(o.unit_type);
+    case Verb::Build: return improvement_name_public(o.improvement);
+    case Verb::Research: return tech_name_public(o.tech);
+    case Verb::ChooseReward: return reward_name_public(o.reward);
+    case Verb::Move: return "Move";
+    case Verb::Attack: return "Attack";
+    case Verb::Capture: return "Capture";
+    case Verb::Harvest: return "Harvest";
+    case Verb::Examine: return "Examine ruin";
+    default: return verb_name_public(o.verb);
+  }
+}
+
+const char* availability_name(Availability a) {
+  switch (a) {
+    case Availability::Available: return "available";
+    case Availability::CannotAfford: return "cannot_afford";
+    case Availability::MissingTech: return "missing_tech";
+    default: return "blocked";
+  }
+}
+
+const char* reason_name(BlockReason r) {
+  switch (r) {
+    case BlockReason::CityFull: return "too many";
+    case BlockReason::TileOccupied: return "tile occupied";
+    case BlockReason::WrongTerrain: return "wrong terrain";
+    case BlockReason::NoResource: return "no resource";
+    case BlockReason::AlreadyBuilt: return "already built";
+    case BlockReason::PerCityLimit: return "one per city";
+    case BlockReason::NotYourTerritory: return "not your territory";
+    case BlockReason::UnitSpent: return "already acted";
+    case BlockReason::FreshlyTrained: return "trained this turn";
+    case BlockReason::NeedsTurnStart: return "must start the turn here";
+    case BlockReason::OutOfRange: return "nothing in range";
+    case BlockReason::PendingReward: return "resolve the level-up first";
+    default: return "";
+  }
+}
+
+Verb parse_verb(const std::string& name) {
+  static const struct { const char* name; Verb verb; } kTable[] = {
+      {"move", Verb::Move},       {"attack", Verb::Attack},   {"capture", Verb::Capture},
+      {"harvest", Verb::Harvest}, {"build", Verb::Build},     {"train", Verb::Train},
+      {"research", Verb::Research}, {"examine", Verb::Examine},
+      {"choose_reward", Verb::ChooseReward}, {"end_turn", Verb::EndTurn},
+      {"deselect", Verb::Deselect}};
+  for (const auto& e : kTable) {
+    if (name == e.name) return e.verb;
+  }
+  return Verb::Deselect;
+}
+
+Layer parse_layer(const std::string& name) {
+  if (name == "unit") return Layer::Unit;
+  if (name == "city") return Layer::City;
+  return Layer::Tile;
+}
+
 std::string error_response(int id, const std::string& message) {
   json::Writer w;
   w.begin_object();
@@ -150,7 +262,114 @@ std::string handle_request(const json::Value& request) {
     return w.text();
   }
 
+  if (method == "options" || method == "research_options") {
+    std::vector<Option> options;
+    const bool include = params["include_unavailable"].boolean(true);
+    if (method == "research_options") {
+      enumerate_research(g_state, g_rules, include, options);
+    } else {
+      enumerate_options(g_state, g_rules,
+                        static_cast<TileIdx>(params["tile"].integer(-1)),
+                        parse_layer(params["layer"].str()), include, options);
+    }
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.key("options");
+    w.begin_array();
+    for (const Option& o : options) {
+      w.begin_object();
+      w.field("verb", verb_name_public(o.verb));
+      w.field("status", availability_name(o.status));
+      w.field("cost", o.cost);
+      w.field("target", static_cast<int>(o.action.index));
+      w.field("label", option_label(g_rules, o));
+      if (o.status == Availability::MissingTech) {
+        w.field("needs_tech", tech_name_public(o.required_tech));
+      }
+      if (o.status == Availability::Blocked) w.field("reason", reason_name(o.reason));
+      w.end_object();
+    }
+    w.end_array();
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
+  if (method == "layers") {
+    Layer layers[4];
+    const int count = tile_layers(g_state, static_cast<TileIdx>(params["tile"].integer(-1)), layers);
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.key("layers");
+    w.begin_array();
+    for (int i = 0; i < count; ++i) {
+      w.value(layers[i] == Layer::Unit ? "unit" : (layers[i] == Layer::City ? "city" : "tile"));
+    }
+    w.end_array();
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
+  if (method == "preview_combat") {
+    const CombatPreview preview =
+        preview_combat(g_state, g_rules, static_cast<TileIdx>(params["from"].integer(-1)),
+                       static_cast<TileIdx>(params["to"].integer(-1)));
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.field("valid", preview.valid);
+    w.field("attacker_damage", preview.attacker_damage);
+    w.field("defender_damage", preview.defender_damage);
+    w.field("defender_dies", preview.defender_dies);
+    w.field("attacker_dies", preview.attacker_dies);
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
+  if (method == "reachable") {
+    const auto tile = static_cast<TileIdx>(params["tile"].integer(-1));
+    ActionMask mask;
+    const UnitId unit = (tile >= 0 && tile < static_cast<TileIdx>(g_state.tile_count()))
+                            ? g_state.tiles[tile].unit
+                            : kNoUnit;
+    if (unit != kNoUnit) reachable_tiles(g_state, g_rules, unit, mask);
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.key("tiles");
+    w.begin_array();
+    for (TileIdx t = 0; t < static_cast<TileIdx>(g_state.tile_count()); ++t) {
+      if (mask.test(tile_to_slot(t))) w.value(static_cast<int>(t));
+    }
+    w.end_array();
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
   std::vector<std::string> log;
+  if (method == "act") {
+    // One human-scale action, driven through the phase machine by apply_compound.
+    const auto tile = static_cast<TileIdx>(params["tile"].integer(-1));
+    const Verb verb = parse_verb(params["verb"].str());
+    const int target = params["target"].integer(0);
+    if (!apply_compound(g_state, g_rules, tile, verb, target, &log)) {
+      return error_response(id, "action refused");
+    }
+  }
+
   if (method == "advance_bots") {
     log = advance_bots(g_state, g_rules, 4000);
   }

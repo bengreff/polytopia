@@ -162,6 +162,19 @@ struct Player {
   // 25 techs fit in a 32-bit mask.
   std::uint32_t techs{0};
 
+  // Who this player has ENCOUNTERED, as a bitmask of PlayerId. Meeting a tribe is an event,
+  // not a passive flag: first sight of their unit or city reveals their identity and pays
+  // stars scaled to their score (resolutions.md C3). Until met, an opponent's tribe is
+  // unknown -- and their stars, income and techs are never visible at all.
+  std::uint16_t met{0};
+
+  [[nodiscard]] constexpr bool has_met(PlayerId other) const {
+    return (met & (1u << other)) != 0;
+  }
+  constexpr void mark_met(PlayerId other) {
+    met = static_cast<std::uint16_t>(met | (1u << other));
+  }
+
   [[nodiscard]] constexpr bool has_tech(Tech t) const {
     return (techs & (1u << static_cast<int>(t))) != 0;
   }

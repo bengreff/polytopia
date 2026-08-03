@@ -205,12 +205,18 @@ bool new_game(const GameConfig& cfg, const Rules& rules, GameState& out, std::st
 
   for (int p = 0; p < cfg.player_count; ++p) {
     Player& player = out.players[p];
+    const TribeStats& tribe = rules.tribe(cfg.tribes[p]);
     player.tribe = cfg.tribes[p];
     player.is_human = cfg.is_human[p];
     player.difficulty = cfg.difficulty[p];
     player.alive = true;
+    // Starting stars vary BY TRIBE and were previously not set at all, so every tribe began
+    // on income alone (resolutions.md C2). Luxidoor's 2 buys its level-3 capital.
+    player.stars = tribe.start_stars;
     // A tribe's starting tech is GRANTED FREE, not discounted (live-rules.md §3.3).
-    player.grant_tech(rules.tribe(cfg.tribes[p]).start_tech);
+    // Luxidoor has none.
+    if (tribe.has_start_tech) player.grant_tech(tribe.start_tech);
+    player.mark_met(static_cast<PlayerId>(p));  // you always know yourself
   }
 
   for (PlayerId p = 0; p < out.player_count; ++p) recompute_visibility(out, rules, p);
@@ -260,20 +266,51 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
   w.begin_array();
   for (PlayerId p = 0; p < s.player_count; ++p) {
     const Player& player = s.players[p];
+    // KNOWLEDGE FILTER. Score and city count are permanently public; stars, income, techs
+    // and tribe identity are not (docs/ui-rebuild-plan.md §3). Enforced HERE, server-side,
+    // for the same reason fog is: a UI bug must not be able to leak it, and an agent trained
+    // against a leaky observation would be learning a different game.
+    const bool self = (p == viewer);
+    const bool known = omniscient || self || s.players[viewer].has_met(p);
+
+    int cities = 0;
+    for (CityId c = 0; c < s.city_count; ++c) {
+      if (s.cities[c].owner == p) ++cities;
+    }
+
     w.begin_object();
     w.field("id", static_cast<int>(p));
-    w.field("tribe", tribe_name(player.tribe));
+    w.field("known", known);
     w.field("human", player.is_human);
     w.field("alive", player.alive);
-    w.field("stars", player.stars);
+    // Always public.
     w.field("score", player_score(s, rules, p));
-    w.field("income", player_income(s, rules, p));
-    w.key("techs");
-    w.begin_array();
-    for (int i = 0; i < kTechCount; ++i) {
-      if (player.has_tech(static_cast<Tech>(i))) w.value(tech_name(static_cast<Tech>(i)));
+    w.field("cities", cities);
+    // Identity: only once met, or with Diplomacy.
+    if (known) {
+      w.field("tribe", tribe_name(player.tribe));
+    } else {
+      w.key("tribe");
+      w.value(nullptr);
     }
-    w.end_array();
+    // NEVER visible for anyone but yourself -- not even a met opponent.
+    if (self || omniscient) {
+      w.field("stars", player.stars);
+      w.field("income", player_income(s, rules, p));
+      w.key("techs");
+      w.begin_array();
+      for (int i = 0; i < kTechCount; ++i) {
+        if (player.has_tech(static_cast<Tech>(i))) w.value(tech_name(static_cast<Tech>(i)));
+      }
+      w.end_array();
+    } else {
+      w.key("stars");
+      w.value(nullptr);
+      w.key("income");
+      w.value(nullptr);
+      w.key("techs");
+      w.value(nullptr);
+    }
     w.end_object();
   }
   w.end_array();
@@ -330,9 +367,18 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
     w.field("owner", static_cast<int>(city.owner));
     w.field("tile", static_cast<int>(city.tile));
     w.field("level", static_cast<int>(city.level));
-    // May be NEGATIVE. The UI must render it as such, never clamp it (resolutions.md R17).
-    w.field("population", static_cast<int>(city.population));
-    w.field("next_level_at", population_needed(s, rules, c));
+    // Population is visible ONLY on your own cities (ui-reference.md §5). May be NEGATIVE --
+    // render as such, never clamp (resolutions.md R17).
+    const bool mine = omniscient || city.owner == viewer;
+    if (mine) {
+      w.field("population", static_cast<int>(city.population));
+      w.field("next_level_at", population_needed(s, rules, c));
+    } else {
+      w.key("population");
+      w.value(nullptr);
+      w.key("next_level_at");
+      w.value(nullptr);
+    }
     w.field("capital", city.has(CityFlag::Capital));
     w.field("walled", city.has(CityFlag::Walled));
     w.field("besieged", city.has(CityFlag::Besieged));

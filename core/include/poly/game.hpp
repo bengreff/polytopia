@@ -17,6 +17,7 @@
 
 #include "poly/action.hpp"
 #include "poly/outcome.hpp"
+#include "poly/options.hpp"
 #include "poly/rules.hpp"
 #include "poly/state.hpp"
 
@@ -81,9 +82,24 @@ bool unit_can_act(const GameState& s, UnitId unit);
 CityId city_at(const GameState& s, TileIdx tile);
 void recompute_visibility(GameState& s, const Rules& rules, PlayerId player);
 
+// Marks newly-encountered tribes. Meeting is an event that reveals identity and pays stars
+// scaled to the met tribe's score (resolutions.md C3), so it must run after visibility.
+void check_meetings(GameState& s, const Rules& rules, PlayerId player,
+                    std::vector<std::string>* log);
+
 // Serialises a StateView per docs/wire-protocol.md. `viewer` = kNoPlayer for full
 // observability. Fog is applied HERE, server-side: unexplored tiles are omitted entirely,
 // so a UI bug cannot leak the map.
+void enumerate_research(const GameState& s, const Rules& rules, bool include_unavailable,
+                        std::vector<Option>& out);
+
+// Drives the phase machine through one complete human-scale action (select -> verb -> target).
+// The UI thinks in "build a Farm here"; the agent thinks in micro-decisions. Both route
+// through apply(), so there is one implementation of what an action does. Rolls back on any
+// failure. Pass tile = kNoTile for the global actor (research, end turn).
+bool apply_compound(GameState& s, const Rules& rules, TileIdx tile, Verb verb, int target_slot,
+                    std::vector<std::string>* log);
+
 std::string state_view_json(const GameState& s, const Rules& rules, PlayerId viewer);
 
 }  // namespace poly

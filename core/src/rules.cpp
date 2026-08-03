@@ -28,8 +28,10 @@ void set_resource(Rules& r, Resource res, ResourceStats stats) {
   r.resources[static_cast<int>(res)] = stats;
 }
 
-void set_tribe(Rules& r, Tribe t, Tech start_tech, UnitType start_unit, int capital_level = 1) {
-  r.tribes[static_cast<int>(t)] = TribeStats{start_tech, start_unit, capital_level};
+void set_tribe(Rules& r, Tribe t, Tech start_tech, UnitType start_unit, int start_stars,
+               int capital_level = 1, bool has_start_tech = true) {
+  r.tribes[static_cast<int>(t)] =
+      TribeStats{start_tech, start_unit, capital_level, start_stars, has_start_tech};
 }
 
 // --- name tables, so JSON keys map onto enums -------------------------------------------
@@ -264,18 +266,19 @@ Rules Rules::defaults() {
 
   // --- Tribes (live-rules.md §10.1). Luxidoor's capital starts at level 3 (R12), derived
   // from a turn-0 score identity that reproduces all 16 published turn-0 scores.
-  set_tribe(r, Tribe::XinXi, Tech::Climbing, UnitType::Warrior);
-  set_tribe(r, Tribe::Imperius, Tech::Organization, UnitType::Warrior);
-  set_tribe(r, Tribe::Bardur, Tech::Hunting, UnitType::Warrior);
-  set_tribe(r, Tribe::Oumaji, Tech::Riding, UnitType::Rider);
-  set_tribe(r, Tribe::Kickoo, Tech::Fishing, UnitType::Warrior);
-  set_tribe(r, Tribe::Hoodrick, Tech::Archery, UnitType::Archer);
-  set_tribe(r, Tribe::Luxidoor, Tech::Climbing, UnitType::Warrior, 3);
-  set_tribe(r, Tribe::Vengir, Tech::Smithery, UnitType::Swordsman);
-  set_tribe(r, Tribe::Zebasi, Tech::Farming, UnitType::Warrior);
-  set_tribe(r, Tribe::AiMo, Tech::Meditation, UnitType::MindBender);
-  set_tribe(r, Tribe::Quetzali, Tech::Strategy, UnitType::Defender);
-  set_tribe(r, Tribe::Yadakk, Tech::Roads, UnitType::Warrior);
+  set_tribe(r, Tribe::XinXi, Tech::Climbing, UnitType::Warrior, 7);
+  set_tribe(r, Tribe::Imperius, Tech::Organization, UnitType::Warrior, 5);
+  set_tribe(r, Tribe::Bardur, Tech::Hunting, UnitType::Warrior, 5);
+  set_tribe(r, Tribe::Oumaji, Tech::Riding, UnitType::Rider, 6);
+  set_tribe(r, Tribe::Kickoo, Tech::Fishing, UnitType::Warrior, 5);
+  set_tribe(r, Tribe::Hoodrick, Tech::Archery, UnitType::Archer, 7);
+  // Luxidoor: NO starting tech, only 2 stars -- both paid for a level-3 capital.
+  set_tribe(r, Tribe::Luxidoor, Tech::Climbing, UnitType::Warrior, 2, 3, false);
+  set_tribe(r, Tribe::Vengir, Tech::Smithery, UnitType::Swordsman, 5);
+  set_tribe(r, Tribe::Zebasi, Tech::Farming, UnitType::Warrior, 5);
+  set_tribe(r, Tribe::AiMo, Tech::Philosophy, UnitType::MindBender, 5);
+  set_tribe(r, Tribe::Quetzali, Tech::Strategy, UnitType::Defender, 7);
+  set_tribe(r, Tribe::Yadakk, Tech::Roads, UnitType::Warrior, 7);
 
   return r;
 }
@@ -382,6 +385,7 @@ bool load_rules(const std::string& path, Rules& out, std::string& error) {
     if (!lookup(tribe_names(), name, tribe)) continue;
     TribeStats& s = out.tribes[static_cast<int>(tribe)];
     s.capital_level = value["capital_level"].integer(s.capital_level);
+    s.start_stars = value["start_stars"].integer(s.start_stars);
     if (value["start_tech"].is_string()) {
       Tech t{};
       if (lookup(tech_names(), value["start_tech"].str(), t)) s.start_tech = t;

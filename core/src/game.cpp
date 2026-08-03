@@ -7,6 +7,7 @@
 
 #include "poly/json.hpp"
 #include "poly/mapgen.hpp"
+#include "poly/options.hpp"
 
 namespace poly {
 namespace {
@@ -329,6 +330,30 @@ void recompute_visibility(GameState& s, const Rules& rules, PlayerId player) {
   }
 }
 
+void check_meetings(GameState& s, const Rules& rules, PlayerId player,
+                    std::vector<std::string>* log) {
+  // Meeting a tribe is an EVENT, not a passive flag (resolutions.md C3): first sight of
+  // another tribe's unit or city reveals their identity AND pays stars scaled to their
+  // score. Modelling it as a flag would silently drop an economic mechanic.
+  const ExploredMap& seen = s.explored[player];
+  for (UnitId u = 0; u < s.unit_count; ++u) {
+    const Unit& unit = s.units[u];
+    if (!unit.alive() || unit.owner == player || unit.owner == kNoPlayer) continue;
+    if (seen.test(unit.tile)) s.players[player].mark_met(unit.owner);
+  }
+  for (CityId c = 0; c < s.city_count; ++c) {
+    const City& city = s.cities[c];
+    if (city.owner == player || city.owner == kNoPlayer) continue;
+    if (seen.test(city.tile)) s.players[player].mark_met(city.owner);
+  }
+  // Diplomacy reveals every tribe's identity without needing to find them.
+  if (s.players[player].has_tech(Tech::Diplomacy)) {
+    for (PlayerId p = 0; p < s.player_count; ++p) s.players[player].mark_met(p);
+  }
+  (void)rules;
+  (void)log;
+}
+
 // -----------------------------------------------------------------------------------------
 // City growth
 // -----------------------------------------------------------------------------------------
@@ -426,6 +451,7 @@ void begin_turn(GameState& s, const Rules& rules) {
   }
 
   recompute_visibility(s, rules, player);
+  check_meetings(s, rules, player, nullptr);
   s.phase = Phase::Select;
   s.selected = kNoTile;
   s.global_actor = false;
@@ -450,73 +476,122 @@ void advance_player(GameState& s, const Rules& rules) {
 
 namespace {
 
-bool can_train(const GameState& s, const Rules& rules, CityId city_id, UnitType type) {
+Availability can_train(const GameState& s, const Rules& rules, CityId city_id, UnitType type,
+                       BlockReason& reason) {
+  reason = BlockReason::None;
   const City& c = s.cities[city_id];
   const UnitStats& stats = rules.unit(type);
-  if (!stats.trainable) return false;
-  if (c.unit_count >= c.unit_capacity()) return false;
-  if (s.units[0].owner == kNoPlayer && s.unit_count >= kMaxUnits) return false;
-  if (s.unit_count >= kMaxUnits) return false;
-  if (stats.needs_tech && !s.players[c.owner].has_tech(stats.tech)) return false;
-  if (s.players[c.owner].stars < stats.cost) return false;
-  if (s.tiles[c.tile].unit != kNoUnit) return false;
-  return true;
+  if (!stats.trainable) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
+  // Tech is checked BEFORE affordability so "locked" wins over "cannot afford". Telling a
+  // player they are 3 stars short of a unit they have not unlocked is actively misleading.
+  if (stats.needs_tech && !s.players[c.owner].has_tech(stats.tech)) {
+    return Availability::MissingTech;
+  }
+  if (c.unit_count >= c.unit_capacity() || s.unit_count >= kMaxUnits) {
+    reason = BlockReason::CityFull;
+    return Availability::Blocked;
+  }
+  if (s.tiles[c.tile].unit != kNoUnit) {
+    reason = BlockReason::TileOccupied;
+    return Availability::Blocked;
+  }
+  if (s.players[c.owner].stars < stats.cost) return Availability::CannotAfford;
+  return Availability::Available;
 }
 
-bool can_research(const GameState& s, const Rules& rules, PlayerId player, Tech tech) {
+Availability can_research(const GameState& s, const Rules& rules, PlayerId player, Tech tech,
+                          BlockReason& reason) {
+  reason = BlockReason::None;
   const Player& p = s.players[player];
-  if (p.has_tech(tech)) return false;
-  // Backwards research: the edge is traversable in BOTH directions, so a tech is available
-  // if its parent is owned OR any child of it is owned (resolutions.md R30).
-  bool available = tech_is_root(tech) || p.has_tech(tech_parent(tech));
-  if (!available) {
-    for (int i = 0; i < kTechCount && !available; ++i) {
+  if (p.has_tech(tech)) {
+    reason = BlockReason::AlreadyBuilt;
+    return Availability::Blocked;
+  }
+  // Backwards research: the edge is traversable in BOTH directions, so a tech is reachable if
+  // its parent is owned OR any child of it is owned (resolutions.md R30).
+  bool reachable = tech_is_root(tech) || p.has_tech(tech_parent(tech));
+  if (!reachable) {
+    for (int i = 0; i < kTechCount && !reachable; ++i) {
       const auto other = static_cast<Tech>(i);
-      if (!tech_is_root(other) && tech_parent(other) == tech && p.has_tech(other)) {
-        available = true;
-      }
+      if (!tech_is_root(other) && tech_parent(other) == tech && p.has_tech(other)) reachable = true;
     }
   }
-  if (!available) return false;
+  if (!reachable) return Availability::MissingTech;
 
   int city_count = 0;
   for (CityId c = 0; c < s.city_count; ++c) {
     if (s.cities[c].owner == player) ++city_count;
   }
-  return p.stars >= rules.tech_cost(tech, city_count, p.has_tech(Tech::Philosophy));
+  if (p.stars < rules.tech_cost(tech, city_count, p.has_tech(Tech::Philosophy))) {
+    return Availability::CannotAfford;
+  }
+  return Availability::Available;
 }
 
-bool can_build(const GameState& s, const Rules& rules, TileIdx tile_idx, Improvement imp) {
+Availability can_build(const GameState& s, const Rules& rules, TileIdx tile_idx,
+                       Improvement imp, BlockReason& reason) {
+  reason = BlockReason::None;
+  if (imp == Improvement::None) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
   const Tile& tile = s.tiles[tile_idx];
   const ImprovementStats& stats = rules.improvement(imp);
-  if (imp == Improvement::None) return false;
-  if (tile.improvement != Improvement::None) return false;
-  if (tile.owner != s.current_player) return false;
-  if ((stats.terrain_mask & terrain_bit(tile.terrain)) == 0) return false;
-  if (stats.needs_resource && tile.resource != stats.resource) return false;
-  if (stats.needs_tech && !s.me().has_tech(stats.tech)) return false;
-  if (s.me().stars < stats.cost) return false;
 
+  if (tile.owner != s.current_player) {
+    reason = BlockReason::NotYourTerritory;
+    return Availability::Blocked;
+  }
+  if ((stats.terrain_mask & terrain_bit(tile.terrain)) == 0) {
+    reason = BlockReason::WrongTerrain;
+    return Availability::Blocked;
+  }
+  if (stats.needs_tech && !s.me().has_tech(stats.tech)) return Availability::MissingTech;
+  if (tile.improvement != Improvement::None) {
+    reason = BlockReason::AlreadyBuilt;
+    return Availability::Blocked;
+  }
+  if (stats.needs_resource && tile.resource != stats.resource) {
+    reason = BlockReason::NoResource;
+    return Availability::Blocked;
+  }
   if (stats.per_city_limit > 0 && tile.city != kNoCity) {
     int existing = 0;
     for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
       if (s.tiles[t].city == tile.city && s.tiles[t].improvement == imp) ++existing;
     }
-    if (existing >= stats.per_city_limit) return false;
+    if (existing >= stats.per_city_limit) {
+      reason = BlockReason::PerCityLimit;
+      return Availability::Blocked;
+    }
   }
-  return true;
+  if (s.me().stars < stats.cost) return Availability::CannotAfford;
+  return Availability::Available;
 }
 
-bool can_harvest(const GameState& s, const Rules& rules, TileIdx tile_idx) {
+Availability can_harvest(const GameState& s, const Rules& rules, TileIdx tile_idx,
+                         BlockReason& reason) {
+  reason = BlockReason::None;
   const Tile& tile = s.tiles[tile_idx];
-  if (tile.owner != s.current_player) return false;
   const ResourceStats& stats = rules.resource(tile.resource);
-  if (tile.resource == Resource::None || !stats.harvestable) return false;
-  if (stats.needs_tech && !s.me().has_tech(stats.tech)) return false;
-  return s.me().stars >= stats.harvest_cost;
+  if (tile.resource == Resource::None || !stats.harvestable) {
+    reason = BlockReason::NoResource;
+    return Availability::Blocked;
+  }
+  if (tile.owner != s.current_player) {
+    reason = BlockReason::NotYourTerritory;
+    return Availability::Blocked;
+  }
+  if (stats.needs_tech && !s.me().has_tech(stats.tech)) return Availability::MissingTech;
+  if (s.me().stars < stats.harvest_cost) return Availability::CannotAfford;
+  return Availability::Available;
 }
 
 void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
+  BlockReason scratch = BlockReason::None;
   for (UnitId u = 0; u < s.unit_count; ++u) {
     if (unit_can_act(s, u)) mask.set(tile_to_slot(s.units[u].tile));
   }
@@ -530,19 +605,19 @@ void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
       continue;
     }
     for (int i = 0; i < kUnitTypeCount; ++i) {
-      if (can_train(s, rules, c, static_cast<UnitType>(i))) {
+      if (can_train(s, rules, c, static_cast<UnitType>(i), scratch) == Availability::Available) {
         mask.set(tile_to_slot(city.tile));
         break;
       }
     }
   }
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
-    if (can_harvest(s, rules, t)) {
+    if (can_harvest(s, rules, t, scratch) == Availability::Available) {
       mask.set(tile_to_slot(t));
       continue;
     }
     for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
-      if (can_build(s, rules, t, static_cast<Improvement>(i))) {
+      if (can_build(s, rules, t, static_cast<Improvement>(i), scratch) == Availability::Available) {
         mask.set(tile_to_slot(t));
         break;
       }
@@ -553,9 +628,10 @@ void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
 }
 
 void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
+  BlockReason scratch = BlockReason::None;
   if (s.global_actor) {
     for (int i = 0; i < kTechCount; ++i) {
-      if (can_research(s, rules, s.current_player, static_cast<Tech>(i))) {
+      if (can_research(s, rules, s.current_player, static_cast<Tech>(i), scratch) == Availability::Available) {
         mask.set(static_cast<int>(Verb::Research));
         break;
       }
@@ -578,7 +654,7 @@ void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
       return;
     }
     for (int i = 0; i < kUnitTypeCount; ++i) {
-      if (can_train(s, rules, city_id, static_cast<UnitType>(i))) {
+      if (can_train(s, rules, city_id, static_cast<UnitType>(i), scratch) == Availability::Available) {
         mask.set(static_cast<int>(Verb::Train));
         break;
       }
@@ -626,9 +702,11 @@ void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
     }
   }
 
-  if (can_harvest(s, rules, tile_idx)) mask.set(static_cast<int>(Verb::Harvest));
+  if (can_harvest(s, rules, tile_idx, scratch) == Availability::Available) {
+    mask.set(static_cast<int>(Verb::Harvest));
+  }
   for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
-    if (can_build(s, rules, tile_idx, static_cast<Improvement>(i))) {
+    if (can_build(s, rules, tile_idx, static_cast<Improvement>(i), scratch) == Availability::Available) {
       mask.set(static_cast<int>(Verb::Build));
       break;
     }
@@ -638,6 +716,7 @@ void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
 }
 
 void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
+  BlockReason scratch = BlockReason::None;
   const TileIdx tile_idx = s.selected;
   switch (s.pending_verb) {
     case Verb::Move: {
@@ -663,7 +742,7 @@ void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
     case Verb::Train: {
       const CityId city_id = city_at(s, tile_idx);
       for (int i = 0; i < kUnitTypeCount; ++i) {
-        if (can_train(s, rules, city_id, static_cast<UnitType>(i))) {
+        if (can_train(s, rules, city_id, static_cast<UnitType>(i), scratch) == Availability::Available) {
           mask.set(unit_type_to_slot(static_cast<UnitType>(i)));
         }
       }
@@ -671,7 +750,7 @@ void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
     }
     case Verb::Research: {
       for (int i = 0; i < kTechCount; ++i) {
-        if (can_research(s, rules, s.current_player, static_cast<Tech>(i))) {
+        if (can_research(s, rules, s.current_player, static_cast<Tech>(i), scratch) == Availability::Available) {
           mask.set(tech_to_slot(static_cast<Tech>(i)));
         }
       }
@@ -679,7 +758,7 @@ void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
     }
     case Verb::Build: {
       for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
-        if (can_build(s, rules, tile_idx, static_cast<Improvement>(i))) {
+        if (can_build(s, rules, tile_idx, static_cast<Improvement>(i), scratch) == Availability::Available) {
           mask.set(improvement_to_slot(static_cast<Improvement>(i)));
         }
       }
@@ -863,6 +942,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
         u.add(UnitFlag::TurnEnded);
       }
       recompute_visibility(s, rules, u.owner);
+      check_meetings(s, rules, u.owner, log);
       update_siege_flags(s);
       break;
     }
@@ -1051,6 +1131,261 @@ MaybeOutcome outcome(const GameState& s, const Rules& rules) {
   }
 
   return std::nullopt;
+}
+
+// -----------------------------------------------------------------------------------------
+// Option enumeration -- the human-facing projection of the same predicates legal_actions uses
+// -----------------------------------------------------------------------------------------
+
+namespace {
+
+Option make_option(Verb verb, Layer layer, int cost, Availability status, BlockReason reason) {
+  Option o;
+  o.verb = verb;
+  o.layer = layer;
+  o.cost = cost;
+  o.status = status;
+  o.reason = reason;
+  return o;
+}
+
+bool keep(Availability status, bool include_unavailable) {
+  return include_unavailable || status == Availability::Available;
+}
+
+}  // namespace
+
+int tile_layers(const GameState& s, TileIdx tile, Layer* out) {
+  int count = 0;
+  if (s.tiles[tile].unit != kNoUnit && s.units[s.tiles[tile].unit].alive()) {
+    out[count++] = Layer::Unit;
+  }
+  const CityId city = city_at(s, tile);
+  if (city != kNoCity) {
+    out[count++] = Layer::City;
+    // Deliberately NO Tile layer on a city tile: you cannot build under your own city, and
+    // the owner confirmed the real game offers no such layer. A phantom third layer would
+    // make every city tile take an extra tap to cycle through nothing.
+    return count;
+  }
+  out[count++] = Layer::Tile;
+  return count;
+}
+
+void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Layer layer,
+                       bool include_unavailable, std::vector<Option>& out) {
+  out.clear();
+  if (tile < 0 || tile >= static_cast<TileIdx>(s.tile_count())) return;
+  BlockReason reason = BlockReason::None;
+
+  if (layer == Layer::Unit) {
+    const UnitId id = s.tiles[tile].unit;
+    if (id == kNoUnit || !s.units[id].alive()) return;
+    const Unit& u = s.units[id];
+    if (u.owner != s.current_player) return;  // enemy units are inspectable, not commandable
+
+    const UnitStats& stats = rules.unit(u.type);
+    const bool dash = has_skill(static_cast<Skill>(stats.skills), Skill::Dash);
+    const bool escape = has_skill(static_cast<Skill>(stats.skills), Skill::Escape);
+
+    // Why a unit cannot act is worth SAYING rather than omitting -- "bought this turn" and
+    // "already moved" look identical if the option simply disappears.
+    BlockReason spent = BlockReason::None;
+    if (u.has(UnitFlag::FreshlyTrained)) spent = BlockReason::FreshlyTrained;
+    else if (u.has(UnitFlag::TurnEnded)) spent = BlockReason::UnitSpent;
+
+    {
+      ActionMask moves;
+      if (spent == BlockReason::None) reachable_tiles(s, rules, id, moves);
+      const bool can = spent == BlockReason::None && u.moves_left > 0 &&
+                       (!u.has(UnitFlag::HasAttacked) || escape) && !moves.empty();
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        out.push_back(make_option(Verb::Move, Layer::Unit, 0, status,
+                                  can ? BlockReason::None
+                                      : (spent != BlockReason::None ? spent : BlockReason::OutOfRange)));
+      }
+    }
+    {
+      bool target_in_range = false;
+      const Coord c = s.dims.coord(u.tile);
+      for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()) && !target_in_range; ++t) {
+        const UnitId other = s.tiles[t].unit;
+        if (other == kNoUnit || !s.units[other].alive() || s.units[other].owner == u.owner) continue;
+        const Coord tc = s.dims.coord(t);
+        if (std::max(std::abs(c.x - tc.x), std::abs(c.y - tc.y)) <= stats.range) target_in_range = true;
+      }
+      const bool can = spent == BlockReason::None && !u.has(UnitFlag::HasAttacked) &&
+                       (!u.has(UnitFlag::HasMoved) || dash) && stats.attack > 0.0f && target_in_range;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        out.push_back(make_option(Verb::Attack, Layer::Unit, 0, status,
+                                  can ? BlockReason::None
+                                      : (spent != BlockReason::None ? spent : BlockReason::OutOfRange)));
+      }
+    }
+    // Capture and Examine need the unit to have STARTED the turn here (resolutions.md R25).
+    const bool started_here = !u.has(UnitFlag::ArrivedThisTurn);
+    const CityId city = city_at(s, tile);
+    const bool capturable = s.tiles[tile].resource == Resource::Village ||
+                            (city != kNoCity && s.cities[city].owner != u.owner);
+    if (capturable) {
+      const bool can = started_here && spent == BlockReason::None;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        out.push_back(make_option(Verb::Capture, Layer::Unit, 0, status,
+                                  can ? BlockReason::None : BlockReason::NeedsTurnStart));
+      }
+    }
+    if (s.tiles[tile].resource == Resource::Ruin) {
+      const bool can = started_here && spent == BlockReason::None;
+      const auto status = can ? Availability::Available : Availability::Blocked;
+      if (keep(status, include_unavailable)) {
+        out.push_back(make_option(Verb::Examine, Layer::Unit, 0, status,
+                                  can ? BlockReason::None : BlockReason::NeedsTurnStart));
+      }
+    }
+    return;
+  }
+
+  if (layer == Layer::City) {
+    const CityId city = city_at(s, tile);
+    if (city == kNoCity) return;
+    const City& c = s.cities[city];
+    if (c.owner != s.current_player) return;
+
+    if (c.pending_rewards > 0) {
+      // A pending level-up blocks everything else, so offer only the choice.
+      const int level = c.level;
+      CityReward a = CityReward::Park;
+      CityReward b = CityReward::SuperUnit;
+      if (level == 2) { a = CityReward::Workshop; b = CityReward::Explorer; }
+      else if (level == 3) { a = CityReward::CityWall; b = CityReward::Resources; }
+      else if (level == 4) { a = CityReward::PopulationGrowth; b = CityReward::BorderGrowth; }
+      for (const CityReward r : {a, b}) {
+        Option o = make_option(Verb::ChooseReward, Layer::City, 0, Availability::Available,
+                               BlockReason::None);
+        o.reward = r;
+        o.action = Action{static_cast<std::int16_t>(reward_to_slot(r))};
+        out.push_back(o);
+      }
+      return;
+    }
+
+    for (int i = 0; i < kUnitTypeCount; ++i) {
+      const auto type = static_cast<UnitType>(i);
+      if (!rules.unit(type).trainable) continue;
+      const Availability status = can_train(s, rules, city, type, reason);
+      if (!keep(status, include_unavailable)) continue;
+      Option o = make_option(Verb::Train, Layer::City, rules.unit(type).cost, status, reason);
+      o.unit_type = type;
+      o.required_tech = rules.unit(type).tech;
+      o.action = Action{static_cast<std::int16_t>(unit_type_to_slot(type))};
+      out.push_back(o);
+    }
+    return;
+  }
+
+  // Layer::Tile -- build and harvest.
+  for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
+    const auto imp = static_cast<Improvement>(i);
+    const Availability status = can_build(s, rules, tile, imp, reason);
+    // Wrong terrain is not an interesting refusal -- listing every building on every tile
+    // would bury the ones that matter. Everything else is worth saying out loud.
+    if (status == Availability::Blocked &&
+        (reason == BlockReason::WrongTerrain || reason == BlockReason::NotYourTerritory ||
+         reason == BlockReason::NoResource)) {
+      continue;
+    }
+    if (!keep(status, include_unavailable)) continue;
+    Option o = make_option(Verb::Build, Layer::Tile, rules.improvement(imp).cost, status, reason);
+    o.improvement = imp;
+    o.required_tech = rules.improvement(imp).tech;
+    o.action = Action{static_cast<std::int16_t>(improvement_to_slot(imp))};
+    out.push_back(o);
+  }
+
+  const Availability harvest = can_harvest(s, rules, tile, reason);
+  if (harvest != Availability::Blocked && keep(harvest, include_unavailable)) {
+    Option o = make_option(Verb::Harvest, Layer::Tile,
+                           rules.resource(s.tiles[tile].resource).harvest_cost, harvest, reason);
+    o.required_tech = rules.resource(s.tiles[tile].resource).tech;
+    o.action = Action{static_cast<std::int16_t>(tile_to_slot(tile))};
+    out.push_back(o);
+  }
+}
+
+void enumerate_research(const GameState& s, const Rules& rules, bool include_unavailable,
+                        std::vector<Option>& out) {
+  out.clear();
+  BlockReason reason = BlockReason::None;
+  int cities = 0;
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == s.current_player) ++cities;
+  }
+  for (int i = 0; i < kTechCount; ++i) {
+    const auto tech = static_cast<Tech>(i);
+    const Availability status = can_research(s, rules, s.current_player, tech, reason);
+    if (status == Availability::Blocked) continue;  // already researched
+    if (!keep(status, include_unavailable)) continue;
+    Option o = make_option(Verb::Research, Layer::Tile,
+                           rules.tech_cost(tech, cities, s.me().has_tech(Tech::Philosophy)),
+                           status, reason);
+    o.tech = tech;
+    o.required_tech = tech_is_root(tech) ? tech : tech_parent(tech);
+    o.action = Action{static_cast<std::int16_t>(tech_to_slot(tech))};
+    out.push_back(o);
+  }
+}
+
+CombatPreview preview_combat(const GameState& s, const Rules& rules, TileIdx from, TileIdx to) {
+  CombatPreview preview;
+  if (from < 0 || to < 0 || from >= static_cast<TileIdx>(s.tile_count()) ||
+      to >= static_cast<TileIdx>(s.tile_count())) {
+    return preview;
+  }
+  const UnitId attacker = s.tiles[from].unit;
+  const UnitId defender = s.tiles[to].unit;
+  if (attacker == kNoUnit || defender == kNoUnit) return preview;
+  if (!s.units[attacker].alive() || !s.units[defender].alive()) return preview;
+  if (s.units[attacker].owner == s.units[defender].owner) return preview;
+
+  const CombatResult result = resolve_combat(s, rules, attacker, defender);
+  preview.valid = true;
+  preview.attacker_damage = result.attacker_damage / kHpScale;
+  preview.defender_damage = result.defender_damage / kHpScale;
+  preview.defender_dies = result.defender_dies;
+  preview.attacker_dies = result.retaliates && result.defender_damage >= s.units[attacker].hp;
+  return preview;
+}
+
+// Drives the phase machine through one complete human-scale action. The UI thinks in
+// "build a Farm here"; the agent thinks in three micro-decisions. Both go through apply(),
+// so there is exactly one implementation of what an action DOES -- this only bundles the
+// keystrokes. Any step failing rolls the whole thing back.
+bool apply_compound(GameState& s, const Rules& rules, TileIdx tile, Verb verb, int target_slot,
+                    std::vector<std::string>* log) {
+  const GameState snapshot = s;
+  const bool global = tile == kNoTile;
+  const int select_slot = global ? kGlobalActorSlot : tile_to_slot(tile);
+
+  if (s.phase != Phase::Select) {
+    if (!apply(s, rules, Action{static_cast<std::int16_t>(Verb::Deselect)}, nullptr)) {
+      s = snapshot;
+      return false;
+    }
+  }
+  if (!apply(s, rules, Action{static_cast<std::int16_t>(select_slot)}, log) ||
+      !apply(s, rules, Action{static_cast<std::int16_t>(verb)}, log)) {
+    s = snapshot;
+    return false;
+  }
+  if (verb == Verb::EndTurn || verb == Verb::Deselect) return true;
+  if (!apply(s, rules, Action{static_cast<std::int16_t>(target_slot)}, log)) {
+    s = snapshot;
+    return false;
+  }
+  return true;
 }
 
 }  // namespace poly
