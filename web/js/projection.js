@@ -132,6 +132,29 @@ export function inBounds(x, y) {
   return x >= 0 && y >= 0 && x < view.width && y < view.height;
 }
 
+/**
+ * The eight neighbour offsets, in the SAME order and with the same diagonal-inclusive meaning
+ * as the engine's kNeighbourOffsets (core/include/poly/types.hpp). Adjacency in this game is
+ * 8-way — Mind Bender heal/convert range, road connectivity and the capital flood all use it —
+ * so a 4-way version here would silently disagree with the engine about what "adjacent" means.
+ */
+export const NEIGHBOURS = [
+  [-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1],
+];
+
+/**
+ * Screen point half-way between this tile's centre and its neighbour's — i.e. where a path
+ * drawn between two adjacent tiles crosses their shared boundary. Roads are drawn as centre
+ * -> edge stubs, so two adjacent road tiles meet exactly and read as one continuous line.
+ * Defined by interpolation rather than by adding half a tile width, so it stays correct under
+ * an isometric projection where "half a tile east" is not a horizontal offset.
+ */
+export function tileEdgePoint(x, y, dx, dy) {
+  const a = tileToScreen(x, y);
+  const b = tileToScreen(x + dx, y + dy);
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
 // --- camera -----------------------------------------------------------------
 
 export function panBy(dx, dy) {

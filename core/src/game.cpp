@@ -43,12 +43,17 @@ int max_hp_for(const Rules& rules, const Unit& u) {
   return to_hp(hp);
 }
 
+}  // namespace
+
+// Declared in game.hpp: the StateView serialiser needs it too, so it cannot stay file-local.
 int unit_max_hp(const Rules& rules, const Unit& u) {
   const UnitStats& stats = rules.unit(u.has(UnitFlag::Embarked) ? u.carried_type : u.type);
   int hp = stats.hp;
   if (u.has(UnitFlag::Veteran)) hp += static_cast<int>(rules.veteran_hp_bonus);
   return hp;
 }
+
+namespace {
 
 // Is `tile` adjacent to a unit hostile to `player`? Drives Zone of Control.
 bool adjacent_to_enemy(const GameState& s, TileIdx tile, PlayerId player) {

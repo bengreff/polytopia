@@ -16,7 +16,7 @@
  *      thrown away and re-fetched the moment anything changes.
  */
 
-import { GameState } from './state.js';
+import { GameState, pretty } from './state.js';
 import * as P from './projection.js';
 import { render } from './render.js';
 import { initInput } from './input.js';
@@ -65,6 +65,8 @@ class App {
     this.sel = null;
     this.reachable = new Set();
     this.attackable = new Map();
+    /** Adjacent enemy tiles a selected Mind Bender may convert. Gated on the engine's option. */
+    this.convertible = new Set();
     this.ui = { hover: null, dpr: window.devicePixelRatio || 1, showIds: false };
     this.rpcId = 0;
     this.busy = false;
@@ -250,6 +252,7 @@ class App {
     this.sel = null;
     this.reachable = new Set();
     this.attackable = new Map();
+    this.convertible = new Set();
     this.ui.selected = -1;
     hideCombatPreview();
     renderSelection(this);
@@ -269,6 +272,9 @@ class App {
 
     const sel = this.sel;
     if (sel && sel.layer === 'unit' && this.state.isMyTurn()) {
+      // Convert is checked BEFORE attack: a Mind Bender's convert ring and an attack ring can
+      // land on the same enemy, and converting is the reason you brought a Mind Bender.
+      if (this.convertible.has(i)) { this.confirmConvert(i); return; }
       if (this.attackable.has(i)) { this.confirmAttack(i); return; }
       if (this.reachable.has(i)) { await this.doMove(i); return; }
     }
@@ -293,6 +299,7 @@ class App {
     hideCombatPreview();
     this.reachable = new Set();
     this.attackable = new Map();
+    this.convertible = new Set();
     this.ui.selected = i;
 
     if (!s.isExplored(i)) {
@@ -329,10 +336,54 @@ class App {
           this.reachable = new Set(Array.isArray(reach.tiles) ? reach.tiles : []);
         }
         await this.loadAttackPreviews(i);
+        this.loadConvertTargets(i, options);
       }
       renderSelection(this);
       this.draw();
     });
+  }
+
+  /**
+   * Which enemies a Mind Bender may convert.
+   *
+   * Convert has no per-target engine query — there is no `preview_combat` equivalent for it —
+   * so the ADJACENCY is worked out here from tiles the player can already see, using the same
+   * 8-way offsets the engine uses. Nothing is inferred about legality: the ring set is empty
+   * unless the engine's own Convert option is `available`, so the engine still decides whether
+   * converting is possible at all and this only decides where to draw.
+   *
+   * That also means no leak. A fog-hidden enemy is absent from the StateView, so it cannot
+   * produce a ring; unlike movement, adjacency has no zone-of-control subtlety that would make
+   * a client-side answer differ from the engine's.
+   */
+  loadConvertTargets(from, options) {
+    this.convertible = new Set();
+    const s = this.state;
+    const opt = (options || []).find((o) => o.verb === 'convert');
+    if (!opt || opt.status !== 'available') return;
+    const { x, y } = s.tileXY(from);
+    for (const [dx, dy] of P.NEIGHBOURS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!P.inBounds(nx, ny)) continue;
+      const t = s.tileIndex(nx, ny);
+      const u = s.unitAt(t);
+      if (u && u.owner !== s.me) this.convertible.add(t);
+    }
+  }
+
+  /** Converting is confirmed like an attack: it is irreversible and it spends the turn. */
+  confirmConvert(to) {
+    const victim = this.state.unitAt(to);
+    if (!victim) return;
+    openOption(this, {
+      verb: 'convert',
+      label: `Convert ${prettyType(victim.type)}`,
+      status: 'available',
+      cost: 0,
+      target: to,
+    });
+    document.getElementById('pop-commit').textContent = 'CONVERT';
   }
 
   /** Ask the engine for a two-way damage readout against every visible enemy unit. */
@@ -420,7 +471,9 @@ class App {
     await this.guarded(async () => {
       const view = await this.rpc('act', { tile, verb: o.verb, target });
       await this.setState(view);
-      appendLog(`${labelForLog(o)}${o.cost ? ` (★${o.cost})` : ''}`, 'you', this.state.turn);
+      // A negative cost is a REFUND (Disband). "(★-1)" would read as a price of minus one.
+      const money = !o.cost ? '' : o.cost < 0 ? ` (+★${-o.cost})` : ` (★${o.cost})`;
+      appendLog(`${labelForLog(o)}${money}`, 'you', this.state.turn);
       this.reportActionLog(view);
       if (techTreeOpen()) await this.refreshTechTree();
       if (!this.modalOpen() && keepTile >= 0) {
@@ -601,6 +654,7 @@ class App {
       this._raf = null;
       this.ui.reachable = this.reachable;
       this.ui.attackable = this.attackable;
+      this.ui.convertible = this.convertible;
       this.ui.idle = this.idleUnits;
       this.ui.selected = this.sel ? this.sel.tile : -1;
       render(this.ctx, this.state, this.ui);
@@ -653,7 +707,14 @@ function labelForLog(o) {
     case 'examine': return 'Examined ruins';
     case 'choose_reward': return `Chose ${o.label}`;
     case 'attack': return o.label;
-    default: return `${o.verb} ${o.label}`;
+    case 'convert': return o.label;
+    case 'recover': return 'Recovered';
+    case 'promote': return 'Promoted to Veteran';
+    case 'heal': return 'Healed adjacent units';
+    case 'destroy': return 'Destroyed building';
+    case 'disband': return 'Disbanded unit';
+    case 'upgrade_naval': return `Upgraded to ${o.label}`;
+    default: return `${pretty(o.verb)} ${o.label}`;
   }
 }
 

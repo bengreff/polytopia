@@ -84,11 +84,16 @@ const char* tech_name(Tech t) {
   return (index >= 0 && index < kTechCount) ? kNames[index] : "climbing";
 }
 
+// Mirrors verb_name_public in cli/main.cpp; both must track enum Verb exactly. See the note
+// there — this table had the same two-entry gap, so `pending_verb` reported the wrong verb and
+// indexed past the end for EndTurn and Deselect.
 const char* verb_name(Verb v) {
   static const char* kNames[] = {"move",  "attack",  "capture", "harvest", "build",
-                                 "train", "upgrade_naval", "research", "heal", "convert",
-                                 "examine", "destroy", "disband", "choose_reward",
-                                 "end_turn", "deselect"};
+                                 "train", "upgrade_naval", "research", "recover", "heal",
+                                 "convert", "promote", "examine", "destroy", "disband",
+                                 "choose_reward", "end_turn", "deselect"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == kVerbCount,
+                "verb name table out of sync with enum Verb");
   const int index = static_cast<int>(v);
   return (index >= 0 && index < kVerbCount) ? kNames[index] : "move";
 }
@@ -289,10 +294,18 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
     w.field("tile", static_cast<int>(unit.tile));
     // HP is stored in half points and can legitimately land on .5 (resolutions.md R13).
     w.field("hp", static_cast<double>(unit.hp) / kHpScale);
-    w.field("max_hp", static_cast<double>(rules.unit(unit.type).hp));
+    // NOT rules.unit(type).hp: promotion adds +5 to the maximum and an embarked unit keeps the
+    // HP of the land unit inside the hull, so the raw type stat renders a promoted unit as
+    // 15/10 and a loaded Raft against the wrong ceiling.
+    w.field("max_hp", static_cast<double>(unit_max_hp(rules, unit)));
     w.field("moves_left", static_cast<int>(unit.moves_left));
     w.field("veteran", unit.has(UnitFlag::Veteran));
     w.field("turn_ended", unit.has(UnitFlag::TurnEnded) || unit.has(UnitFlag::FreshlyTrained));
+    // A naval unit is a HULL CARRYING A LAND UNIT. wire-protocol.md has always documented
+    // `carried`; it was simply never written, so the UI could not say what a Raft holds.
+    w.key("carried");
+    if (unit.has(UnitFlag::Embarked)) w.value(unit_name(unit.carried_type));
+    else w.value(nullptr);
     w.end_object();
   }
   w.end_array();
@@ -320,6 +333,12 @@ std::string state_view_json(const GameState& s, const Rules& rules, PlayerId vie
       w.value(nullptr);
     }
     w.field("capital", city.has(CityFlag::Capital));
+    // Road connection to the capital. The engine has tracked this since roads landed; it was
+    // never serialised, so the UI had no way to show what a road network had actually bought.
+    // Knowledge-filtered like population: whose cities are linked is your own bookkeeping.
+    w.key("connected");
+    if (mine) w.value(city.has(CityFlag::ConnectedToCapital) || city.has(CityFlag::Capital));
+    else w.value(nullptr);
     w.field("walled", city.has(CityFlag::Walled));
     w.field("besieged", city.has(CityFlag::Besieged));
     w.field("units", static_cast<int>(city.unit_count));

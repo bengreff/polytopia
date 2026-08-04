@@ -51,6 +51,16 @@ export function terrainStyle(name) {
   return TERRAIN[name] || hashColor(String(name || 'unknown'));
 }
 
+/**
+ * Water of any depth. The StateView collapses the Road and Bridge tile flags into one `road`
+ * bool, so terrain is what separates the two — a road over water is a bridge. That is a
+ * reading of state the engine already sent, not an invented field.
+ */
+const WATER_TERRAIN = new Set(['water', 'shallow', 'ocean', 'flooded']);
+export function isWaterTerrain(name) {
+  return WATER_TERRAIN.has(String(name || '').toLowerCase());
+}
+
 const RESOURCE_GLYPH = {
   fruit: { text: 'FRU', color: '#ff5f9e' },
   crop: { text: 'CRP', color: '#ffe066' },
@@ -83,12 +93,33 @@ export function unitAbbrev(type) {
   return UNIT_ABBREV[t] || t.replace(/[^a-z]/g, '').slice(0, 5).toUpperCase() || '?';
 }
 
+/**
+ * The naval hulls. A unit on water is a HULL CARRYING A LAND UNIT, not a different soldier,
+ * so it is drawn as a boat rather than as the standard land plate — the silhouette is what
+ * tells you at a glance that this stack is at sea and cannot do land things.
+ */
+const NAVAL_TYPES = new Set(['raft', 'scout', 'rammer', 'bomber', 'juggernaut', 'dinghy', 'pirate']);
+
+export function isNaval(type) {
+  return NAVAL_TYPES.has(String(type || '').toLowerCase());
+}
+
 // --- canvas helpers --------------------------------------------------------
 
 function polyPath(ctx, poly) {
   ctx.beginPath();
   ctx.moveTo(poly[0][0], poly[0][1]);
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+  ctx.closePath();
+}
+
+/** A boat silhouette in the same box a land unit's plate would occupy. */
+function hullPath(ctx, x, y, w, h) {
+  ctx.beginPath();
+  ctx.moveTo(x, y);                              // deck, port side
+  ctx.lineTo(x + w, y);                          // deck, starboard
+  ctx.lineTo(x + w - h * 0.25, y + h * 0.62);    // starboard tumblehome
+  ctx.quadraticCurveTo(x + w * 0.5, y + h * 1.28, x + h * 0.25, y + h * 0.62);
   ctx.closePath();
 }
 
@@ -177,16 +208,79 @@ export function drawOwnerOverlay(ctx, x, y, ownerId) {
   ctx.globalAlpha = 1;
 }
 
-export function drawRoadGlyph(ctx, x, y) {
-  const b = P.tileBox(x, y);
-  ctx.strokeStyle = 'rgba(226,214,182,0.85)';
-  ctx.lineWidth = Math.max(2, b.w * 0.09);
-  ctx.beginPath();
-  ctx.moveTo(b.x, b.y + b.h / 2);
-  ctx.lineTo(b.x + b.w, b.y + b.h / 2);
-  ctx.moveTo(b.x + b.w / 2, b.y);
-  ctx.lineTo(b.x + b.w / 2, b.y + b.h);
+/**
+ * One tile's share of the road network.
+ *
+ * `links` is the subset of P.NEIGHBOURS that also carries a road, decided by the caller from
+ * the StateView. Each link is drawn from the tile CENTRE to the shared edge (P.tileEdgePoint),
+ * so the neighbour's matching stub lands on the same point and the two read as one continuous
+ * line. Drawing a fixed plus-sign per tile — the previous behaviour — produced a field of
+ * disconnected crosses in which a network was completely illegible, and left a road dangling
+ * into empty ground at every dead end.
+ *
+ * A road flag on a WATER tile is a bridge. The StateView collapses Road and Bridge into one
+ * `road` bool, but terrain recovers the distinction without inventing anything.
+ */
+export function drawRoadGlyph(ctx, x, y, links, isBridge) {
+  const c = P.tileToScreen(x, y);
+  const px = P.tilePixels();
+  const surface = isBridge ? '#c79a5e' : '#e2d6b6';
+  const casing = isBridge ? 'rgba(60,38,16,0.75)' : 'rgba(40,32,16,0.55)';
+
+  const trace = () => {
+    ctx.beginPath();
+    if (!links.length) {
+      // An isolated road still has to be visible, so it gets a short stub rather than nothing.
+      ctx.moveTo(c.x - px * 0.16, c.y);
+      ctx.lineTo(c.x + px * 0.16, c.y);
+      return;
+    }
+    for (const [dx, dy] of links) {
+      const e = P.tileEdgePoint(x, y, dx, dy);
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(e.x, e.y);
+    }
+  };
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Dark casing first, pale surface over it: the contrast is what makes the network legible
+  // over both the green of a field and the blue of water.
+  ctx.strokeStyle = casing;
+  ctx.lineWidth = Math.max(3.5, px * 0.16);
+  trace();
   ctx.stroke();
+  ctx.strokeStyle = surface;
+  ctx.lineWidth = Math.max(2, px * 0.095);
+  trace();
+  ctx.stroke();
+
+  // A bridge gets cross planks, so it is not just "a road that happens to be on water".
+  if (isBridge && px >= 30) {
+    ctx.strokeStyle = 'rgba(90,58,26,0.8)';
+    ctx.lineWidth = Math.max(1, px * 0.02);
+    for (const [dx, dy] of links) {
+      const e = P.tileEdgePoint(x, y, dx, dy);
+      const mx = (c.x + e.x) / 2;
+      const my = (c.y + e.y) / 2;
+      const len = Math.hypot(e.x - c.x, e.y - c.y) || 1;
+      const nx = -(e.y - c.y) / len;
+      const ny = (e.x - c.x) / len;
+      ctx.beginPath();
+      ctx.moveTo(mx - nx * px * 0.05, my - ny * px * 0.05);
+      ctx.lineTo(mx + nx * px * 0.05, my + ny * px * 0.05);
+      ctx.stroke();
+    }
+  }
+  // A junction cap hides the seam where several stubs meet at the centre.
+  if (links.length > 1) {
+    ctx.fillStyle = surface;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, Math.max(1.5, px * 0.05), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 export function drawResourceGlyph(ctx, x, y, resource) {
@@ -290,13 +384,38 @@ export function drawUnitGlyph(ctx, x, y, unit, opts = {}) {
     ctx.shadowBlur = px * 0.22;
   }
 
-  roundRect(ctx, ux, uy, w, h, h * 0.32);
+  // A naval unit gets a HULL, not a plate: flat deck, angled sides, pointed bow. Shape is the
+  // primary cue because it survives greying, the player-colour fill and colour blindness.
+  const naval = isNaval(unit.type);
+  if (naval) hullPath(ctx, ux, uy, w, h);
+  else roundRect(ctx, ux, uy, w, h, h * 0.32);
   ctx.fillStyle = spent ? '#5c6472' : col;
   ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = spent ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.92)';
-  ctx.lineWidth = Math.max(1, px * (spent ? 0.02 : 0.028));
+  // Veterans carry a thick gold border in place of the white one. Promotion is permanent and
+  // changes the unit's maximum HP, so it has to be readable on the map, not only in the panel.
+  ctx.strokeStyle = spent
+    ? 'rgba(0,0,0,0.6)'
+    : unit.veteran ? '#ffd05a' : 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = Math.max(1, px * (spent ? 0.02 : unit.veteran ? 0.05 : 0.028));
   ctx.stroke();
+
+  // A mast, so a hull is unmistakable even at the smallest zoom that still draws units.
+  if (naval && px >= 26) {
+    ctx.strokeStyle = spent ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(1, px * 0.02);
+    ctx.beginPath();
+    ctx.moveTo(c.x, uy);
+    ctx.lineTo(c.x, uy - h * 0.55);
+    ctx.stroke();
+    ctx.fillStyle = spent ? '#8b91a0' : '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(c.x, uy - h * 0.55);
+    ctx.lineTo(c.x + w * 0.20, uy - h * 0.28);
+    ctx.lineTo(c.x, uy - h * 0.14);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   if (px >= 26) {
     ctx.font = `800 ${Math.round(h * 0.62)}px ui-sans-serif, system-ui, sans-serif`;
@@ -325,9 +444,32 @@ export function drawUnitGlyph(ctx, x, y, unit, opts = {}) {
   // Veteran pip, remaining moves, and an explicit word for a spent unit — colour alone is
   // not enough when the whole complaint about v1 was "I cannot tell what I can do".
   if (px >= 34) {
-    if (unit.veteran) label(ctx, 'V', ux - px * 0.02, uy + h * 0.5, Math.round(px * 0.16), '#ffd76a');
+    // Gold chevron over the plate. Redundant with the gold border on purpose: shape plus
+    // colour plus position, so veterancy survives greying and reads without colour vision.
+    if (unit.veteran) {
+      ctx.save();
+      ctx.strokeStyle = spent ? 'rgba(255,208,90,0.55)' : '#ffd05a';
+      ctx.lineWidth = Math.max(1.5, px * 0.035);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      const cy = uy - px * 0.055;
+      const cw = w * 0.20;
+      ctx.beginPath();
+      ctx.moveTo(c.x - cw, cy);
+      ctx.lineTo(c.x, cy - px * 0.075);
+      ctx.lineTo(c.x + cw, cy);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // What the hull is carrying, which is the only thing that says what will step ashore.
+    if (unit.carried) {
+      label(ctx, unitAbbrev(unit.carried), c.x, uy + h + px * 0.30,
+            Math.round(px * 0.13), '#cfe9ff');
+    }
     if (spent) {
-      label(ctx, 'SPENT', c.x, uy - px * 0.11, Math.round(px * 0.13), '#c7cedb');
+      // Lifted clear of the chevron when there is one, so the two never overprint.
+      const sy = uy - px * (unit.veteran ? 0.20 : 0.11);
+      label(ctx, 'SPENT', c.x, sy, Math.round(px * 0.13), '#c7cedb');
     } else if (typeof unit.moves_left === 'number') {
       label(ctx, `${unit.moves_left}`, ux + w + px * 0.03, uy + h * 0.5, Math.round(px * 0.16), '#e6f0ff');
     }
@@ -415,6 +557,30 @@ export function drawAttackRing(ctx, x, y, preview) {
   ctx.restore();
 }
 
+/**
+ * Mind Bender convert target. Deliberately NOT a red attack ring: converting takes the unit
+ * rather than killing it, and a player who reads it as an attack will mis-plan the turn.
+ * Violet, dashed, and drawn at a different radius so it is separable from both other markers
+ * by shape alone.
+ */
+export function drawConvertRing(ctx, x, y) {
+  const c = P.tileToScreen(x, y);
+  const px = P.tilePixels();
+  ctx.save();
+  ctx.setLineDash([px * 0.10, px * 0.06]);
+  ctx.strokeStyle = '#c07bff';
+  ctx.lineWidth = Math.max(2.5, px * 0.065);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.37, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(192,123,255,0.18)';
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, px * 0.37, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /** Faint dot on every discovered tile: everything here is clickable, and it must look it. */
 export function drawSelectableDot(ctx, x, y) {
   const px = P.tilePixels();
@@ -479,6 +645,7 @@ export function drawTileIdLabel(ctx, x, y, i) {
  *   selected   tile index of the current selection, or -1
  *   reachable  Set<tileIdx> straight from the `reachable` RPC — never computed here
  *   attackable Map<tileIdx, preview> straight from `preview_combat`
+ *   convertible Set<tileIdx> adjacent enemies, gated on the engine's own Convert option
  *   hover      {x, y}
  */
 export function render(ctx, state, ui = {}) {
@@ -514,7 +681,19 @@ export function render(ctx, state, ui = {}) {
     const tile = state.tileAt(i);
     if (!tile) continue;
     if (typeof tile.owner === 'number' && tile.owner >= 0) drawOwnerOverlay(ctx, x, y, tile.owner);
-    if (tile.road) drawRoadGlyph(ctx, x, y);
+    if (tile.road) {
+      // Which way this road actually goes. Adjacency is 8-way, exactly as the engine's own
+      // road flood is, so what is drawn is the network the engine will route through.
+      // An UNEXPLORED neighbour contributes no link: guessing one would paint a road into
+      // fog the player has not earned, which is a (small) map leak.
+      const links = [];
+      for (const [dx, dy] of P.NEIGHBOURS) {
+        if (!P.inBounds(x + dx, y + dy)) continue;
+        const n = state.tileAt(state.tileIndex(x + dx, y + dy));
+        if (n && n.road) links.push([dx, dy]);
+      }
+      drawRoadGlyph(ctx, x, y, links, isWaterTerrain(tile.terrain));
+    }
     if (tile.resource && tile.resource !== 'none') drawResourceGlyph(ctx, x, y, tile.resource);
     if (tile.improvement && tile.improvement !== 'none' && tile.improvement !== 'city') {
       drawImprovementGlyph(ctx, x, y, tile.improvement);
@@ -535,6 +714,10 @@ export function render(ctx, state, ui = {}) {
   for (const [t, preview] of attackable) {
     const { x, y } = state.tileXY(t);
     if (P.inBounds(x, y)) drawAttackRing(ctx, x, y, preview);
+  }
+  for (const t of ui.convertible || []) {
+    const { x, y } = state.tileXY(t);
+    if (P.inBounds(x, y)) drawConvertRing(ctx, x, y);
   }
 
   // 4. cities then units

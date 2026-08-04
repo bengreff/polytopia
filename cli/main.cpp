@@ -20,6 +20,9 @@
 #include "poly/json.hpp"
 #include "poly/version.hpp"
 
+#include "agents/ladder.hpp"
+#include "agents/registry.hpp"
+
 namespace {
 
 using namespace poly;
@@ -59,11 +62,18 @@ GameMode parse_mode(const std::string& name) {
   return GameMode::Domination;
 }
 
+// MUST stay in lockstep with enum Verb (action.hpp). It silently fell two entries behind when
+// Recover and Promote landed, which did not fail loudly: every verb after Research shifted
+// down one, so `options` advertised Promote as "destroy" and Disband as "end_turn", and the
+// last two indices read off the end of the array. The static_assert makes the next omission a
+// compile error instead of a wrong verb on the wire.
 const char* verb_name_public(Verb v) {
-  static const char* kNames[] = {"move",  "attack", "capture", "harvest", "build",
-                                 "train", "upgrade_naval", "research", "heal", "convert",
-                                 "examine", "destroy", "disband", "choose_reward",
-                                 "end_turn", "deselect"};
+  static const char* kNames[] = {"move",  "attack",  "capture", "harvest", "build",
+                                 "train", "upgrade_naval", "research", "recover", "heal",
+                                 "convert", "promote", "examine", "destroy", "disband",
+                                 "choose_reward", "end_turn", "deselect"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == kVerbCount,
+                "verb name table out of sync with enum Verb");
   const int i = static_cast<int>(v);
   return (i >= 0 && i < kVerbCount) ? kNames[i] : "move";
 }
@@ -77,10 +87,15 @@ const char* unit_name_public(UnitType t) {
   return (i >= 0 && i < kUnitTypeCount) ? kNames[i] : "Warrior";
 }
 
+// Road and Bridge are tile FLAGS rather than buildings, but they still occupy Improvement
+// slots so that `build` can target them — and this table stopped at Water Temple, so both new
+// entries indexed past the end and shipped a garbage label on a real, buildable option.
 const char* improvement_name_public(Improvement imp) {
   static const char* kNames[] = {"None", "Lumber Hut", "Sawmill", "Farm", "Windmill", "Mine",
                                  "Forge", "Port", "Market", "Temple", "Forest Temple",
-                                 "Mountain Temple", "Water Temple"};
+                                 "Mountain Temple", "Water Temple", "Road", "Bridge"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Improvement::Count),
+                "improvement name table out of sync with enum Improvement");
   const int i = static_cast<int>(imp);
   return (i >= 0 && i < static_cast<int>(Improvement::Count)) ? kNames[i] : "None";
 }
@@ -116,11 +131,21 @@ std::string option_label(const Rules&, const Option& o) {
     case Verb::Build: return improvement_name_public(o.improvement);
     case Verb::Research: return tech_name_public(o.tech);
     case Verb::ChooseReward: return reward_name_public(o.reward);
+    // Raft -> Scout / Rammer / Bomber: the hull it becomes IS the option.
+    case Verb::UpgradeNaval: return unit_name_public(o.unit_type);
     case Verb::Move: return "Move";
     case Verb::Attack: return "Attack";
     case Verb::Capture: return "Capture";
     case Verb::Harvest: return "Harvest";
     case Verb::Examine: return "Examine ruin";
+    case Verb::Recover: return "Recover";
+    case Verb::Promote: return "Promote to Veteran";
+    case Verb::Heal: return "Heal Others";
+    case Verb::Convert: return "Convert";
+    case Verb::Destroy: return "Destroy Building";
+    case Verb::Disband: return "Disband";
+    // Falling through to the wire name would print a lowercase enum ("promote", "disband")
+    // straight into a button, which is how the new verbs first appeared.
     default: return verb_name_public(o.verb);
   }
 }
@@ -152,15 +177,15 @@ const char* reason_name(BlockReason r) {
   }
 }
 
+// The inverse of verb_name_public, and it must cover EVERY verb that enumerate_options can
+// hand out. It covered eleven of eighteen, and the fallthrough is Deselect — so `act` on a
+// recover/promote/heal/convert/disband/destroy/upgrade_naval option quietly deselected the
+// unit and returned a success-shaped StateView in which nothing had happened. Parsed by the
+// same table that prints, so the two cannot drift again.
 Verb parse_verb(const std::string& name) {
-  static const struct { const char* name; Verb verb; } kTable[] = {
-      {"move", Verb::Move},       {"attack", Verb::Attack},   {"capture", Verb::Capture},
-      {"harvest", Verb::Harvest}, {"build", Verb::Build},     {"train", Verb::Train},
-      {"research", Verb::Research}, {"examine", Verb::Examine},
-      {"choose_reward", Verb::ChooseReward}, {"end_turn", Verb::EndTurn},
-      {"deselect", Verb::Deselect}};
-  for (const auto& e : kTable) {
-    if (name == e.name) return e.verb;
+  for (int i = 0; i < kVerbCount; ++i) {
+    const Verb v = static_cast<Verb>(i);
+    if (name == verb_name_public(v)) return v;
   }
   return Verb::Deselect;
 }
@@ -584,6 +609,8 @@ int run_selfplay(int games, int max_steps) {
 int main(int argc, char** argv) {
   std::string mode = "--help";
   int games = 20;
+  std::string agent_a = "random";
+  std::string agent_b = "osla";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--rpc" || arg == "--bench") {
@@ -593,6 +620,17 @@ int main(int argc, char** argv) {
       if (i + 1 < argc) games = std::atoi(argv[++i]);
     } else if (arg == "--rules" && i + 1 < argc) {
       g_rules_path = argv[++i];
+    } else if (arg == "--ladder") {
+      mode = arg;
+      if (i + 1 < argc && argv[i + 1][0] != '-') games = std::atoi(argv[++i]);
+    } else if (arg == "--match") {
+      mode = arg;
+      if (i + 2 < argc) {
+        agent_a = argv[++i];
+        agent_b = argv[++i];
+      }
+    } else if (arg == "--games" && i + 1 < argc) {
+      games = std::atoi(argv[++i]);
     }
   }
 
@@ -603,10 +641,71 @@ int main(int argc, char** argv) {
     return run_rpc();
   }
   if (mode == "--selfplay") return run_selfplay(games, 200000);
+  if (mode == "--ladder" || mode == "--match") {
+    Rules rules = Rules::defaults();
+    std::string error;
+    load_rules(g_rules_path, rules, error);
+
+    agents::MatchConfig cfg;
+    cfg.games = games;
+    for (int i = 1; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg == "--budget" && i + 1 < argc) cfg.budget = std::atoi(argv[++i]);
+      if (arg == "--turns" && i + 1 < argc) cfg.turn_limit = std::atoi(argv[++i]);
+      if (arg == "--seed" && i + 1 < argc) {
+        cfg.seed = static_cast<std::uint64_t>(std::atoi(argv[++i]));
+      }
+    }
+
+    if (mode == "--match") {
+      auto a = agents::make_agent(agent_a);
+      auto b = agents::make_agent(agent_b);
+      if (!a || !b) {
+        std::printf("unknown agent (have: ");
+        for (int i = 0; i < agents::agent_count(); ++i) {
+          std::printf("%s ", agents::kAgentNames[i]);
+        }
+        std::printf(")\n");
+        return 1;
+      }
+      std::printf("%s vs %s -- %d games, %d forward-model calls/decision\n\n", a->name(),
+                  b->name(), cfg.games, cfg.budget);
+      const agents::MatchResult r = agents::play_match(*a, *b, rules, cfg);
+      std::printf("  %-10s %.1f%%   (%d-%d-%d)\n", a->name(), 100.0 * r.score_a(), r.wins_a,
+                  r.wins_b, r.draws);
+      std::printf("  mean turns %.1f, %.1fs, Elo diff %+.0f\n", r.mean_turns, r.seconds,
+                  agents::elo_difference(r.score_a()));
+      return 0;
+    }
+
+    std::vector<std::string> names;
+    for (int i = 0; i < agents::agent_count(); ++i) names.emplace_back(agents::kAgentNames[i]);
+    std::printf("round robin -- %d games per pairing, %d calls/decision\n\n", cfg.games,
+                cfg.budget);
+    const auto ratings = agents::round_robin(names, rules, cfg, "random");
+
+    std::printf("\n  %-12s %8s %7s\n", "agent", "elo", "games");
+    for (const auto& r : ratings) {
+      std::printf("  %-12s %8.0f %7d\n", r.name.c_str(), r.elo, r.games);
+    }
+    std::printf("\n  Published 2020 ordering, which this must recover:\n");
+    std::printf("  rhea > rulebased > mcts > mc > osla > random\n");
+    return 0;
+  }
 
   std::printf("polytopia engine %s\n\n", poly::engine_version());
   std::printf("  --rpc                JSON-RPC on stdin/stdout\n");
   std::printf("  --selfplay [N]       play N random-legal games (whole-engine smoke test)\n");
+  std::printf("  --match <a> <b>      play two agents head to head\n");
+  std::printf("  --ladder [N]         round robin over all baselines, N games per pairing\n");
+  std::printf("  --games N            games per pairing\n");
+  std::printf("  --budget N           forward-model calls per decision (default 2000)\n");
+  std::printf("  --turns N            turn limit per match game (default 60)\n");
   std::printf("  --rules <path>       rule data file (default data/rules/live.json)\n");
+  std::printf("\n  agents: ");
+  for (int i = 0; i < poly::agents::agent_count(); ++i) {
+    std::printf("%s ", poly::agents::kAgentNames[i]);
+  }
+  std::printf("\n");
   return 0;
 }

@@ -78,6 +78,12 @@ void reachable_tiles(const GameState& s, const Rules& rules, UnitId unit, Action
 // the game with no income at all, since nothing has changed hands yet.
 void begin_turn(GameState& s, const Rules& rules);
 
+// A unit's maximum HP in WHOLE points, including the veteran +5 and, for an embarked unit,
+// the HP of the land unit inside the hull rather than the hull's own. The StateView must
+// report this rather than a raw type stat: promotion raises the maximum, so a bare
+// rules.unit(type).hp lookup renders a freshly promoted unit as 15/10.
+int unit_max_hp(const Rules& rules, const Unit& u);
+
 bool unit_can_act(const GameState& s, UnitId unit);
 CityId city_at(const GameState& s, TileIdx tile);
 void recompute_visibility(GameState& s, const Rules& rules, PlayerId player);

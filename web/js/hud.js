@@ -14,7 +14,7 @@
 
 import * as P from './projection.js';
 import { GameState, key, pretty, MARKER_VERBS } from './state.js';
-import { playerColor, unitAbbrev } from './render.js';
+import { playerColor, unitAbbrev, isNaval } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,10 +39,60 @@ const REASON_TEXT = {
   'resolve the level-up first': 'Resolve this city\'s level-up choice first.',
 };
 
+/**
+ * Some refusals only make sense once you know the verb. The engine reuses BlockReason
+ * OutOfRange for both "no enemy within weapon range" and "this unit has not earned a
+ * promotion yet", which is fine as an engine enum and useless as an explanation — "Promote:
+ * nothing in range" tells the player nothing about the three kills they actually need.
+ *
+ * Presentation only. The engine still decides; this just says what it decided in English.
+ */
+const VERB_REASON = {
+  promote: {
+    'nothing in range': {
+      tag: 'needs 3 kills',
+      text: 'This unit has not earned a promotion yet. A unit is promotable once it has ' +
+            'scored 3 kills; the promotion is then banked until you spend it.',
+    },
+  },
+  convert: {
+    'nothing in range': {
+      tag: 'no enemy adjacent',
+      text: 'There is no enemy unit next to this Mind Bender. Move it beside one first.',
+    },
+  },
+};
+
+/** The short parenthetical on the button. Falls back to the engine's own wording. */
+function reasonTag(o) {
+  const v = VERB_REASON[o.verb];
+  const hit = v && v[o.reason];
+  return (hit && hit.tag) || o.reason || 'unavailable';
+}
+
+/** The full sentence in the popup. Falls back to the generic table, then to a safe default. */
+function reasonText(o) {
+  const v = VERB_REASON[o.verb];
+  const hit = v && v[o.reason];
+  return (hit && hit.text) || REASON_TEXT[o.reason] || '';
+}
+
+/**
+ * What to click for each marker verb. These three are RINGS ON THE MAP, not buttons, so the
+ * tray's job is to name the ring rather than to offer a button that would be a lie about how
+ * the action is taken.
+ */
+const MARKER_HINT = {
+  move: 'click a cyan ring',
+  attack: 'click a red ring',
+  convert: 'click a violet ring',
+};
+
 const VERB_GLYPH = {
   train: 'TRAIN', build: 'BUILD', harvest: 'HARV', capture: 'CAPT',
   examine: 'RUIN', research: 'TECH', choose_reward: 'LVL', move: 'MOVE', attack: 'ATK',
-  heal: 'HEAL', convert: 'CONV', destroy: 'DEST', disband: 'DISB', upgrade_naval: 'SHIP',
+  recover: 'REST', promote: 'VET', heal: 'HEAL', convert: 'CONV',
+  destroy: 'RAZE', disband: 'DISB', upgrade_naval: 'SHIP',
 };
 
 /** The "what does this do" line of the info popup. */
@@ -58,6 +108,27 @@ function effectLine(o, ctx) {
     case 'research': return `Unlocks the ${o.label} technology for the rest of the game.`;
     case 'choose_reward': return `Takes ${o.label} as this city's level-up reward.`;
     case 'attack': return 'Attacks the enemy unit. The defender retaliates if it survives.';
+    case 'recover':
+      return 'Rests this unit to heal it: +4 HP inside your own borders, +2 anywhere else. ' +
+             'Resting uses up the unit\'s whole turn.';
+    case 'promote':
+      return 'Promotes this unit to Veteran: +5 maximum HP, and it is healed completely. ' +
+             'You have already earned this — it is banked, so you can hold it as a free heal ' +
+             'for exactly the moment you need one.';
+    case 'heal':
+      return 'Heals EVERY friendly unit standing next to this Mind Bender. ' +
+             'Healing uses up its whole turn.';
+    case 'convert':
+      return 'Turns an adjacent enemy unit into one of yours. It keeps its damage, and a ' +
+             'converted unit cannot attack on the turn it changes sides.';
+    case 'destroy':
+      return `Tears down the ${pretty(ctx.improvement || 'building')} on this tile. ` +
+             'You get nothing back for it.';
+    case 'disband':
+      return `Removes this unit from the game and refunds ★${Math.abs(o.cost || 0)} — ` +
+             'half of what it cost to train.';
+    case 'upgrade_naval':
+      return `Rebuilds this Raft as a ${o.label}, carrying the same unit.`;
     default: return `${pretty(o.verb)} — ${o.label}.`;
   }
 }
@@ -71,6 +142,13 @@ function requirementLine(o, ctx) {
     case 'capture': return 'The unit must have started the turn standing on the city.';
     case 'examine': return 'The unit must have started the turn standing on the ruins.';
     case 'research': return 'Costs stars; the price rises with the number of cities you own.';
+    case 'recover': return 'The unit must be damaged and must not have acted yet this turn.';
+    case 'promote': return 'The unit must have scored 3 kills. Once earned it never expires.';
+    case 'heal': return 'Only a Mind Bender can do this, and only if it has not acted yet.';
+    case 'convert': return 'Only a Mind Bender can do this, and only to an ADJACENT enemy unit.';
+    case 'destroy': return 'The building must stand on a tile inside your own borders.';
+    case 'disband': return 'The unit must not have acted yet this turn. This cannot be undone.';
+    case 'upgrade_naval': return 'Only a Raft can be upgraded, and only in a city\'s waters.';
     default: return '';
   }
 }
@@ -108,8 +186,29 @@ function el(tag, cls, text) {
   return n;
 }
 
+/**
+ * The star figure on an option.
+ *
+ * A NEGATIVE cost is a REFUND, not a cheap price — Disband hands back half the unit's build
+ * cost and the engine signals that with cost: -N. Printing "★-1" would read as a price, so a
+ * refund is shown as "+★1" and coloured as a gain. Zero prints nothing at all.
+ */
 function starPrice(cost) {
-  return `★${cost}`;
+  const n = Number(cost) || 0;
+  if (n === 0) return '';
+  return n < 0 ? `+★${Math.abs(n)}` : `★${n}`;
+}
+
+/** True when this option PAYS you. Drives the green styling on the price chip. */
+function isRefund(cost) {
+  return (Number(cost) || 0) < 0;
+}
+
+/** "a", "a and b", "a, b and c". */
+function listOf(items) {
+  const l = items.filter(Boolean);
+  if (l.length <= 1) return l.join('');
+  return `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`;
 }
 
 function tribeName(p) {
@@ -274,23 +373,39 @@ export function renderSelection(app) {
   if (!tile) {
     add('Explore this area to see what it holds!');
   } else if (layer === 'unit' && unit) {
-    add(`HP ${fmt(unit.hp)}/${fmt(unit.max_hp)} · moves left ${unit.moves_left ?? '?'}` +
-        (unit.veteran ? ' · veteran' : ''));
+    // HP is ALWAYS current/max. A bare current figure is misleading the moment a unit is
+    // promoted, because promotion raises the maximum by 5 rather than just healing.
+    add(`HP ${fmt(unit.hp)}/${fmt(unit.max_hp)} · moves left ${unit.moves_left ?? '?'}`);
+    if (unit.veteran) add('VETERAN — +5 maximum HP.', 'good');
+    if (isNaval(unit.type)) {
+      add(`At sea in a ${pretty(unit.type)}` +
+          (unit.carried ? `, carrying a ${pretty(unit.carried)}.` : '.'));
+    }
     if (unit.owner === s.me) {
       // What this unit can ACTUALLY do, straight from the option set — not a stock sentence.
       const opts = sel.options || [];
       const mv = opts.find((o) => o.verb === 'move');
       const at = opts.find((o) => o.verb === 'attack');
+      const cv = opts.find((o) => o.verb === 'convert');
       const can = [];
       if (mv && mv.status === 'available') can.push('Click a cyan ring to move.');
       if (at && at.status === 'available') can.push('Click a red ring to attack.');
+      if (cv && cv.status === 'available') can.push('Click a violet ring to convert.');
       if (GameState.spent(unit)) {
         add("No actions left. Press 'End Turn' to move this unit again.", 'warn');
       } else if (can.length) {
         add(can.join(' '), 'good');
       } else {
-        const why = (mv && mv.reason) || (at && at.reason) || 'nothing available';
-        add(`This unit has nothing it can do right now (${why}).`, 'warn');
+        // A unit that cannot move or attack is NOT necessarily finished: Recover, Promote and
+        // Disband are all still on offer, and calling that "nothing it can do" while the tray
+        // below lists three live buttons is a straight contradiction.
+        const others = opts.filter((o) => !MARKER_VERBS.has(o.verb) && o.status === 'available');
+        if (others.length) {
+          add(`Cannot move or attack, but it can still ${listOf(others.map((o) => o.label))}.`, 'good');
+        } else {
+          const why = (mv && mv.reason) || (at && at.reason) || 'nothing available';
+          add(`This unit has nothing it can do right now (${why}).`, 'warn');
+        }
       }
     } else {
       add('This is the enemy!', 'bad');
@@ -303,6 +418,13 @@ export function renderSelection(app) {
       const pop = city.population;
       lines.appendChild(popLine(pop, city.next_level_at));
       add(`Units ${city.units}/${city.capacity} · produces ★${city.production}/turn`);
+      // Road connection to the capital. Shown ONLY when the engine actually sent the field —
+      // `connected` is null on a city that is not yours, and an absent field must not be
+      // rendered as "not connected", which would be a fabricated fact.
+      if (typeof city.connected === 'boolean' && !city.capital) {
+        if (city.connected) add('Connected to your capital by road.', 'good');
+        else add('Not connected to your capital — build a road to link it.', 'warn');
+      }
       if (city.pending_rewards > 0) add('This city has a level-up reward waiting — choose it below.', 'warn');
     } else {
       // Enemy cities: name plate only. No income, no population (ui-reference.md §5.7).
@@ -383,14 +505,13 @@ function renderTray(app) {
     tray.appendChild(el('div', 'tray-head', 'movement'));
     for (const o of markers) {
       const on = o.status === 'available';
-      const chip = el('div', `opt marker${on ? ' on' : ''}${o.verb === 'attack' ? ' atk' : ''}`);
+      const chip = el('div', `opt marker${on ? ' on' : ''}` +
+        (o.verb === 'attack' ? ' atk' : o.verb === 'convert' ? ' conv' : ''));
       const row = el('span', 'orow');
       row.appendChild(el('span', 'oname', o.label));
-      row.appendChild(el('span', 'otag', on
-        ? (o.verb === 'move' ? 'click a cyan ring' : 'click a red ring')
-        : `(${o.reason || 'unavailable'})`));
+      row.appendChild(el('span', 'otag', on ? MARKER_HINT[o.verb] : `(${reasonTag(o)})`));
       chip.appendChild(row);
-      chip.title = on ? '' : REASON_TEXT[o.reason] || '';
+      chip.title = on ? '' : reasonText(o);
       tray.appendChild(chip);
     }
   }
@@ -435,12 +556,15 @@ function optionButton(app, o) {
   const name = el('span', 'oname');
   name.textContent = o.label + (o.status === 'missing_tech' ? ' (locked)' : '');
   row.appendChild(name);
-  // The price is ALWAYS shown, including when you cannot afford it.
-  if (o.cost > 0) row.appendChild(el('span', 'oprice', starPrice(o.cost)));
+  // The price is ALWAYS shown, including when you cannot afford it — and a refund is shown
+  // as a gain rather than as a negative price.
+  if (o.cost) {
+    row.appendChild(el('span', `oprice${isRefund(o.cost) ? ' refund' : ''}`, starPrice(o.cost)));
+  }
   b.appendChild(row);
 
   if (o.status === 'blocked' && o.reason) {
-    b.appendChild(el('span', 'otag', `(${o.reason})`));
+    b.appendChild(el('span', 'otag', `(${reasonTag(o)})`));
   } else if (o.status === 'missing_tech' && o.needs_tech) {
     b.appendChild(el('span', 'otag', `needs ${o.needs_tech}`));
   } else if (o.status === 'cannot_afford') {
@@ -463,8 +587,9 @@ function renderTileAction(app) {
   $('tileaction-glyph').textContent = VERB_GLYPH[primary.verb] || pretty(primary.verb);
   $('tileaction-name').textContent = primary.label;
   const price = $('tileaction-price');
-  price.textContent = primary.cost > 0 ? starPrice(primary.cost) : '';
-  price.hidden = !(primary.cost > 0);
+  price.textContent = starPrice(primary.cost);
+  price.classList.toggle('refund', isRefund(primary.cost));
+  price.hidden = !primary.cost;
   const btn = $('tileaction-btn');
   btn.onclick = () => openOption(app, primary);
   positionTileAction(app);
@@ -548,6 +673,7 @@ export function openOption(app, o, ctx = {}) {
   const city = sel.tile != null ? s.cityAt(sel.tile) : null;
   const context = {
     resource: tile ? tile.resource : null,
+    improvement: tile ? tile.improvement : null,
     cityName: city ? (city.capital ? 'your capital' : 'this city') : null,
     ...ctx,
   };
@@ -562,7 +688,8 @@ export function openOption(app, o, ctx = {}) {
   if (o.done) titleEl.appendChild(el('span', 'locked', ' (completed)'));
 
   // The price stays visible in every state, including the ones you cannot take.
-  $('pop-price').textContent = o.cost > 0 ? starPrice(o.cost) : '';
+  $('pop-price').textContent = starPrice(o.cost);
+  $('pop-price').classList.toggle('refund', isRefund(o.cost));
 
   const body = $('pop-body');
   body.replaceChildren();
@@ -617,7 +744,7 @@ export function openOption(app, o, ctx = {}) {
     tech.onclick = () => { closePopup(); app.openTechTree(o.needs_tech); };
     back.className = 'pop-btn back blue';
   } else {
-    body.appendChild(el('div', 'warn', REASON_TEXT[o.reason] || 'You cannot do this right now.'));
+    body.appendChild(el('div', 'warn', reasonText(o) || 'You cannot do this right now.'));
     back.className = 'pop-btn back blue';
   }
 
@@ -674,7 +801,10 @@ export function closeLevelUp() {
 /** What each reward actually does, so the choice is informed rather than a coin flip. */
 const REWARD_TEXT = {
   workshop: 'This city produces one more star every turn, permanently.',
-  explorer: 'Spawns an Explorer that reveals a large area of the map around it.',
+  // An EVENT, not a unit. The engine reveals a swathe of map and puts nothing on the board;
+  // promising an Explorer unit made the (correct) result look like a bug when none appeared.
+  explorer: 'Explores outwards from this city, permanently revealing a large area of the map. ' +
+            'No unit is created.',
   citywall: 'Walls this city: defenders here get a large defence bonus, and the city cannot be captured while any unit stands in it.',
   resources: 'Immediately gives you ★5.',
   populationgrowth: 'Adds 3 population to this city right now, pushing it towards the next level.',

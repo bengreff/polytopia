@@ -195,6 +195,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .opt.marker .orow { gap: 6px; }
 .opt.marker.on { border-color: var(--cyan); color: #d7f7ff; }
 .opt.marker.on.atk { border-color: var(--red); color: #ffd9d9; }
+/* Convert is a ring too, and a VIOLET one — matching drawConvertRing, and deliberately not
+   attack red: it takes the unit rather than killing it. */
+.opt.marker.on.conv { border-color: #c07bff; color: #eddaff; }
+
+/* A REFUND, not a price. Disband reports cost: -N, and it is shown as "+★N" in green so a
+   verb that PAYS you can never be misread as a verb that charges you. */
+.oprice.refund,
+#tileaction-price.refund,
+#pop-price.refund { color: #6ee7a0; }
 
 /* --- floating world-space tile action -------------------------------------- */
 
@@ -202,7 +211,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: fixed; z-index: 36; transform: translate(-50%, -100%);
   text-align: center; pointer-events: none;
 }
-#tileaction > *:not(.ta-stem) { pointer-events: auto; }
+/* ONLY the button takes clicks. `> *:not(.ta-stem)` also armed `.ta-name`, a plain text
+   label that hangs directly over the tile NORTH of the selection — so that tile could not be
+   selected at all while anything was selected, and the misses looked like the engine
+   refusing the action. Found while building a road next to a road. */
+#tileaction-btn { pointer-events: auto; }
 .round {
   position: relative; width: 60px; height: 60px; border-radius: 50%;
   background: #1d2a3c; border: 3px solid var(--blue);

@@ -24,8 +24,14 @@ export function pretty(s) {
     .replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
-/** Verbs that are map markers, not tray buttons (ui-reference.md §4.1). */
-export const MARKER_VERBS = new Set(['move', 'attack']);
+/**
+ * Verbs that are map markers, not tray buttons (ui-reference.md §4.1).
+ *
+ * `convert` joins move and attack because it targets an adjacent ENEMY TILE, exactly as
+ * attack does. Its `target` on the option is meaningless — the player picks the victim by
+ * clicking it — so rendering it as a committable button would fire the action at tile 0.
+ */
+export const MARKER_VERBS = new Set(['move', 'attack', 'convert']);
 
 export class GameState {
   constructor(view) {
