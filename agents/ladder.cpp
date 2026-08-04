@@ -23,6 +23,7 @@ GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& 
   setup.seed = seed;
   setup.player_count = 2;
   setup.turn_limit = cfg.turn_limit;
+  setup.fog = cfg.fog;
   setup.tribes[0] = cfg.tribe_a;
   setup.tribes[1] = cfg.tribe_b;
 

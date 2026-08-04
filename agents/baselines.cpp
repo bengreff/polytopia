@@ -399,8 +399,181 @@ class RuleBasedAgent final : public Agent {
 };
 
 // ---------------------------------------------------------------------------------------
+// The 2020 paper's rule-based agent -- a SEPARATE agent from the in-game bot clone above.
+// ---------------------------------------------------------------------------------------
+// These were conflated in the first pass, which made the Phase 1 gate unevaluable: the gate
+// requires reproducing the PAPER's baseline (published 2nd of 6 at 65.80%), while `rulebased`
+// clones the SHIPPED bots, which by the owner's own description fight badly. One is a
+// benchmark anchor, the other is a sparring partner. Both are needed; they are not the same
+// agent and must not share a name.
+//
+// The paper describes a heuristic agent with no search, so this is exactly the handcrafted
+// evaluation applied greedily -- no expansion bias, no objective pull, no bot mimicry.
+class Paper2020Agent final : public Agent {
+ public:
+  // A SCRIPTED PRIORITY POLICY. The paper's agent is "rule-based heuristic (NO SEARCH)", so
+  // it must not consult the forward model at all -- an agent that evaluates successors is
+  // one-step lookahead, which is a different published baseline (OSLA, 47.76%) that this
+  // would otherwise duplicate under a second name.
+  Action choose(const GameState& s, ForwardModel& model, const ActionMask& mask,
+                PlayerId seat) override {
+    // The rules are read for stats and previews. The forward MODEL is never stepped -- this
+    // agent has no search, which is what distinguishes it from OSLA.
+    model_rules_ = model.rules();
+    std::int16_t slots[kActionSlots];
+    const int count = mask.collect(slots, kActionSlots);
+
+    // In the VERB phase the index IS the verb, so priority is a direct lookup.
+    if (s.phase == Phase::Verb) {
+      static const Verb kPriority[] = {
+          Verb::Capture,   // free cities are the dominant source of everything
+          Verb::Examine,   // ruins are free value
+          Verb::Harvest,   // growth before force
+          Verb::Attack,
+          Verb::Build,
+          Verb::Train,
+          Verb::Promote,
+          Verb::Recover,
+          Verb::Move,
+          Verb::Research,
+          Verb::ChooseReward,
+      };
+      for (const Verb verb : kPriority) {
+        if (mask.test(static_cast<int>(verb))) return Action{static_cast<std::int16_t>(verb)};
+      }
+      // Nothing worth doing with this actor.
+      if (mask.test(static_cast<int>(Verb::Deselect))) {
+        return Action{static_cast<std::int16_t>(Verb::Deselect)};
+      }
+      if (mask.test(static_cast<int>(Verb::EndTurn))) {
+        return Action{static_cast<std::int16_t>(Verb::EndTurn)};
+      }
+      return Action{slots[0]};
+    }
+
+    // SELECT: prefer an actor that can do something valuable. Cities first (production is
+    // the engine of the game), then units, and the global actor last so research and
+    // end-turn only happen once the board is played out.
+    if (s.phase == Phase::Select) {
+      // Candidates are collected by class and then chosen RANDOMLY within the best class.
+      // Picking deterministically loops: the agent selects the same city, finds nothing it
+      // wants, deselects, and selects it again -- burning the whole turn against the
+      // decision cap. That made this agent LOSE to random, 16.7%. The no-op cycle the
+      // phase machine allows punishes deterministic policies specifically.
+      std::vector<std::int16_t> cities, units, tiles;
+      for (int i = 0; i < count; ++i) {
+        const int index = slots[i];
+        if (index == kGlobalActorSlot) continue;
+        const TileIdx tile = slot_to_tile(index);
+        const CityId city = city_at(s, tile);
+        if (city != kNoCity && s.cities[city].owner == seat) {
+          cities.push_back(static_cast<std::int16_t>(index));
+        } else if (s.tiles[tile].unit != kNoUnit) {
+          units.push_back(static_cast<std::int16_t>(index));
+        } else {
+          tiles.push_back(static_cast<std::int16_t>(index));
+        }
+      }
+      const auto pick = [&](std::vector<std::int16_t>& v) {
+        return Action{v[rng_.bounded(static_cast<std::uint32_t>(v.size()))]};
+      };
+      if (!units.empty()) return pick(units);    // units first: they capture and fight
+      if (!cities.empty()) return pick(cities);
+      if (!tiles.empty()) return pick(tiles);
+      return Action{static_cast<std::int16_t>(kGlobalActorSlot)};
+    }
+
+    // TARGET. Uniform choice here is what kept this agent at 50% against random: picking
+    // the verb well and then the target blindly throws away almost all of the policy.
+    switch (s.pending_verb) {
+      case Verb::Attack: {
+        // Prefer a kill; otherwise the most damage. This is the whole of the agent's
+        // tactical judgement and it costs one combat preview per candidate.
+        Action best{slots[0]};
+        int best_score = -1;
+        for (int i = 0; i < count; ++i) {
+          const CombatPreview p =
+              preview_combat(s, model_rules_, s.selected, slot_to_tile(slots[i]));
+          if (!p.valid) continue;
+          int score = p.attacker_damage;
+          if (p.defender_dies) score += 100;
+          if (p.attacker_dies) score -= 200;  // never trade the unit away for nothing
+          if (score > best_score) {
+            best_score = score;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      case Verb::Move: {
+        // Close on the nearest enemy city or unclaimed village. Expansion and pressure are
+        // the two things the paper's evaluation rewards most heavily.
+        Action best{slots[0]};
+        int best_distance = 1 << 20;
+        for (int i = 0; i < count; ++i) {
+          const TileIdx t = slot_to_tile(slots[i]);
+          const Coord tc = s.dims.coord(t);
+          int nearest = 1 << 20;
+          if (s.tiles[t].resource == Resource::Village) nearest = 0;
+          for (CityId c = 0; c < s.city_count; ++c) {
+            if (s.cities[c].owner == seat || s.cities[c].owner == kNoPlayer) continue;
+            const Coord cc = s.dims.coord(s.cities[c].tile);
+            nearest = std::min(nearest,
+                               std::max(std::abs(tc.x - cc.x), std::abs(tc.y - cc.y)));
+          }
+          if (nearest < best_distance) {
+            best_distance = nearest;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      case Verb::Train: {
+        // Cheapest affordable unit -- bodies win the early game, and the evaluation counts
+        // units linearly.
+        Action best{slots[0]};
+        int cheapest = 1 << 20;
+        for (int i = 0; i < count; ++i) {
+          if (!slot_is_train(slots[i])) continue;
+          const int cost = model_rules_.unit(slot_to_unit_type(slots[i])).cost;
+          if (cost < cheapest) {
+            cheapest = cost;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      case Verb::Research: {
+        Action best{slots[0]};
+        int cheapest = 1 << 20;
+        int cities = 0;
+        for (CityId c = 0; c < s.city_count; ++c) {
+          if (s.cities[c].owner == seat) ++cities;
+        }
+        for (int i = 0; i < count; ++i) {
+          if (!slot_is_research(slots[i])) continue;
+          const int cost = model_rules_.tech_cost(slot_to_tech(slots[i]), cities,
+                                                  s.players[seat].has_tech(Tech::Philosophy));
+          if (cost < cheapest) {
+            cheapest = cost;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      default: return sample_uniform(mask, rng_);
+    }
+  }
+  const char* name() const override { return "paper2020"; }
+
+ private:
+  Rules model_rules_;
+};
+
+// ---------------------------------------------------------------------------------------
 
 std::unique_ptr<Agent> make_agent(const std::string& name) {
+  if (name == "paper2020") return std::make_unique<Paper2020Agent>();
   if (name == "random") return std::make_unique<RandomAgent>();
   if (name == "osla") return std::make_unique<OslaAgent>();
   if (name == "mc") return std::make_unique<MonteCarloAgent>();
@@ -410,7 +583,8 @@ std::unique_ptr<Agent> make_agent(const std::string& name) {
   return nullptr;
 }
 
-const char* const kAgentNames[] = {"random", "osla", "mc", "mcts", "rhea", "rulebased"};
-int agent_count() { return 6; }
+const char* const kAgentNames[] = {"random", "osla", "mc", "mcts", "rhea", "paper2020",
+                                   "rulebased"};
+int agent_count() { return 7; }
 
 }  // namespace poly::agents

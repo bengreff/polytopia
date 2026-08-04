@@ -17,7 +17,10 @@ namespace poly::agents {
 struct MatchConfig {
   int games{20};
   int budget{2000};        // forward-model calls per decision, as in the 2020 paper
-  int turn_limit{60};      // bounds a match; the GAME has no limit
+  int turn_limit{50};      // bounds a match; the GAME has no limit. The paper used 50.
+  // The 2020 experiments ran with FULL OBSERVABILITY. Leaving fog on makes our numbers
+  // incomparable to the published table, which is the one thing the Phase 1 gate depends on.
+  bool fog{false};
   MapDims dims{11, 11};
   std::uint64_t seed{1};
   Tribe tribe_a{Tribe::XinXi};
