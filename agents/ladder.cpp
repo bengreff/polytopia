@@ -35,14 +35,40 @@ GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& 
   a.seed(seed * 2654435761u + 1u);
   b.seed(seed * 2654435761u + 2u);
 
-  // A hard step ceiling as well as a turn limit: a turn limit alone cannot stop a pathology
-  // where a player takes unboundedly many decisions within one turn.
+  // The phase machine permits NO-OP CYCLES: Select then Deselect costs two decisions and
+  // changes nothing, so an agent can burn an unbounded number of decisions inside one turn
+  // without ever ending it. Measured at ~2400 decisions/turn for MCTS, which pinned games at
+  // turn 5 against the step ceiling and recorded them as draws.
+  //
+  // The 2020 paper hit this too and reports that "forcing an EndTurn every X steps was tried
+  // and discarded". We force it only as a HARNESS backstop, well above normal play, so it
+  // never binds on a healthy agent but stops a pathological one from stalling the ladder.
   const int max_steps = cfg.turn_limit * 400;
+  const int max_decisions_per_turn = 300;
+  int decisions_this_turn = 0;
+  int turn_at_last_decision = s.turn;
+  PlayerId mover_at_last_decision = s.current_player;
+
   for (int step = 0; step < max_steps; ++step) {
     if (outcome(s, rules).has_value()) break;
     ActionMask mask;
     legal_actions(s, rules, mask);
     if (mask.empty()) break;
+
+    if (s.turn != turn_at_last_decision || s.current_player != mover_at_last_decision) {
+      decisions_this_turn = 0;
+      turn_at_last_decision = s.turn;
+      mover_at_last_decision = s.current_player;
+    }
+    if (++decisions_this_turn > max_decisions_per_turn) {
+      // Drive the phase machine to EndTurn directly rather than asking the agent again.
+      if (s.phase != Phase::Select) {
+        apply(s, rules, Action{static_cast<std::int16_t>(Verb::Deselect)}, nullptr);
+      }
+      apply(s, rules, Action{static_cast<std::int16_t>(kGlobalActorSlot)}, nullptr);
+      apply(s, rules, Action{static_cast<std::int16_t>(Verb::EndTurn)}, nullptr);
+      continue;
+    }
 
     Agent& mover = (s.current_player == seat_of_a) ? a : b;
     // A FRESH budget per decision, which is what the paper's 2000-call figure means.
@@ -63,7 +89,23 @@ GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& 
 
   const MaybeOutcome final_state = outcome(s, rules);
   result.turns = s.turn;
-  if (final_state.has_value()) result.winner = final_state->winner;
+  if (final_state.has_value()) {
+    result.winner = final_state->winner;
+    return result;
+  }
+  // Ran out of steps without a decision. Settle on SCORE rather than recording a draw --
+  // scoring an unfinished game as drawn silently rewards an agent for stalling, which is
+  // exactly what a broken search does.
+  int best = -1;
+  for (PlayerId p = 0; p < s.player_count; ++p) {
+    const int score = player_score(s, rules, p);
+    if (score > best) {
+      best = score;
+      result.winner = p;
+    } else if (score == best) {
+      result.winner = kNoPlayer;
+    }
+  }
   return result;
 }
 

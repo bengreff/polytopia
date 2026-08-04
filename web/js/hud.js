@@ -327,7 +327,6 @@ export function renderSelection(app) {
   const wrap = $('interaction');
   if (!s || !sel || sel.tile < 0) {
     wrap.hidden = true;
-    $('tileaction').hidden = true;
     return;
   }
   wrap.hidden = false;
@@ -459,7 +458,6 @@ export function renderSelection(app) {
   }
 
   renderTray(app);
-  renderTileAction(app);
 }
 
 function popLine(pop, next) {
@@ -573,35 +571,6 @@ function optionButton(app, o) {
 
   b.addEventListener('click', () => openOption(app, o));
   return b;
-}
-
-// --- ② world-space floating action button ------------------------------------
-
-function renderTileAction(app) {
-  const holder = $('tileaction');
-  const sel = app.sel;
-  const primary = (sel.options || []).find((o) => o.status === 'available' && !MARKER_VERBS.has(o.verb));
-  if (!primary) { holder.hidden = true; return; }
-  holder.hidden = false;
-  holder.dataset.tile = String(sel.tile);
-  $('tileaction-glyph').textContent = VERB_GLYPH[primary.verb] || pretty(primary.verb);
-  $('tileaction-name').textContent = primary.label;
-  const price = $('tileaction-price');
-  price.textContent = starPrice(primary.cost);
-  price.classList.toggle('refund', isRefund(primary.cost));
-  price.hidden = !primary.cost;
-  const btn = $('tileaction-btn');
-  btn.onclick = () => openOption(app, primary);
-  positionTileAction(app);
-}
-
-export function positionTileAction(app) {
-  const holder = $('tileaction');
-  if (holder.hidden || !app.state || !app.sel || app.sel.tile < 0) return;
-  const { x, y } = app.state.tileXY(app.sel.tile);
-  const pt = P.tileToScreen(x, y);
-  holder.style.left = `${pt.x}px`;
-  holder.style.top = `${pt.y - P.tilePixels() * 0.45}px`;
 }
 
 // --- combat preview ----------------------------------------------------------

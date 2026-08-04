@@ -114,7 +114,11 @@ real game uses, reimplement these and change nothing else:
 `render.js` fills `tilePolygon()` rather than rectangles it computes itself, and places every
 glyph relative to `tileBox()` / `tileToScreen()` / `tilePixels()`, so tile shape and depth order
 change with the projection and the layout logic does not move. `hud.js` anchors the floating tile
-action button with `tileToScreen()` for the same reason, via `positionTileAction()`.
+combat-preview readout with `tileToScreen()` for the same reason.
+
+The world-space floating action button was REMOVED: it auto-promoted whichever available
+option happened to come first, which meant it suggested things like Disband on a fresh unit.
+All actions now live in the bottom-left tray, where they are chosen explicitly.
 
 Sprites replace glyphs the same way: rewrite the body of `drawTerrainGlyph`, `drawUnitGlyph`,
 `drawCityGlyph`, `drawResourceGlyph`, `drawImprovementGlyph`, `drawRoadGlyph`, `drawFogGlyph`,

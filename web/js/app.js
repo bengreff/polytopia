@@ -21,7 +21,7 @@ import * as P from './projection.js';
 import { render } from './render.js';
 import { initInput } from './input.js';
 import {
-  initHud, updateHud, renderSelection, positionTileAction, appendLog, showBanner, hideBanner,
+  initHud, updateHud, renderSelection, appendLog, showBanner, hideBanner,
   showCombatPreview, hideCombatPreview, openOption, closePopup, popupOpen,
   renderTechTree, closeTechTree, techTreeOpen,
   openLevelUp, closeLevelUp, levelUpOpen, levelUpCity,
@@ -646,7 +646,7 @@ class App {
     P.setViewport(w, h);
   }
 
-  repositionFloaters() { positionTileAction(this); }
+  repositionFloaters() { /* nothing floats in world space any more */ }
 
   draw() {
     if (this._raf) return;

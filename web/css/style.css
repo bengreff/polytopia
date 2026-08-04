@@ -202,36 +202,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* A REFUND, not a price. Disband reports cost: -N, and it is shown as "+★N" in green so a
    verb that PAYS you can never be misread as a verb that charges you. */
 .oprice.refund,
-#tileaction-price.refund,
 #pop-price.refund { color: #6ee7a0; }
 
 /* --- floating world-space tile action -------------------------------------- */
 
-#tileaction {
-  position: fixed; z-index: 36; transform: translate(-50%, -100%);
-  text-align: center; pointer-events: none;
-}
 /* ONLY the button takes clicks. `> *:not(.ta-stem)` also armed `.ta-name`, a plain text
    label that hangs directly over the tile NORTH of the selection — so that tile could not be
    selected at all while anything was selected, and the misses looked like the engine
    refusing the action. Found while building a road next to a road. */
-#tileaction-btn { pointer-events: auto; }
 .round {
   position: relative; width: 60px; height: 60px; border-radius: 50%;
   background: #1d2a3c; border: 3px solid var(--blue);
   display: grid; place-items: center; box-shadow: 0 6px 18px #000a;
 }
 .round:hover { background: #26466b; }
-.ta-glyph { font-size: 15px; font-weight: 800; letter-spacing: .02em; }
-.ta-price {
-  position: absolute; top: -8px; right: -10px; background: #10151f; border: 1px solid var(--gold);
-  color: var(--gold); font-weight: 800; font-size: 11px; border-radius: 999px; padding: 1px 6px;
-}
-.ta-name {
-  margin-top: 4px; background: #0d111ae8; border: 1px solid var(--card-line); border-radius: 6px;
-  padding: 2px 8px; font-size: 12px; font-weight: 700; display: inline-block;
-}
-.ta-stem { width: 2px; height: 14px; background: #ffffff55; margin: 2px auto 0; }
 
 /* --- combat preview -------------------------------------------------------- */
 
