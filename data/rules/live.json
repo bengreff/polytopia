@@ -643,7 +643,6 @@
     "resources.lighthouse.terrain",
     "resources.ruin.reward_distribution",
     "resources.ruin.granted_units_are_veteran",
-    "city.besieged_produces_nothing",
     "city.border_growth_radius",
     "city.border_growth_claims_owned_tiles",
     "city.surplus_population_carries_over",

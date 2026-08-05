@@ -346,8 +346,25 @@ class RheaAgent final : public Agent {
 //
 // The persistent objective is the part a naive greedy clone gets wrong. Without it the bot
 // would never walk three turns toward anything, and would be visibly a different opponent.
+// Everything below the frozen baseline is behind a flag, and `rb_base` registers the agent
+// with every flag OFF. That is not ceremony: HANDOFF §2 records two strong design instincts
+// about this bot that measurement proved wrong (units-first selection cost 55 points of win
+// rate), so the ability to A/B a single behaviour against a FROZEN reference -- rather than
+// against a remembered number from an older binary -- is the thing that makes the advice
+// "change one thing, measure, keep or revert" actually executable.
+struct RuleBasedFlags {
+  bool finish_turn{false};          // stop spinning on declined actors; issue a real EndTurn
+  bool kill_not_wound{false};       // do not trade a wound the enemy heals back next turn
+  bool resources_over_wall{false};  // level-3 reward: 5 stars unless actually threatened
+
+  static RuleBasedFlags all() { return {true, true, true}; }
+};
+
 class RuleBasedAgent final : public Agent {
  public:
+  explicit RuleBasedAgent(RuleBasedFlags flags, const char* name)
+      : flags_(flags), name_(name) {}
+
   // The playable baseline. Earlier versions deliberately modelled the shipped bots' WEAKNESSES
   // (nearest-target attacking, no cost ceiling) to be a faithful clone. That is the wrong
   // objective for an opponent you are going to play against to check the game works, so the
@@ -361,6 +378,7 @@ class RuleBasedAgent final : public Agent {
     rules_ = model.rules();
     std::int16_t slots[kActionSlots];
     const int count = mask.collect(slots, kActionSlots);
+    if (flags_.finish_turn) note_turn(s);
 
     if (s.phase == Phase::Verb) {
       // Capture is unconditionally first: a city is worth more than anything else a unit can
@@ -379,6 +397,27 @@ class RuleBasedAgent final : public Agent {
         if (verb == Verb::Recover && !badly_hurt(s)) continue;
         return Action{static_cast<std::int16_t>(verb)};
       }
+      // NOTHING THIS ACTOR IS WILLING TO DO. Falling straight through to Deselect made the
+      // turn an unbounded spin, and MEASUREMENT is what found it: 88% of player-turns were
+      // ending at the harness's 300-decision backstop rather than by choice, at ~269
+      // decisions each.
+      //
+      // The cause is that the two verb gates above DECLINE a legal verb. An actor whose only
+      // legal verbs are {Attack, Deselect} with no worthwhile attack -- or {Recover,
+      // Deselect} while not badly hurt -- is answered with Deselect, and `legal_select` then
+      // offers that same actor again, unchanged, forever. This is exactly the no-op cycle of
+      // HANDOFF §3, and it was degrading the playable baseline itself.
+      //
+      // The fix is agent-side on purpose. Making Deselect illegal in the engine is an
+      // ACTION-SPACE change, which WORKFLOW.md puts on the stop-and-ask list, and it would
+      // also take "changed my mind" away from the human UI. A policy that declines an actor
+      // simply has to remember that it declined.
+      if (flags_.finish_turn) {
+        if (!s.global_actor) mark_declined(s.selected);
+        if (mask.test(static_cast<int>(Verb::EndTurn))) {
+          return Action{static_cast<std::int16_t>(Verb::EndTurn)};
+        }
+      }
       if (mask.test(static_cast<int>(Verb::Deselect))) {
         return Action{static_cast<std::int16_t>(Verb::Deselect)};
       }
@@ -396,6 +435,9 @@ class RuleBasedAgent final : public Agent {
         const int index = slots[i];
         if (index == kGlobalActorSlot) continue;
         const TileIdx tile = slot_to_tile(index);
+        // An actor this policy already refused to use this turn is not offered again. Without
+        // this the turn never terminates; see the Verb-phase comment above.
+        if (flags_.finish_turn && declined(tile)) continue;
         const CityId city = city_at(s, tile);
         if (city != kNoCity && s.cities[city].owner == seat) {
           cities.push_back(static_cast<std::int16_t>(index));
@@ -423,9 +465,34 @@ class RuleBasedAgent final : public Agent {
       default: return sample_uniform(mask, rng_);
     }
   }
-  const char* name() const override { return "rulebased"; }
+  const char* name() const override { return name_; }
 
  private:
+  RuleBasedFlags flags_;
+  const char* name_;
+
+  // --- declined-actor set ------------------------------------------------------------------
+  // Cleared whenever the turn or the mover changes, so it is scoped to exactly one player-turn.
+  // Keyed by tile because that is what a SELECT index is; the global actor is never recorded,
+  // since declining it is what produces EndTurn.
+  std::uint64_t declined_[(kMaxTiles + 63) / 64]{};
+  std::int32_t declined_turn_{-1};
+  PlayerId declined_player_{kNoPlayer};
+
+  void note_turn(const GameState& s) {
+    if (s.turn == declined_turn_ && s.current_player == declined_player_) return;
+    declined_turn_ = s.turn;
+    declined_player_ = s.current_player;
+    for (auto& word : declined_) word = 0;
+  }
+  void mark_declined(TileIdx tile) {
+    if (tile == kNoTile) return;
+    declined_[tile >> 6] |= std::uint64_t{1} << (tile & 63);
+  }
+  [[nodiscard]] bool declined(TileIdx tile) const {
+    return (declined_[tile >> 6] & (std::uint64_t{1} << (tile & 63))) != 0;
+  }
+
   // --- combat judgement ---------------------------------------------------------------
   bool worthwhile_attack(const GameState& s) const {
     const Coord from = s.dims.coord(s.selected);
@@ -443,11 +510,28 @@ class RuleBasedAgent final : public Agent {
       const CombatPreview p = preview_combat(s, rules_, s.selected, t);
       if (!p.valid) continue;
       if (p.defender_dies) return true;   // always take a kill
-      // Any attack we survive is worth taking. Requiring a favourable damage RATIO was too
-      // conservative: it meant the bot sat on its army against anything defended, never
-      // converted an advantage, and let games run to the score limit instead of closing them
-      // out. Surviving is the real constraint; parity of damage is not.
-      if (!p.attacker_dies) return true;
+      if (p.attacker_dies) continue;      // never trade the unit away for a scratch
+
+      // KILL, NOT WOUND -- the first entry in the community's catalogue of tactics, and the
+      // wiki's "Attack to Kill" section: "It isn't always a good idea to attack, especially if
+      // you leave your unit with half health so your opponent can kill it the next turn", and
+      // "if you can only wound, make sure the wound takes more than 4 HP, because a wounded
+      // unit in home area can be healed in a turn".
+      //
+      // Note what this is NOT. HANDOFF §2 records that gating attacks on a favourable damage
+      // RATIO made the bot sit on its army and never close games out; that gate compared the
+      // two sides' damage, so a well-defended target was never attackable at all. This gate is
+      // absolute rather than comparative: it asks only whether the wound survives the
+      // opponent's heal, so an attack that actually accomplishes something still goes in.
+      if (flags_.kill_not_wound) {
+        const CityId on_our_city = city_at(s, t);
+        const bool clears_our_city =
+            on_our_city != kNoCity && s.cities[on_our_city].owner == s.units[me].owner;
+        // Recover restores 4 HP in own territory (game.cpp Verb::Recover), so a wound of 4 or
+        // less is undone for free next turn and we paid retaliation for nothing.
+        if (!clears_our_city && p.attacker_damage <= 4) continue;
+      }
+      return true;
     }
     return false;
   }
@@ -486,6 +570,7 @@ class RuleBasedAgent final : public Agent {
                    PlayerId seat) const {
     Action best{slots[0]};
     int best_score = -(1 << 20);
+
     for (int i = 0; i < count; ++i) {
       const TileIdx t = slot_to_tile(slots[i]);
       const Coord tc = s.dims.coord(t);
@@ -512,10 +597,17 @@ class RuleBasedAgent final : public Agent {
       // Expansion outranks aggression, which is how the game actually rewards you.
       if (nearest_village < (1 << 20)) score -= nearest_village * 12;
       if (nearest_enemy_city < (1 << 20)) score -= nearest_enemy_city * 4;
-      // A defence bonus is free value when it costs nothing to stand there.
-      if (s.tiles[t].terrain == Terrain::Forest || s.tiles[t].terrain == Terrain::Mountain) {
-        score += 8;
-      }
+      // A defence bonus is free value when it costs nothing to stand there -- but ONLY if we
+      // have the tech that grants it. Forest needs Archery and Mountain needs Climbing
+      // (game.cpp resolve_combat, and the wiki's Combat page agrees), so an un-teched bot was
+      // paying position for a bonus it did not have.
+      const Player& me = s.players[seat];
+      const bool forest_bonus =
+          s.tiles[t].terrain == Terrain::Forest && me.has_tech(Tech::Archery);
+      const bool mountain_bonus =
+          s.tiles[t].terrain == Terrain::Mountain && me.has_tech(Tech::Climbing);
+      if (forest_bonus || mountain_bonus) score += 8;
+
       if (score > best_score) {
         best_score = score;
         best = Action{slots[i]};
@@ -571,22 +663,70 @@ class RuleBasedAgent final : public Agent {
     return Action{slots[0]};
   }
 
-  Action best_reward(const GameState&, const std::int16_t* slots, int count) const {
-    // Workshop over Explorer (permanent income beats one reveal), Wall over Resources when
-    // contested, Growth over Borders, and a Giant over a Park because tempo wins games.
-    static const CityReward kOrder[] = {
+  Action best_reward(const GameState& s, const std::int16_t* slots, int count) const {
+    // The engine offers rewards as LEVEL-GATED PAIRS (game.cpp legal_targets: L2
+    // Workshop|Explorer, L3 CityWall|Resources, L4 PopGrowth|BorderGrowth, L5+ Park|SuperUnit),
+    // which matches the wiki exactly. So only the order WITHIN each pair can ever matter, and
+    // three of the four were already right:
+    //
+    //   Workshop  > Explorer   -- +1 income forever beats one reveal in a 2-player game
+    //   PopGrowth > BorderGrowth -- 3 pop is worth ~6 stars; borders often add nothing
+    //   SuperUnit > Park       -- this ladder plays Domination, where a Giant is the point
+    //
+    // The fourth was inverted. The competitive consensus is emphatic that the 5 stars beat the
+    // wall: "Resources are almost always the better choice... City Walls are only useful when
+    // your city is besieged" (wiki, Upgrading to Level 3), and the same page calls a level-3
+    // upgrade with the 5-star rebate an effective cost of 1-2 stars, i.e. a 1-turn payback.
+    // Taking the wall by default paid 5 stars every time for a bonus that does nothing unless
+    // a specific, usually-false condition holds.
+    //
+    // The condition is kept rather than dropped, because the sources qualify it rather than
+    // deny it: take the wall when this city is ACTUALLY under threat.
+    const bool prefer_wall = flags_.resources_over_wall ? city_threatened(s, s.selected) : true;
+    static const CityReward kWallFirst[] = {
         CityReward::Workshop,   CityReward::PopulationGrowth, CityReward::SuperUnit,
         CityReward::CityWall,   CityReward::Resources,        CityReward::BorderGrowth,
         CityReward::Park,       CityReward::Explorer,
     };
-    for (const CityReward want : kOrder) {
+    static const CityReward kStarsFirst[] = {
+        CityReward::Workshop,   CityReward::PopulationGrowth, CityReward::SuperUnit,
+        CityReward::Resources,  CityReward::CityWall,         CityReward::BorderGrowth,
+        CityReward::Park,       CityReward::Explorer,
+    };
+    const CityReward* const kOrder = prefer_wall ? kWallFirst : kStarsFirst;
+    for (int k = 0; k < 8; ++k) {
       for (int i = 0; i < count; ++i) {
-        if (slot_is_reward(slots[i]) && slot_to_reward(slots[i]) == want) {
+        if (slot_is_reward(slots[i]) && slot_to_reward(slots[i]) == kOrder[k]) {
           return Action{slots[i]};
         }
       }
     }
     return Action{slots[0]};
+  }
+
+  // --- threat model -------------------------------------------------------------------------
+  // "Can an enemy body be on this tile, or hitting it, next turn?" Reach is move + range in
+  // Chebyshev distance, which over-estimates (it ignores terrain and zone of control) and is
+  // meant to: a defensive test that is wrong should be wrong in the direction of caution.
+  [[nodiscard]] int enemy_reach(const GameState& s, TileIdx tile, PlayerId seat) const {
+    const Coord tc = s.dims.coord(tile);
+    int best = 1 << 20;
+    for (UnitId u = 0; u < s.unit_count; ++u) {
+      const Unit& e = s.units[u];
+      if (!e.alive() || e.owner == seat || e.owner == kNoPlayer) continue;
+      const Coord ec = s.dims.coord(e.tile);
+      const int distance = std::max(std::abs(tc.x - ec.x), std::abs(tc.y - ec.y));
+      const UnitStats& es = rules_.unit(e.type);
+      best = std::min(best, distance - es.move - es.range);
+    }
+    return best;  // <= 0 means an enemy can be on or onto this tile next turn
+  }
+
+  // A city is threatened when an enemy can reach it next turn. Besieged counts outright.
+  [[nodiscard]] bool city_threatened(const GameState& s, TileIdx city_tile) const {
+    const CityId c = city_at(s, city_tile);
+    if (c == kNoCity) return false;
+    return enemy_reach(s, city_tile, s.cities[c].owner) <= 0;
   }
 
   Rules rules_;
@@ -773,7 +913,35 @@ std::unique_ptr<Agent> make_agent(const std::string& name) {
   if (name == "mc") return std::make_unique<MonteCarloAgent>();
   if (name == "mcts") return std::make_unique<MctsAgent>();
   if (name == "rhea") return std::make_unique<RheaAgent>();
-  if (name == "rulebased") return std::make_unique<RuleBasedAgent>();
+  if (name == "rulebased") return std::make_unique<RuleBasedAgent>(RuleBasedFlags::all(),
+                                                                   "rulebased");
+  // The measurement reference: turn termination fixed, no strategy changes. Every strategy
+  // flag on `rulebased` is A/B'd head to head against this rather than against a remembered
+  // number from an older binary. Not part of the ladder.
+  //
+  // It is NOT the original policy, because that one never ended its own turn and so lost 88%
+  // of its player-turns to the harness backstop -- measuring against it would credit every
+  // later change with a share of that one fix.
+  if (name == "rb_base") {
+    RuleBasedFlags f;
+    f.finish_turn = true;
+    return std::make_unique<RuleBasedAgent>(f, "rb_base");
+  }
+  // rb_base plus exactly ONE strategy flag, so each can be measured on its own against
+  // rb_base in a single build. HANDOFF §2: "Change one thing, measure, keep or revert. Do not
+  // batch changes." These names exist to make that cheap, not to be shipped.
+  static const struct {
+    const char* name;
+    RuleBasedFlags (*make)();
+  } kProbes[] = {
+      {"rb_kill", [] { RuleBasedFlags f; f.finish_turn = true; f.kill_not_wound = true; return f; }},
+      {"rb_reward", [] { RuleBasedFlags f; f.finish_turn = true; f.resources_over_wall = true; return f; }},
+  };
+  for (const auto& probe : kProbes) {
+    if (name == probe.name) {
+      return std::make_unique<RuleBasedAgent>(probe.make(), probe.name);
+    }
+  }
   return nullptr;
 }
 

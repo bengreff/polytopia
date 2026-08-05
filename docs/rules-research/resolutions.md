@@ -36,9 +36,18 @@ equally to a newly founded city's 3×3. **Consequence: territory is not a square
 arbitrary tile set per city, so the engine stores an owner id per tile rather than a city rectangle.
 Any implementation that assumed a rectangle would have been wrong in most real games.
 
-**R4 — A besieged city produces no stars that turn.** `OWNER`, flagged uncertain — Ben said "I think".
-Implement it, tag `_unverified`, and put it near the top of the in-game verification list. It is
-cheap to check and materially changes siege value.
+**R4 — A besieged city produces no stars that turn.** ~~`OWNER`, flagged uncertain~~ → **`PRIMARY`,
+CONFIRMED 2026-08-04.** The wiki states it outright, in the Exploration and Combat section of
+[Strategies](https://polytopia.fandom.com/wiki/Strategies): *"Besieged cities do not provide any
+income. However, a Market in the territory of a besieged city still provides income."*
+
+The second sentence is the valuable half, because it is a rule we were never asked about and it
+happens to be what the engine already does — `city_income()` returns 0 for a besieged city, while
+Market income is summed separately in `player_income()` and is untouched by siege. Confirmed by
+reading, not by luck, but worth recording: had Market income been folded into `city_income()` the
+first clause would still have looked right and the second would have been silently wrong.
+
+Untag `_unverified` in `data/rules/live.json`. This was the top entry on the verification backlog.
 
 **R5 — A Cloak used on a city steals that city's star production for a turn.** `OWNER`
 Cross-reference `live-rules.md` §2.5 (Cloak and Dagger, Diplomacy T3) before implementing; record the

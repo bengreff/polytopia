@@ -20,6 +20,9 @@
 #include "poly/json.hpp"
 #include "poly/version.hpp"
 
+#include <memory>
+
+#include "agents/agent.hpp"
 #include "agents/ladder.hpp"
 #include "agents/registry.hpp"
 
@@ -206,20 +209,67 @@ std::string error_response(int id, const std::string& message) {
 }
 
 // Runs every non-human player until it is a human's decision again, or the game ends.
-// Currently plays random-legal; bots/scripted.cpp replaces this with the in-game-bot clone.
+//
+// THIS IS THE OPPONENT A HUMAN ACTUALLY PLAYS. It used to pick uniformly at random from the
+// legality mask -- the ladder's floor agent, rated ~1200 Elo below `rulebased` -- so none of
+// the agent work reached the browser at all, and the game was unplayable as a test of
+// anything. The comment here promised "bots/scripted.cpp replaces this"; that file was never
+// written. `poly_agents` was already linked into this binary, so the fix is to call the
+// agent the ladder measures rather than to write a third policy that could drift from it.
 std::vector<std::string> advance_bots(GameState& s, const Rules& rules, int step_budget) {
   std::vector<std::string> log;
+
+  // Held across calls so the agent's RNG advances over the whole game instead of replaying
+  // the same stream every time the human ends a turn.
+  static std::unique_ptr<agents::Agent> bot = agents::make_agent("rulebased");
+  static bool seeded = false;
+  if (!seeded) {
+    bot->seed(0x9E3779B97F4A7C15ull);
+    seeded = true;
+  }
+  if (!bot) return log;
+
+  // The same backstop the ladder carries (ladder.cpp), for the same reason: the phase machine
+  // permits no-op cycles, so a turn that fails to end must be ended for it. `rulebased` no
+  // longer needs this -- it ends its own turns -- but the RPC server must not be able to hang
+  // the browser on a future agent that does, since here there is no match harness to notice.
+  const int kMaxDecisionsPerTurn = 300;
+  int decisions_this_turn = 0;
+  std::int32_t turn_at_last = s.turn;
+  PlayerId mover_at_last = s.current_player;
+
   int steps = 0;
   while (steps++ < step_budget && !outcome(s, rules).has_value()) {
     if (s.players[s.current_player].is_human) break;
     ActionMask mask;
     legal_actions(s, rules, mask);
     if (mask.empty()) break;
-    std::int16_t slots[kActionSlots];
-    const int count = mask.collect(slots, kActionSlots);
-    if (count == 0) break;
-    const int pick = static_cast<int>(s.rng.bounded(static_cast<std::uint32_t>(count)));
-    if (!apply(s, rules, Action{slots[pick]}, &log)) break;
+
+    if (s.turn != turn_at_last || s.current_player != mover_at_last) {
+      decisions_this_turn = 0;
+      turn_at_last = s.turn;
+      mover_at_last = s.current_player;
+    }
+    if (++decisions_this_turn > kMaxDecisionsPerTurn) {
+      if (s.phase != Phase::Select) {
+        apply(s, rules, Action{static_cast<std::int16_t>(Verb::Deselect)}, &log);
+      }
+      apply(s, rules, Action{static_cast<std::int16_t>(kGlobalActorSlot)}, &log);
+      apply(s, rules, Action{static_cast<std::int16_t>(Verb::EndTurn)}, &log);
+      continue;
+    }
+
+    // A fresh budget per decision, matching the ladder so the browser opponent and the
+    // measured one are the same agent under the same conditions.
+    agents::ForwardModel model(rules, 2000);
+    Action action = bot->choose(s, model, mask, s.current_player);
+    if (!mask.test(action.index)) {
+      const int count = mask.count();
+      std::int16_t slots[kActionSlots];
+      mask.collect(slots, kActionSlots);
+      action = Action{slots[s.rng.bounded(static_cast<std::uint32_t>(count))]};
+    }
+    if (!apply(s, rules, action, &log)) break;
   }
   return log;
 }
