@@ -330,74 +330,129 @@ class RheaAgent final : public Agent {
 // would never walk three turns toward anything, and would be visibly a different opponent.
 class RuleBasedAgent final : public Agent {
  public:
+  // Rewritten on the SCRIPTED skeleton rather than as a greedy evaluator.
+  //
+  // The evaluator version rated 1044, barely above random, because it scored every legal
+  // action including Select and Deselect -- and those barely move the evaluation, so it spent
+  // turns cycling instead of playing. A scripted policy cannot enter that cycle by
+  // construction. This is the third time the phase machine's free no-ops have punished an
+  // agent, and the second time they made one indistinguishable from random.
+  //
+  // The bot's WEAKNESSES are then modelled deliberately, per the owner's description (R32),
+  // because a sparring partner that plays well is the wrong sparring partner:
+  //   - expands hard and early: Capture outranks everything
+  //   - fights badly: targets the NEAREST enemy rather than the best trade
+  //   - over-commits: attacks whenever it can, with no cost ceiling, which is what makes it
+  //     throw its whole army at a Giant that took one of its cities
+  //   - holds a persistent objective: moves toward the nearest enemy city across turns even
+  //     though it has no lookahead at all
   Action choose(const GameState& s, ForwardModel& model, const ActionMask& mask,
                 PlayerId seat) override {
+    rules_ = model.rules();
     std::int16_t slots[kActionSlots];
     const int count = mask.collect(slots, kActionSlots);
 
-    Action best{slots[0]};
-    float best_score = -1e30f;
-    for (int i = 0; i < count; ++i) {
-      GameState next = s;
-      if (!model.step(next, Action{slots[i]}, &mask)) break;
-      float score = evaluate_leaf(next, model.rules(), seat, weights_);
-
-      // Expansion bias: the shipped bots grab villages far more eagerly than a balanced
-      // evaluation would justify.
-      score += kExpansionBias * static_cast<float>(city_delta(s, next, seat));
-      // Proximity pull toward the nearest enemy city, which is what produces the observed
-      // multi-turn walk without any lookahead at all.
-      score += kObjectivePull * static_cast<float>(approach_delta(s, next, seat));
-
-      if (score > best_score || (score == best_score && rng_.bounded(2) == 0)) {
-        best_score = score;
-        best = Action{slots[i]};
+    if (s.phase == Phase::Verb) {
+      static const Verb kPriority[] = {
+          Verb::Capture, Verb::Examine, Verb::Attack,  // attack early: no cost ceiling
+          Verb::Harvest, Verb::Train,   Verb::Build,
+          Verb::Move,    Verb::Promote, Verb::Recover,
+          Verb::Research, Verb::ChooseReward,
+      };
+      for (const Verb verb : kPriority) {
+        if (mask.test(static_cast<int>(verb))) return Action{static_cast<std::int16_t>(verb)};
       }
+      if (mask.test(static_cast<int>(Verb::Deselect))) {
+        return Action{static_cast<std::int16_t>(Verb::Deselect)};
+      }
+      return Action{slots[0]};
     }
-    return best;
+
+    if (s.phase == Phase::Select) {
+      std::vector<std::int16_t> units, cities, tiles;
+      for (int i = 0; i < count; ++i) {
+        const int index = slots[i];
+        if (index == kGlobalActorSlot) continue;
+        const TileIdx tile = slot_to_tile(index);
+        const CityId city = city_at(s, tile);
+        if (city != kNoCity && s.cities[city].owner == seat) {
+          cities.push_back(static_cast<std::int16_t>(index));
+        } else if (s.tiles[tile].unit != kNoUnit) {
+          units.push_back(static_cast<std::int16_t>(index));
+        } else {
+          tiles.push_back(static_cast<std::int16_t>(index));
+        }
+      }
+      const auto pick = [&](std::vector<std::int16_t>& v) {
+        return Action{v[rng_.bounded(static_cast<std::uint32_t>(v.size()))]};
+      };
+      // Cities first: the shipped bots expand and produce far more eagerly than they fight.
+      if (!cities.empty()) return pick(cities);
+      if (!units.empty()) return pick(units);
+      if (!tiles.empty()) return pick(tiles);
+      return Action{static_cast<std::int16_t>(kGlobalActorSlot)};
+    }
+
+    switch (s.pending_verb) {
+      case Verb::Attack: {
+        // Nearest, not best. This is the "fights badly" clause made concrete: it will walk a
+        // Knight into a walled Defender because that happens to be the closest thing.
+        Action best{slots[0]};
+        int nearest = 1 << 20;
+        const Coord from = s.dims.coord(s.selected);
+        for (int i = 0; i < count; ++i) {
+          const Coord tc = s.dims.coord(slot_to_tile(slots[i]));
+          const int d = std::max(std::abs(from.x - tc.x), std::abs(from.y - tc.y));
+          if (d < nearest) {
+            nearest = d;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      case Verb::Move: {
+        // The persistent objective. No lookahead, but a greedy pull toward the nearest enemy
+        // city reproduces the observed multi-turn walk.
+        Action best{slots[0]};
+        int best_distance = 1 << 20;
+        for (int i = 0; i < count; ++i) {
+          const TileIdx t = slot_to_tile(slots[i]);
+          const Coord tc = s.dims.coord(t);
+          int nearest = 1 << 20;
+          if (s.tiles[t].resource == Resource::Village) nearest = 0;  // expand hard
+          for (CityId c = 0; c < s.city_count; ++c) {
+            if (s.cities[c].owner == seat || s.cities[c].owner == kNoPlayer) continue;
+            const Coord cc = s.dims.coord(s.cities[c].tile);
+            nearest = std::min(nearest,
+                               std::max(std::abs(tc.x - cc.x), std::abs(tc.y - cc.y)));
+          }
+          if (nearest < best_distance) {
+            best_distance = nearest;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      case Verb::Train: {
+        Action best{slots[0]};
+        int cheapest = 1 << 20;
+        for (int i = 0; i < count; ++i) {
+          if (!slot_is_train(slots[i])) continue;
+          const int cost = rules_.unit(slot_to_unit_type(slots[i])).cost;
+          if (cost < cheapest) {
+            cheapest = cost;
+            best = Action{slots[i]};
+          }
+        }
+        return best;
+      }
+      default: return sample_uniform(mask, rng_);
+    }
   }
   const char* name() const override { return "rulebased"; }
 
  private:
-  static int city_delta(const GameState& before, const GameState& after, PlayerId seat) {
-    int a = 0, b = 0;
-    for (CityId c = 0; c < before.city_count; ++c) {
-      if (before.cities[c].owner == seat) ++a;
-    }
-    for (CityId c = 0; c < after.city_count; ++c) {
-      if (after.cities[c].owner == seat) ++b;
-    }
-    return b - a;
-  }
-
-  // Negative total distance from our units to the nearest enemy city. Increasing it means
-  // closing in, so a simple greedy maximiser walks toward objectives over many turns.
-  static int nearest_enemy_city_distance_sum(const GameState& s, PlayerId seat) {
-    int total = 0;
-    for (UnitId u = 0; u < s.unit_count; ++u) {
-      const Unit& unit = s.units[u];
-      if (unit.owner != seat || !unit.alive() || unit.tile == kNoTile) continue;
-      int best = 1000;
-      const Coord uc = s.dims.coord(unit.tile);
-      for (CityId c = 0; c < s.city_count; ++c) {
-        if (s.cities[c].owner == seat || s.cities[c].owner == kNoPlayer) continue;
-        const Coord cc = s.dims.coord(s.cities[c].tile);
-        const int d = std::max(std::abs(uc.x - cc.x), std::abs(uc.y - cc.y));
-        best = std::min(best, d);
-      }
-      if (best < 1000) total += best;
-    }
-    return total;
-  }
-
-  static int approach_delta(const GameState& before, const GameState& after, PlayerId seat) {
-    return nearest_enemy_city_distance_sum(before, seat) -
-           nearest_enemy_city_distance_sum(after, seat);
-  }
-
-  static constexpr float kExpansionBias = 60.0f;
-  static constexpr float kObjectivePull = 3.0f;
-  EvalWeights weights_;
+  Rules rules_;
 };
 
 // ---------------------------------------------------------------------------------------
