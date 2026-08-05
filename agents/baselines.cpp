@@ -269,7 +269,10 @@ class RheaAgent final : public Agent {
         candidate[gene] = -1;  // -1 means "re-roll at replay time"
       }
       const float value = evaluate_plan(s, model, seat, candidate, false);
-      if (value >= best_value) {
+      // STRICTLY greater. With >=, equal-valued candidates keep replacing the incumbent, and
+      // the coarse evaluation ties constantly -- so the "hill climber" random-walked instead
+      // of climbing. This alone made RHEA close to a random plan generator.
+      if (value > best_value) {
         best_value = value;
         best_plan = candidate;
       }
@@ -304,10 +307,25 @@ class RheaAgent final : public Agent {
       }
       if (!model.step(working, action, &mask)) break;
     }
+
+    // Roll on to the TURN BOUNDARY before evaluating. A 12-decision horizon does not even
+    // reach the end of the agent's own turn (turns run 20-40 decisions here), so the plan was
+    // being scored on half-finished positions -- mid-purchase, mid-move, army stranded. That
+    // is noise, not signal, and it is exactly what README §5 means by "search whole turns,
+    // not individual actions".
+    const PlayerId mover = working.current_player;
+    for (int guard = 0; guard < kTurnRollout && working.current_player == mover; ++guard) {
+      if (outcome(working, model.rules()).has_value()) break;
+      ActionMask mask;
+      legal_actions(working, model.rules(), mask);
+      if (mask.empty()) break;
+      if (!model.step(working, sample_uniform(mask, rng_), &mask)) break;
+    }
     return evaluate_leaf(working, model.rules(), seat, weights_);
   }
 
   static constexpr int kHorizon = 12;
+  static constexpr int kTurnRollout = 40;  // bound on finishing the turn
   EvalWeights weights_;
 };
 
