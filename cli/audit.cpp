@@ -86,6 +86,10 @@ class Report {
 struct Census {
   std::map<std::string, long long> offered;
   std::map<std::string, long long> taken;
+  // The largest honest player-turn seen. The turn/terminates threshold has to sit above this
+  // or it reports busy turns as loops -- which is exactly what a guessed 400 did on a 16x16
+  // late game, where a turn legitimately runs into the thousands of decisions.
+  int max_turn_decisions{0};
 
   void offer(const std::string& key) { offered[key] += 0 + 1; }
   void take(const std::string& key) { taken[key] += 1; }
@@ -420,6 +424,33 @@ struct GameSpec {
   std::uint64_t seed{1};
 };
 
+// Vary the shape of the game, because half the defects this session were only reachable in one
+// configuration -- a non-Dash unit, a water tile, a city that levels twice.
+//
+// Game index -> configuration lives HERE, in one function, because run() and run_seed() have to
+// agree. They did not: run_seed hardcoded 16x16/4/fog while run() cycled five shapes, so
+// replaying a finding could silently set up a different game and report "no violations on this
+// seed". The replay instruction printed with every finding was therefore not trustworthy --
+// which defeats the purpose of recording a seed at all.
+GameSpec spec_for_game(int g) {
+  static const GameSpec kShapes[] = {
+      {16, 4, true, 0}, {16, 2, false, 0}, {11, 2, false, 0}, {20, 4, true, 0}, {11, 4, true, 0},
+  };
+  const int count = static_cast<int>(sizeof(kShapes) / sizeof(kShapes[0]));
+  GameSpec spec = kShapes[g % count];
+  spec.seed = static_cast<std::uint64_t>(g + 1);
+  return spec;
+}
+
+// Three games in four are played by the scripted agent, which actually reaches the content; the
+// fourth is uniform random, which reaches the strange positions.
+std::unique_ptr<agents::Agent> driver_for_game(int g, std::uint64_t seed) {
+  if (g % 4 == 3) return nullptr;
+  std::unique_ptr<agents::Agent> driver = agents::make_agent("rulebased");
+  if (driver) driver->seed(seed * 2654435761u + 7u);
+  return driver;
+}
+
 // `driver` picks the actions. Uniform-random play is the classic fuzzer and it is a poor
 // EXPLORER of this game: it almost never walks a unit onto a ruin, rarely lands an attack, and
 // so leaves most of the content unreached -- the first run reported every ruin reward as
@@ -446,6 +477,7 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
   }
 
   int decisions_this_turn = 0;
+  std::vector<std::string> recent;
   std::int32_t turn_at_last = s.turn;
   PlayerId mover_at_last = s.current_player;
   std::vector<std::int8_t> level_seen(static_cast<std::size_t>(kMaxCities), 0);
@@ -481,10 +513,22 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
     }
     // A turn that cannot end is the no-op cycle of HANDOFF section 4. 400 is far above any
     // honest turn; this fires on a loop, not on a busy turn.
-    if (++decisions_this_turn > 400) {
+    if (decisions_this_turn > census.max_turn_decisions) {
+      census.max_turn_decisions = decisions_this_turn;
+    }
+    // MEASURED, not guessed. See Census::max_turn_decisions: a real turn on a large map late
+    // in the game runs to a few thousand micro-decisions, because every unit, city and
+    // buildable tile costs three. A loop is unbounded, so the threshold only has to be clear
+    // of the honest maximum -- an order of magnitude above it, rather than just above it.
+    if (++decisions_this_turn > 20000) {
+      // Say WHAT it is looping on. "The turn did not end" is not actionable; the repeating
+      // (phase, tile, verb) cycle is.
+      std::string trail;
+      for (const std::string& e : recent) trail += e + " ";
       report.fail("turn/terminates",
                   "player " + std::to_string(s.current_player) + " turn " +
-                      std::to_string(s.turn) + " exceeded 400 decisions",
+                      std::to_string(s.turn) + " exceeded 400 decisions; last decisions: " +
+                      trail,
                   spec.seed, step);
       break;
     }
@@ -524,6 +568,20 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
     }
     if (s.phase == Phase::Target && s.pending_verb == Verb::Train && slot_is_train(action.index)) {
       census.take(std::string("train/") + unit_name(slot_to_unit_type(action.index)));
+    }
+
+    {
+      std::string entry;
+      if (s.phase == Phase::Select) {
+        entry = "sel:" + std::to_string(action.index);
+      } else if (s.phase == Phase::Verb) {
+        entry = std::string("verb:") + verb_name(static_cast<Verb>(action.index));
+      } else {
+        entry = std::string("tgt<") + verb_name(s.pending_verb) + ">:" +
+                std::to_string(action.index);
+      }
+      recent.push_back(entry);
+      if (recent.size() > 12) recent.erase(recent.begin());
     }
 
     std::vector<std::string> log;
@@ -576,27 +634,13 @@ int run(int games, const Rules& rules, bool verbose) {
   Census census;
   seed_expectations(rules, census);
 
-  // Vary the shape of the game, because half the defects this session were only reachable in
-  // one configuration -- a non-Dash unit, a water tile, a city that levels twice.
-  const GameSpec kShapes[] = {
-      {16, 4, true, 0}, {16, 2, false, 0}, {11, 2, false, 0}, {20, 4, true, 0}, {11, 4, true, 0},
-  };
-  const int shape_count = static_cast<int>(sizeof(kShapes) / sizeof(kShapes[0]));
-
   for (int g = 0; g < games; ++g) {
-    GameSpec spec = kShapes[g % shape_count];
-    spec.seed = static_cast<std::uint64_t>(g + 1);
+    GameSpec spec = spec_for_game(g);
     // The per-option probe clones a state for every offered option, which is far too slow to
     // run on every game. One in eight gets the deep treatment; the rest get the cheap
     // invariants at full speed, which is what makes the census broad.
     const bool deep = (g % 8) == 0;
-    // Three games in four are played by the scripted agent, which actually reaches the
-    // content; the fourth is uniform random, which reaches the strange positions.
-    std::unique_ptr<agents::Agent> driver;
-    if (g % 4 != 3) {
-      driver = agents::make_agent("rulebased");
-      if (driver) driver->seed(spec.seed * 2654435761u + 7u);
-    }
+    std::unique_ptr<agents::Agent> driver = driver_for_game(g, spec.seed);
     audit_game(spec, rules, report, census, 6000, deep, driver.get());
     if (verbose && (g + 1) % 25 == 0) {
       std::printf("  ... %d/%d games, %zu distinct findings\n", g + 1, games,
@@ -645,6 +689,8 @@ int run(int games, const Rules& rules, bool verbose) {
     }
   }
 
+  std::printf("\nlargest honest player-turn: %d decisions (loop threshold is 20000)\n",
+              census.max_turn_decisions);
   std::printf("\n%zu invariant violations, %d never-seen behaviours, over %d games.\n",
               report.findings().size(), zeros, games);
   return report.empty() ? 0 : 1;
@@ -655,11 +701,14 @@ int run_seed(std::uint64_t seed, const Rules& rules) {
   Report report;
   Census census;
   seed_expectations(rules, census);
-  GameSpec spec{16, 4, true, seed};
-  std::printf("replaying seed %llu with all checks enabled\n",
-              static_cast<unsigned long long>(seed));
-  std::unique_ptr<agents::Agent> driver = agents::make_agent("rulebased");
-  if (driver) driver->seed(seed * 2654435761u + 7u);
+  // Reconstruct the EXACT game the sweep ran: seed = index + 1, so the index is seed - 1, and
+  // that index picks both the map shape and the driver.
+  const int g = static_cast<int>(seed) - 1;
+  const GameSpec spec = spec_for_game(g);
+  std::unique_ptr<agents::Agent> driver = driver_for_game(g, spec.seed);
+  std::printf("replaying seed %llu: %dx%d, %d players, fog %s, driver %s\n",
+              static_cast<unsigned long long>(seed), spec.dim, spec.dim, spec.players,
+              spec.fog ? "on" : "off", driver ? driver->name() : "random");
   audit_game(spec, rules, report, census, 6000, true, driver.get());
   for (const Finding& f : report.findings()) {
     std::printf("  [%s] step %d\n    %s\n", f.check.c_str(), f.step, f.detail.c_str());

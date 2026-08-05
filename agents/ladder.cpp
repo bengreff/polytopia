@@ -63,8 +63,20 @@ GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& 
   // The 2020 paper hit this too and reports that "forcing an EndTurn every X steps was tried
   // and discarded". We force it only as a HARNESS backstop, well above normal play, so it
   // never binds on a healthy agent but stops a pathological one from stalling the ladder.
-  const int max_steps = cfg.turn_limit * 400;
-  const int max_decisions_per_turn = 300;
+  // Sized from the SAME measurement as the per-turn backstop: an honest late-game turn runs to
+  // ~400 micro-decisions, and every seat takes one turn per game turn. The old
+  // `turn_limit * 400` silently assumed one seat and a short turn, so on the default four-tribe
+  // 16x16 game it could run out of steps mid-game and settle the result on score -- an
+  // unfinished game scored as a win, which is the failure mode the score fallback exists to
+  // make visible rather than to hide.
+  const int max_steps = cfg.turn_limit * cfg.player_count * 500;
+  // MEASURED, not guessed. `--audit` reports the largest honest player-turn it sees; on the
+  // default 16x16 four-tribe game late on, that is ~400 micro-decisions, because every unit,
+  // city and buildable tile costs three. The old value of 300 therefore sat BELOW real play
+  // and force-ended the bot mid-turn -- silently discarding the tail of its work, which is a
+  // strength bug rather than the safety net it was meant to be. A backstop only has to be
+  // clear of honest play: a genuine no-op cycle is unbounded.
+  const int max_decisions_per_turn = 20000;
   int decisions_this_turn = 0;
   int turn_at_last_decision = s.turn;
   PlayerId mover_at_last_decision = s.current_player;

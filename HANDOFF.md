@@ -389,7 +389,24 @@ Two more checks came out of the same thinking:
   says 1"* — while the 100-test suite still reported 99/100. I did not do this the first time,
   which is why the first audit shipped looking clean.
 
-**It then found a second bug on its own**, at 200 games: *"tile 40 banked 3 population but the
+**And a third, at 500 games — in the harness itself.** `turn/terminates` fired, and the honest
+answer turned out to be that *my threshold was wrong*: I had guessed 400 decisions per turn. The
+audit now MEASURES the largest honest player-turn and prints it, and on the default 16×16
+four-tribe game late on it is **~400** — every unit, city and buildable tile costs three
+decisions.
+
+That matters well beyond the audit, because **`ladder.cpp` and `advance_bots` both capped a turn
+at 300**. Below real play. The backstop meant to catch runaway loops was instead force-ending
+the bot mid-turn and silently discarding the tail of its work, in the browser as well as on the
+ladder. Both are now 20000 — a backstop only has to be clear of honest play, since a genuine
+no-op cycle is unbounded. `max_steps` had the same stale assumption baked in and is now sized
+from player count.
+
+Two lessons, both about thresholds: **measure them, and print the measurement**, or the next
+person inherits a guess. And a finding that says "the limit was hit" is not yet a bug report —
+distinguish a loop from a busy turn by raising the limit and seeing whether it terminates.
+
+**It also found a second engine bug on its own**, at 200 games: *"tile 40 banked 3 population but the
 board says 2."* Ownership is an input to every adjacency yield, so **capturing a city** silently
 changes what the border buildings are worth on both sides — and nothing recomputed it. Border
 growth had the same hole. Neither was reported by anyone; both now resync.

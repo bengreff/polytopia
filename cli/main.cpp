@@ -238,7 +238,13 @@ std::vector<std::string> advance_bots(GameState& s, const Rules& rules, int step
   // permits no-op cycles, so a turn that fails to end must be ended for it. `rulebased` no
   // longer needs this -- it ends its own turns -- but the RPC server must not be able to hang
   // the browser on a future agent that does, since here there is no match harness to notice.
-  const int kMaxDecisionsPerTurn = 300;
+  // MEASURED, not guessed. `--audit` reports the largest honest player-turn it sees; on the
+  // default 16x16 four-tribe game late on, that is ~400 micro-decisions, because every unit,
+  // city and buildable tile costs three. The old value of 300 therefore sat BELOW real play
+  // and force-ended the bot mid-turn -- silently discarding the tail of its work, which is a
+  // strength bug rather than the safety net it was meant to be. A backstop only has to be
+  // clear of honest play: a genuine no-op cycle is unbounded.
+  const int kMaxDecisionsPerTurn = 20000;
   int decisions_this_turn = 0;
   std::int32_t turn_at_last = s.turn;
   PlayerId mover_at_last = s.current_player;
@@ -710,6 +716,10 @@ int main(int argc, char** argv) {
     } else if (arg == "--audit") {
       mode = arg;
       if (i + 1 < argc && argv[i + 1][0] != '-') games = std::atoi(argv[++i]);
+    } else if (arg == "--audit-seed") {
+      // Selects the mode on its own. Requiring `--audit 1 --audit-seed N` meant the replay
+      // instruction printed in every finding did not actually work.
+      mode = "--audit";
     } else if (arg == "--selfplay") {
       mode = arg;
       if (i + 1 < argc) games = std::atoi(argv[++i]);
