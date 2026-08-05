@@ -5,7 +5,9 @@
  * ZERO npm dependencies. Built-ins only: http, fs, path, child_process, url.
  *
  *   node web/server.js                 # bridge to ./build/cli/poly-cli --rpc
- *   node web/server.js --mock          # no child process; serve a fixture engine
+ *   node web/server.js --mock          # STALE: the fixture speaks wire protocol v1 and
+ *                                     # cannot serve the current UI. Kept only because it is
+ *                                     # harmless; port it to v2 or delete it.
  *   node web/server.js --port 9000 --cli /path/to/poly-cli
  *
  * Env: PORT, POLY_CLI, POLY_HOST.

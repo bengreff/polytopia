@@ -2,7 +2,11 @@
 
 **Goal:** an agent that decisively beats strong human players at 1v1 Might in The Battle of Polytopia.
 
-**Status:** pre-implementation. Nothing built yet. This document is the plan.
+**Status:** Phase 0 complete and playable; Phase 1 baselines and the Elo ladder exist.
+
+> **Read `HANDOFF.md` first.** This document is the ORIGINAL PLAN, and parts of it have been
+> overtaken by what the build found — most notably the 2020 agent-ordering gate, which has been
+> dropped deliberately. `HANDOFF.md` has current state, next steps and the reasoning.
 
 **Why this document exists:** it is the entry point for a fresh session. Read this first, then
 `WORKFLOW.md` for how sessions run and what the current state is, then
@@ -11,7 +15,8 @@ with a number behind it was verified against a primary source on 2026-08-02; see
 
 | File | Contents |
 |---|---|
-| `README.md` | The plan: thesis, locked decisions, architecture, phases, risks |
+| `HANDOFF.md` | **Start here.** Current state, next steps, known gaps, lessons |
+| `README.md` | The original plan: thesis, locked decisions, architecture, phases, risks |
 | `WORKFLOW.md` | How autonomous sessions run, current state, open questions |
 | `docs/research-findings.md` | Verified prior art with sources |
 | `docs/outreach.md` | License-request messages and contacts |

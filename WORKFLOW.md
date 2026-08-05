@@ -71,36 +71,17 @@ Consequences worth remembering:
 
 ## Current state
 
-**Phase:** pre-implementation. No code written.
+**Phase:** Phase 0 complete and playable. Phase 1 baselines exist; the ladder runs.
+See `HANDOFF.md` for what to do next and why.
 
 **Done**
-- Plan and architecture (`README.md`)
-- Verified prior-art survey (`docs/research-findings.md`)
-- License requests sent 2026-08-03 to Binh Pham (tribes-rl, email) and HenBOMB (Polyfish, GitHub
-  Discussion) — awaiting replies (`docs/outreach.md`)
+- C++20 engine: full rules for the 12 regular tribes, all verbs, naval, roads, temples,
+  veterancy, city connections. 89 tests, clean under `-Werror` and ASAN.
+- Browser UI on wire protocol v2, with a server-side knowledge model.
+- Map generation with the turn-0 capital-resource guarantee.
+- Seven agents and an Elo ladder (`--match`, `--ladder`).
 
-**Next: Phase 0 — a playable, verified, tweakable game.** Nothing blocks starting this.
-
-Order of work:
-1. Repo scaffolding, license, build system for three targets (macOS ARM, Windows x64, WASM)
-2. Core state representation and the `SELECT → VERB → TARGET` phase machine
-3. Ruleset extracted from PolyEnv into `core/`, parameters lifted into `data/rules/*.json`
-4. Map generation: sizes, land/water ratio, biomes, tribe assignment, seeds, fixed start positions
-5. Game modes: Might (domination) and Score/Perfection
-6. WASM build and web UI
-7. Golden-trace harness
-
-**Deferred: base-game AI report.** Requires Polytopia installed plus Windows tooling. Not on this
-Mac (Steam library checked — Polytopia absent). Static decompilation is sufficient and does not
-require running the game: ILSpy or dnSpy against `Assembly-CSharp.dll` for a Mono build, or
-Il2CppDumper against `GameAssembly` plus `global-metadata.dat` for IL2CPP. Deliverable when
-unblocked: `docs/base-game-ai.md` — decision procedure, whether any lookahead exists, how the
-difficulty handicap is implemented, and honest strength relative to the 2020 rule-based agent.
-
-Prior expectation to test: a hand-tuned utility or behaviour-tree scorer with no lookahead,
-functionally close to the 2020 paper's rule-based agent — which nonetheless finished 2nd of 6.
-
----
+**Run it:** `./run.sh` then open http://localhost:8080
 
 ## Open questions
 
