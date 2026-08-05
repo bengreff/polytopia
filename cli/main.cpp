@@ -26,6 +26,11 @@
 #include "agents/ladder.hpp"
 #include "agents/registry.hpp"
 
+namespace poly::audit {
+int run(int games, const Rules& rules, bool verbose);
+int run_seed(std::uint64_t seed, const Rules& rules);
+}  // namespace poly::audit
+
 namespace {
 
 using namespace poly;
@@ -702,6 +707,9 @@ int main(int argc, char** argv) {
     const std::string arg = argv[i];
     if (arg == "--rpc" || arg == "--bench") {
       mode = arg;
+    } else if (arg == "--audit") {
+      mode = arg;
+      if (i + 1 < argc && argv[i + 1][0] != '-') games = std::atoi(argv[++i]);
     } else if (arg == "--selfplay") {
       mode = arg;
       if (i + 1 < argc) games = std::atoi(argv[++i]);
@@ -728,6 +736,22 @@ int main(int argc, char** argv) {
     return run_rpc();
   }
   if (mode == "--selfplay") return run_selfplay(games, 200000);
+  if (mode == "--audit") {
+    Rules rules = Rules::defaults();
+    std::string error;
+    load_rules(g_rules_path, rules, error);
+    bool verbose = false;
+    std::uint64_t only_seed = 0;
+    for (int i = 1; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg == "--verbose") verbose = true;
+      if (arg == "--audit-seed" && i + 1 < argc) {
+        only_seed = static_cast<std::uint64_t>(std::atoll(argv[++i]));
+      }
+    }
+    if (only_seed != 0) return audit::run_seed(only_seed, rules);
+    return audit::run(games, rules, verbose);
+  }
   if (mode == "--ladder" || mode == "--match") {
     Rules rules = Rules::defaults();
     std::string error;
@@ -803,6 +827,8 @@ int main(int argc, char** argv) {
   std::printf("  --ladder [N]         round robin over all baselines, N games per pairing\n");
   std::printf("  --games N            games per pairing\n");
   std::printf("  --budget N           forward-model calls per decision (default 2000)\n");
+  std::printf("  --audit N            fuzz N games: invariants + a census of what never happens\n");
+  std::printf("  --audit-seed N       replay one audited game with every check on\n");
   std::printf("  --paper              the 2020 AIIDE setup: 11x11, 2 players, fog off\n");
   std::printf("                       (default is the GAME setup: 16x16, 4 players, fog on)\n");
   std::printf("  --size N / --players N / --fog / --no-fog / --turns N\n");

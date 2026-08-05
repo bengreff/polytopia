@@ -135,6 +135,9 @@ struct Rules {
   // --- Movement (resolutions.md R19, R20) ---
   bool zoc_consumes_all_movement{true};
   int mountain_vision_bonus{1};
+  // The Scout skill's sight radius (live.json combat.scout_skill_sight_radius). A unit with
+  // Scout sees this far instead of its base 1.
+  int scout_vision_radius{2};
 
   // --- Difficulty: a CAPITAL income modifier, not a global economy bonus. ---
   // Normal bots have no handicap; they match a human exactly (live-rules.md §12.1).

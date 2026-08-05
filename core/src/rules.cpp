@@ -338,6 +338,8 @@ bool load_rules(const std::string& path, Rules& out, std::string& error) {
       static_cast<float>(combat["defence_bonus_standard"].num(out.defence_bonus_standard));
   out.defence_bonus_wall =
       static_cast<float>(combat["defence_bonus_wall"].num(out.defence_bonus_wall));
+  out.scout_vision_radius =
+      combat["scout_skill_sight_radius"].integer(out.scout_vision_radius);
 
   const json::Value& econ = root["economy"];
   out.tech_cost_base = econ["tech_cost_base"].integer(out.tech_cost_base);

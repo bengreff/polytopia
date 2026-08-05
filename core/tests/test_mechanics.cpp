@@ -532,3 +532,26 @@ TEST("ruin: every reward is reachable and names itself in the log") {
   // Explorer. Anything below 3 means rewards are unreachable rather than merely unlucky.
   CHECK(seen.size() >= 3);
 }
+
+TEST("scout skill: a Scout sees further than a Warrior") {
+  // Found by tools/content_audit.py, not by play: Skill::Scout was declared, carried by three
+  // units in the rules data, and referenced nowhere in the engine. A unit whose whole purpose
+  // is vision saw exactly as far as a Warrior, and no amount of playing would make that look
+  // like a bug from inside a fogged game.
+  const Rules rules = Rules::defaults();
+  CHECK(has_skill(static_cast<Skill>(rules.unit(UnitType::Scout).skills), Skill::Scout));
+
+  const auto revealed = [&](UnitType type) {
+    GameState s = game(rules);
+    const UnitId u = my_unit(s);
+    s.units[u].type = type;
+    for (PlayerId p = 0; p < s.player_count; ++p) s.explored[p] = ExploredMap{};
+    recompute_visibility(s, rules, 0);
+    int seen = 0;
+    for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+      if (s.explored[0].test(t)) ++seen;
+    }
+    return seen;
+  };
+  CHECK(revealed(UnitType::Scout) > revealed(UnitType::Warrior));
+}

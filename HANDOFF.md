@@ -11,7 +11,9 @@ original plan and parts of it have been overtaken by what the build actually fou
 ./build/cli/poly-cli --match rulebased rb_base --games 400   A/B a bot change
 ./build/cli/poly-cli --ladder --games 4         round robin, ~18 min
 ./build/cli/poly-cli --ladder --games 6 --paper 2020 AIIDE format, ~4 min
-./build/core/tests/poly_tests                   97 tests
+./build/core/tests/poly_tests                   98 tests
+./build/cli/poly-cli --audit 100                fuzz + census: FINDS BUGS (see §6)
+python3 tools/content_audit.py                  declared-but-never-consulted content
 ```
 
 **Everything defaults to the setup a player actually gets**: 16×16, four tribes, fog on — in
@@ -61,7 +63,7 @@ That table is `--paper`. In the **default** format (16×16, four tribes, fog on)
 still wins every pairing 4-0, but the rest of the field reorders — `paper2020` drops from 2nd
 to 6th and loses a game to `random`. See §3; run both.
 
-**Verified.** 97 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN. Eight of those
+**Verified.** 98 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN. Eight of those
 tests are new and were written to reproduce defects found by PLAYING — see §5.
 
 ---
@@ -298,7 +300,82 @@ The cheapest correction is what the new tests do deliberately: assert on the **e
 (`enumerate_options` / `legal_*`) rather than only on `apply()`, and pick fixtures adversarially
 — the Defender rather than the Warrior, move-then-attack rather than attack-from-rest.
 
-## 6. Known gaps
+---
+
+## 6. How to find the bugs: `--audit` and `content_audit.py`
+
+Five defects arrived as play reports against a build whose 89 tests passed, and patching them
+one at a time was not converging. They all share a shape the unit suite structurally cannot
+see, so the answer was a tool rather than more patches.
+
+**The shape.** Every one was a REACHABILITY defect — an option the engine never offers, a skill
+it never consults, a menu entry that cannot appear, an outcome that cannot be rolled. A unit
+test sets up the state it wants and calls the thing directly, so it proves a mechanism works
+*when invoked* and says nothing about whether the game ever invokes it. Worse, the natural
+fixture hides the bug: the starting Warrior has Dash, so it heals after moving; an attack from
+a standing start leaves `moves_left` intact, so Escape looks fine. **Four of my five first
+regression tests passed against the broken engine.**
+
+### `./build/cli/poly-cli --audit 100` — dynamic
+
+Plays 100 games across five map shapes, three-quarters driven by `rulebased` and a quarter
+uniform-random (the scripted agent reaches the content; random reaches the strange positions).
+After every action it checks invariants, and it keeps a census.
+
+The load-bearing check is **`offer/applies`**: everything `enumerate_options` reports as
+Available must survive `apply_compound`. That one assertion turns "a button that does nothing"
+from a play report into a failing build, without knowing anything about healing or ruins.
+Alongside it: the state bijection, HP bounds, monotonic city level, turn termination, and
+`projection/*`, which tests the architecture's own claim that `legal_actions` is a projection of
+`enumerate_options` — a claim that lived in a comment and was false.
+
+The **census** is the other half. It counts every verb, unit, reward and ruin outcome offered
+and taken, and lists what never happened. A zero is a question, not a verdict — some content is
+genuinely rare — but Persist, level-4 Population Growth and the water Rammer are all zeros, and
+none of them is a failing assertion anywhere.
+
+Findings carry a seed; `--audit-seed N` replays one game with every check on.
+
+### `python3 tools/content_audit.py` — static
+
+Answers what playing cannot: content **declared but never consulted**. `Skill::Persist` was in
+`content.hpp`, assigned to the Knight in `rules.cpp`, and asserted in `test_content.cpp` — a
+test that *passed* — while `game.cpp` never referenced the symbol. Three files agreed the
+feature existed and the one that had to implement it did not know. No dynamic check can tell
+that from bad luck.
+
+It deliberately excludes `rules.cpp` (the data parser mentions every enum member by
+construction — `{"persist", Skill::Persist}` was there the whole time) and the tests. Getting
+that wrong is what made its first version report a clean bill of health.
+
+### What the two tools found on their first run
+
+| | |
+|---|---|
+| **Destroy was unreachable** | `enumerate_options` offered it on any improved tile; `legal_select` only handed out tiles that could harvest or build. A finished Farm has neither, so the button appeared and `act` answered "action refused". |
+| **Build drifted on city tiles** | `legal_verbs` re-derived Build with its own `can_build` loop, sitting directly under the comment promising the mask is a projection of the enumerator. `tile_layers` gives a city tile no Tile layer, so the agent could build there and the human had no menu to do it from. The loop was redundant as well as wrong; deleted. |
+| **A pending level-up did not freeze its tile** | `legal_verbs` returns `{ChooseReward, Deselect}` and the enumerator did not know, so a unit standing on a city awaiting a choice was still offered Move. |
+| **Promote was unreachable after moving** | Same class as Recover. Fixing these one verb at a time was the signal to fix the class: unit selection now ASKS the enumerator instead of re-deriving. |
+| **The Scout does not scout** | `Skill::Scout` — "units with the scout skill can see two tiles in every direction" — was consulted nowhere. A unit whose entire purpose is vision saw as far as a Warrior. Static audit; invisible from play, because "the Scout revealed no more than anything else" does not look like a bug from inside a fogged game. |
+| **Bomber splash damage is not implemented** | `Skill::Splash`, formula known and in `live.json`. Now recorded as a gap; it was in no gap list before. |
+
+### Cost, honestly
+
+Making unit selection ask the enumerator costs **MCTS about 33%** (48s vs ~36s for a 4-game
+pairing) even with a fast-accept path for units that have not acted. Legality generation is the
+documented search bottleneck and this project already paid to fix it once. I think correctness
+wins here and the audit is what makes the trade visible, but it is a real cost and a future
+search phase may want to revisit it.
+
+### Standing invariants
+
+- `--audit 100` reports **0 invariant violations**. Anything above zero is a regression.
+- `content_audit.py` exits non-zero on **1 finding**: the 66 unparsed rule keys (§7). Everything
+  else is either implemented or accounted for with a stated reason.
+- `verb/convert` is offered but never taken — `rulebased` never chooses it. Agent behaviour,
+  not an engine defect.
+
+## 7. Known gaps
 
 - **No map-type presets.** Generation is smoothed-noise blobs against a land quota. Continents,
   Pangea, Archipelago, Lakes, Waterworld and their water bands do not exist. `land_ratio` is the
@@ -310,12 +387,16 @@ The cheapest correction is what the new tests do deliberately: assert on the **e
 - **`web/server.js --mock` speaks wire protocol v1** and cannot serve the current UI. Port or
   delete.
 - **Cloak/Dagger infiltrate, Stomp damage, and the special tribes** are unimplemented.
+- **Bomber splash damage is unimplemented.** `Skill::Splash` is declared and carried by the
+  Bomber, the formula is in the wiki and `live.json` has `combat.splash_divisor`, and nothing
+  consults the skill — so a Bomber is a weak single-target attacker. Found by
+  `content_audit.py` 2026-08-05; it was in no gap list before that.
 - **`rulebased` is duplicated content-wise with `paper2020`** in places; both are scripted and
   share targeting patterns. Worth extracting a common scripted base if a third one appears.
 
 ---
 
-## 7. Rules confidence
+## 8. Rules confidence
 
 `docs/rules-research/resolutions.md` is the file to read before touching any rule. It records
 every open question with an authority level and, critically, **59 values flagged `_unverified`
@@ -382,7 +463,7 @@ remembered rule, give the self-test a real hearing.
 
 ---
 
-## 8. What the build actually taught us
+## 9. What the build actually taught us
 
 Recorded because these change how the remaining phases should be approached.
 

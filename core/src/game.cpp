@@ -134,6 +134,13 @@ bool may_recover(const GameState& s, const Rules& rules, UnitId unit) {
   if (!u.alive() || u.owner != s.current_player) return false;
   if (u.has(UnitFlag::FreshlyTrained) || u.has(UnitFlag::HasAttacked)) return false;
   if (u.has(UnitFlag::HasRecovered)) return false;
+  // A city owing a level-up freezes its whole tile: `legal_verbs` answers {ChooseReward,
+  // Deselect} and nothing else. Recover deliberately ignores TurnEnded, which is what let it
+  // slip past that freeze as well -- the audit caught it as an offered verb the mask forbade.
+  const CityId here = city_at(s, u.tile);
+  if (here != kNoCity && s.cities[here].owner == u.owner && s.cities[here].pending_rewards > 0) {
+    return false;
+  }
   return u.hp < max_hp_for(rules, u);
 }
 
@@ -379,6 +386,16 @@ void recompute_visibility(GameState& s, const Rules& rules, PlayerId player) {
     const Unit& unit = s.units[u];
     if (unit.owner != player || !unit.alive()) continue;
     int radius = rules.unit(unit.type).vision;
+    // THE SCOUT SKILL. "Units with the scout skill can see two tiles in every direction"
+    // (wiki, Combat/Vision). It was declared in content.hpp, carried by the Scout, Cloak and
+    // Dinghy in the rules data, and consulted NOWHERE -- so the Scout, a unit whose entire
+    // purpose is vision, saw exactly as far as a Warrior. Found by tools/content_audit.py,
+    // which is the same shape of defect as Persist and would never have surfaced from play:
+    // "the Scout revealed no more than anything else" does not look like a bug from inside a
+    // fogged game.
+    if (has_skill(static_cast<Skill>(rules.unit(unit.type).skills), Skill::Scout)) {
+      radius = std::max(radius, rules.scout_vision_radius);
+    }
     // Standing on a mountain grants +1 vision (resolutions.md R18).
     if (s.tiles[unit.tile].terrain == Terrain::Mountain) radius += rules.mountain_vision_bonus;
     reveal_around(unit.tile, radius);
@@ -817,12 +834,37 @@ Availability can_harvest(const GameState& s, const Rules& rules, TileIdx tile_id
 
 void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
   BlockReason scratch = BlockReason::None;
-  for (UnitId u = 0; u < s.unit_count; ++u) {
-    // `may_recover` is a SEPARATE clause because a unit that has moved is no longer
-    // `unit_can_act` -- yet healing it is still legal. Omitting this left the option
-    // enumerator offering Recover on a unit the selector would not hand out, which apply()
-    // then refused: a button in the UI that does nothing.
-    if (unit_can_act(s, u) || may_recover(s, rules, u)) mask.set(tile_to_slot(s.units[u].tile));
+  // A unit is selectable if the enumerator offers it ANYTHING -- asked by calling the
+  // enumerator, not by re-deriving the answer.
+  //
+  // This started as `unit_can_act(s, u)`, which means "can take a normal move/attack action",
+  // and every verb that outlives a spent turn had to be bolted on beside it. Recover was
+  // missing, so healing after moving was impossible. Then Promote was missing, so a unit that
+  // moved and earned a veteran promotion could not cash it. The audit found each in turn,
+  // which was the signal that patching verbs one at a time was the wrong shape of fix.
+  //
+  // The cost is acceptable precisely BECAUSE it is per unit: there are a few dozen units, not
+  // a few hundred tiles, so this is nothing like enumerating every tile. The tile scan below
+  // stays hand-rolled for exactly that reason.
+  //
+  // `unit_can_act` is checked FIRST as a fast accept. It is the common case -- most units have
+  // not acted yet -- and legality generation is the search bottleneck this project already
+  // paid to fix once (HANDOFF section 8: it was worth 3.75x). Enumerating every unit
+  // unconditionally cost MCTS about 2x; enumerating only the units that have already acted
+  // costs nothing measurable and still asks the enumerator the question that matters, which is
+  // "does this spent unit have anything left".
+  {
+    std::vector<Option> unit_options;
+    for (UnitId u = 0; u < s.unit_count; ++u) {
+      const Unit& unit = s.units[u];
+      if (!unit.alive() || unit.owner != s.current_player || unit.tile == kNoTile) continue;
+      if (unit_can_act(s, u)) {
+        mask.set(tile_to_slot(unit.tile));
+        continue;
+      }
+      enumerate_options(s, rules, unit.tile, Layer::Unit, false, unit_options);
+      if (!unit_options.empty()) mask.set(tile_to_slot(unit.tile));
+    }
   }
   for (CityId c = 0; c < s.city_count; ++c) {
     const City& city = s.cities[c];
@@ -851,6 +893,15 @@ void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
     // factor here is a constant factor on every agent in the ladder.
     const PlayerId owner = s.tiles[t].owner;
     if (owner != s.current_player && owner != kNoPlayer) continue;  // enemy: nothing at all
+    // Scorched earth: an owned tile carrying a building can always be Destroyed, and that is
+    // frequently the ONLY thing left to do with it -- a finished Farm has no resource to
+    // harvest and no room to build. The enumerator offered Destroy on every such tile while
+    // this function never handed the tile out, so the option was unreachable: in the browser
+    // the button appeared and `act` answered "action refused".
+    if (owner == s.current_player && s.tiles[t].improvement != Improvement::None) {
+      mask.set(tile_to_slot(t));
+      continue;
+    }
     const int first = (owner == s.current_player) ? 1 : static_cast<int>(Improvement::Road);
     const int last = static_cast<int>(Improvement::Count);
     for (int i = first; i < last; ++i) {
@@ -954,12 +1005,13 @@ void legal_verbs(const GameState& s, const Rules& rules, ActionMask& mask) {
       for (const Option& o : options) mask.set(static_cast<int>(o.verb));
     }
   }
-  for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
-    if (can_build(s, rules, tile_idx, static_cast<Improvement>(i), scratch) == Availability::Available) {
-      mask.set(static_cast<int>(Verb::Build));
-      break;
-    }
-  }
+  // There used to be a second, independent `can_build` loop here, directly beneath the comment
+  // promising the mask is a projection of the enumerator. It drifted exactly where you would
+  // expect: `tile_layers` deliberately gives a CITY tile no Tile layer ("you cannot build under
+  // your own city" -- owner-confirmed), so the enumerator offered no Build there while this
+  // loop put Build in the mask anyway. The agent could build on a city tile and the human had
+  // no menu to do it from. The union above already covers Build wherever a Tile layer exists,
+  // so the loop was redundant as well as wrong.
 
   mask.set(static_cast<int>(Verb::Deselect));
 }
@@ -1863,6 +1915,17 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
     BlockReason spent = BlockReason::None;
     if (u.has(UnitFlag::FreshlyTrained)) spent = BlockReason::FreshlyTrained;
     else if (u.has(UnitFlag::TurnEnded)) spent = BlockReason::UnitSpent;
+    // A city owing a level-up freezes everything on its tile -- `legal_verbs` returns a mask of
+    // {ChooseReward, Deselect} and nothing else. The enumerator did not know that, so a unit
+    // standing on such a city was still offered Move, and the UI painted a button apply()
+    // then refused. Same rule, stated in both places.
+    if (spent == BlockReason::None) {
+      const CityId here = city_at(s, tile);
+      if (here != kNoCity && s.cities[here].owner == s.current_player &&
+          s.cities[here].pending_rewards > 0) {
+        spent = BlockReason::PendingReward;
+      }
+    }
 
     {
       ActionMask moves;
