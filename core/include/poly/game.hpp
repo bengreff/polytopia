@@ -70,6 +70,16 @@ int player_income(const GameState& s, const Rules& rules, PlayerId player);
 int player_score(const GameState& s, const Rules& rules, PlayerId player);
 int population_needed(const GameState& s, const Rules& rules, CityId city);
 
+// What a tile SHOULD contribute to its city's population, computed from the board alone.
+// `Tile::population_contribution` is the engine's running copy of this; any divergence means
+// something changed the board without resyncing, and the audit asserts they agree.
+int tile_population_yield(const GameState& s, const Rules& rules, TileIdx tile);
+
+// Test seam for capture, which is otherwise only reachable through a unit standing on a city
+// at the start of its turn -- too much choreography for a test about population bookkeeping.
+void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,
+                           std::vector<std::string>* log);
+
 // Damage a would deal to b, and b's retaliation, in half-point HP units.
 struct CombatResult {
   int attacker_damage{0};   // dealt BY the attacker TO the defender

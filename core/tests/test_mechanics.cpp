@@ -555,3 +555,154 @@ TEST("scout skill: a Scout sees further than a Warrior") {
   };
   CHECK(revealed(UnitType::Scout) > revealed(UnitType::Warrior));
 }
+
+// ---------------------------------------------------------------------------------------
+// Adjacency buildings. Owner report: "windmills don't work for diagonals or when building
+// after the windmill". These are DERIVED VALUES, and the engine banks them at build time.
+// ---------------------------------------------------------------------------------------
+
+namespace {
+// Places an improvement directly, bypassing cost and tech, and returns the city's population.
+int build_at(GameState& s, const Rules& rules, TileIdx tile, Improvement imp) {
+  s.players[0].stars = 999;
+  std::vector<std::string> log;
+  const bool ok = apply_compound(s, rules, tile, Verb::Build, improvement_to_slot(imp), &log);
+  CHECK(ok);
+  return 0;
+}
+// TOTAL population a city has ever banked: what it is holding now, plus everything already
+// spent on level-ups. Comparing raw `population` across a build is meaningless because a
+// level-up subtracts the threshold, which is how my first attempt at this test read 100.
+int population_total(const GameState& s, const Rules& rules, CityId c) {
+  int total = s.cities[c].population;
+  City probe = s.cities[c];
+  GameState scratch = s;
+  for (int level = 1; level < s.cities[c].level; ++level) {
+    scratch.cities[c].level = static_cast<std::int8_t>(level);
+    total += population_needed(scratch, rules, c);
+  }
+  (void)probe;
+  return total;
+}
+
+// A patch of own-territory field tiles around the capital, for placing buildings on.
+std::vector<TileIdx> field_tiles_near(const GameState& s, TileIdx centre, int want) {
+  std::vector<TileIdx> out;
+  const Coord c = s.dims.coord(centre);
+  for (int dy = -2; dy <= 2 && static_cast<int>(out.size()) < want; ++dy) {
+    for (int dx = -2; dx <= 2 && static_cast<int>(out.size()) < want; ++dx) {
+      if (dx == 0 && dy == 0) continue;
+      const Coord n{static_cast<std::int16_t>(c.x + dx), static_cast<std::int16_t>(c.y + dy)};
+      if (!s.dims.contains(n)) continue;
+      const TileIdx t = s.dims.index(n);
+      if (s.tiles[t].terrain != Terrain::Field) continue;
+      if (s.tiles[t].improvement != Improvement::None) continue;
+      out.push_back(t);
+    }
+  }
+  return out;
+}
+}  // namespace
+
+TEST("windmill: counts a DIAGONALLY adjacent farm") {
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules);
+  const CityId capital = my_capital(s);
+  const TileIdx centre = s.cities[capital].tile;
+  s.players[0].grant_tech(Tech::Farming);
+  s.players[0].grant_tech(Tech::Construction);
+  s.players[0].grant_tech(Tech::Organization);
+
+  const Coord c = s.dims.coord(centre);
+  // A strict diagonal pair: farm at (+1,+1), windmill at (+2,+2) is not adjacent; use
+  // farm (+1,0) and windmill (+2,+1), which touch only at a corner.
+  const Coord fc{static_cast<std::int16_t>(c.x + 1), static_cast<std::int16_t>(c.y + 0)};
+  const Coord wc{static_cast<std::int16_t>(c.x + 2), static_cast<std::int16_t>(c.y + 1)};
+  if (!s.dims.contains(fc) || !s.dims.contains(wc)) return;
+  const TileIdx farm = s.dims.index(fc);
+  const TileIdx mill = s.dims.index(wc);
+  s.tiles[farm].terrain = Terrain::Field;
+  s.tiles[mill].terrain = Terrain::Field;
+  s.tiles[farm].owner = 0; s.tiles[farm].city = capital;
+  s.tiles[mill].owner = 0; s.tiles[mill].city = capital;
+  s.tiles[farm].improvement = Improvement::None;
+  s.tiles[mill].improvement = Improvement::None;
+  s.tiles[farm].resource = Resource::Crop;
+
+  build_at(s, rules, farm, Improvement::Farm);
+  const int before = population_total(s, rules, capital);
+  build_at(s, rules, mill, Improvement::Windmill);
+  const int after = population_total(s, rules, capital);
+  // The windmill must see the farm across the corner: +1 population.
+  CHECK_EQ(after - before, 1);
+}
+
+TEST("windmill: a farm built AFTER the windmill still feeds it") {
+  // The engine banks the adjacency count at build time and never revisits it, so a windmill
+  // placed before its farms is worth zero forever.
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules);
+  const CityId capital = my_capital(s);
+  s.players[0].grant_tech(Tech::Farming);
+  s.players[0].grant_tech(Tech::Construction);
+  s.players[0].grant_tech(Tech::Organization);
+
+  const std::vector<TileIdx> spots = field_tiles_near(s, s.cities[capital].tile, 2);
+  if (spots.size() < 2) return;
+  const TileIdx mill = spots[0];
+  const TileIdx farm = spots[1];
+  // Make them adjacent-safe: only run the assertion if they actually touch.
+  const Coord a = s.dims.coord(mill), b = s.dims.coord(farm);
+  if (std::max(std::abs(a.x - b.x), std::abs(a.y - b.y)) != 1) return;
+  for (const TileIdx t : {mill, farm}) {
+    s.tiles[t].owner = 0;
+    s.tiles[t].city = capital;
+    s.tiles[t].improvement = Improvement::None;
+  }
+  s.tiles[farm].resource = Resource::Crop;
+
+  build_at(s, rules, mill, Improvement::Windmill);  // windmill FIRST, sees no farms
+  const int before = population_total(s, rules, capital);
+  build_at(s, rules, farm, Improvement::Farm);
+  const int after = population_total(s, rules, capital);
+  // Farm's own 2 population, PLUS the windmill's +1 that it now feeds.
+  CHECK_EQ(after - before, 3);
+}
+
+TEST("adjacency yields survive a capture") {
+  // Ownership is an INPUT to every adjacency yield: count_adjacent_improvements only counts
+  // neighbours owned by the same player. Re-parenting a city's territory therefore changes
+  // what its border buildings are worth, on BOTH sides of the new border. Nothing recomputed
+  // that, and the audit's oracle caught it as a tile banking 3 population while the board said
+  // 2. Found by generic invariant, not by anyone thinking about captures.
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules);
+
+  // Every tile must agree with the board after the capture, whatever it was before.
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == 1) {
+      std::vector<std::string> log;
+      capture_city_for_test(s, rules, c, 0, &log);
+      break;
+    }
+  }
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+    CHECK_EQ(static_cast<int>(s.tiles[t].population_contribution),
+             tile_population_yield(s, rules, t));
+  }
+}
+
+TEST("adjacency yields survive border growth") {
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules);
+  const CityId capital = my_capital(s);
+  s.cities[capital].level = 4;
+  s.cities[capital].pending_rewards = 1;
+  std::vector<std::string> log;
+  CHECK(apply_compound(s, rules, s.cities[capital].tile, Verb::ChooseReward,
+                       reward_to_slot(CityReward::BorderGrowth), &log));
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+    CHECK_EQ(static_cast<int>(s.tiles[t].population_contribution),
+             tile_population_yield(s, rules, t));
+  }
+}

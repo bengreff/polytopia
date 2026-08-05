@@ -359,6 +359,41 @@ that wrong is what made its first version report a clean bill of health.
 | **The Scout does not scout** | `Skill::Scout` — "units with the scout skill can see two tiles in every direction" — was consulted nowhere. A unit whose entire purpose is vision saw as far as a Warrior. Static audit; invisible from play, because "the Scout revealed no more than anything else" does not look like a bug from inside a fogged game. |
 | **Bomber splash damage is not implemented** | `Skill::Splash`, formula known and in `live.json`. Now recorded as a gap; it was in no gap list before. |
 
+### The first version of this audit was structurally blind, and the owner found the proof
+
+It checked REACHABILITY — can you get to the option, does it apply, does it change something —
+and **never once asked whether the resulting number was right**. So it reported a clean engine
+while Windmills were broken, because Windmill adjacency is pure computation over the board and
+had exactly zero coverage.
+
+The reported symptom was "windmills don't work for diagonals or when building after the
+windmill". Diagonals were fine (`count_adjacent_improvements` is 8-way). The real defect was
+that `Verb::Build` computed the adjacency yield **once, at build time**, and added it to the
+city — so a Windmill placed before its Farms was worth zero forever, and a Farm built beside an
+existing Windmill fed it nothing. Destroy did not take the population back either.
+
+**The general form of the bug is "a derived value stored as an event."** The general form of
+the check is an **oracle**: recompute the value independently from the board and assert
+equality after every action. `derived/tile-population-matches-board` does that, and it catches
+every path that mutates the board without resyncing rather than the one path someone remembered.
+
+Two more checks came out of the same thinking:
+
+- **`derived/build-order-independent`** — a metamorphic test. Two builds on different tiles are
+  independent, so A-then-B must equal B-then-A. It needs no oracle and no expected value, only
+  the observation that the game should not care about the order of unrelated things. It catches
+  the Windmill bug *without knowing anything about windmills*.
+
+- Re-running the audit against a deliberately **reintroduced** bug, which is the only way to
+  know a check works. The oracle fired immediately — *"tile 38 banked 0 population but the board
+  says 1"* — while the 100-test suite still reported 99/100. I did not do this the first time,
+  which is why the first audit shipped looking clean.
+
+**It then found a second bug on its own**, at 200 games: *"tile 40 banked 3 population but the
+board says 2."* Ownership is an input to every adjacency yield, so **capturing a city** silently
+changes what the border buildings are worth on both sides — and nothing recomputed it. Border
+growth had the same hole. Neither was reported by anyone; both now resync.
+
 ### Cost, honestly
 
 Making unit selection ask the enumerator costs **MCTS about 33%** (48s vs ~36s for a 4-game
@@ -369,7 +404,9 @@ search phase may want to revisit it.
 
 ### Standing invariants
 
-- `--audit 100` reports **0 invariant violations**. Anything above zero is a regression.
+- `--audit 200` reports **0 invariant violations**. Anything above zero is a regression.
+- **When you add a check, verify it by reintroducing the bug it is meant to catch.** A check
+  that has only ever been run against fixed code has not been tested.
 - `content_audit.py` exits non-zero on **1 finding**: the 66 unparsed rule keys (§7). Everything
   else is either implemented or accounted for with a stated reason.
 - `verb/convert` is offered but never taken — `rulebased` never chooses it. Agent behaviour,

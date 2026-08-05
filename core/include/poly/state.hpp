@@ -58,6 +58,19 @@ struct Tile {
   std::uint8_t improvement_level{0};
   std::uint8_t flags{0};
 
+  // Population this tile currently CONTRIBUTES to its city.
+  //
+  // Adjacency buildings (Windmill off Farms, Sawmill off Lumber Huts, Forge off Mines) used to
+  // have their yield computed once, at the moment they were built, and added straight to the
+  // city. A Windmill placed before its Farms was therefore worth zero forever, and a Farm
+  // built next to an existing Windmill fed it nothing -- the owner's report, and exactly what
+  // you would expect from a DERIVED value stored as an event.
+  //
+  // Keeping the per-tile contribution makes the yield a function of the board again: any
+  // change recomputes this tile and its eight neighbours and applies the difference, so build
+  // order stops mattering and Destroy can take the population back.
+  std::int8_t population_contribution{0};
+
   [[nodiscard]] constexpr bool has(TileFlag f) const {
     return (flags & static_cast<std::uint8_t>(f)) != 0;
   }

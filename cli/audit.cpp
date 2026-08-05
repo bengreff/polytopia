@@ -169,6 +169,30 @@ void check_state(const GameState& s, const Rules& rules, Report& report, std::ui
                   step);
     }
   }
+  // DERIVED VALUES MUST MATCH THE BOARD.
+  //
+  // This is the class the first version of this audit could not see at all. It checked
+  // REACHABILITY -- can you get to the option, does it apply, does it change something -- and
+  // never once asked whether the resulting NUMBER was right. Windmill adjacency is pure
+  // computation over the board, so it had exactly zero coverage, and the owner found it by
+  // playing: a Windmill built before its Farms was worth nothing forever, because the yield
+  // was banked at build time instead of being a function of the neighbourhood.
+  //
+  // The general form of the bug is "a derived value stored as an event". The general form of
+  // the check is an ORACLE: recompute it independently and assert equality. That catches every
+  // path that mutates the board without resyncing -- build, destroy, capture, border growth,
+  // a ruin -- rather than the one path someone remembered to test.
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+    const int want = tile_population_yield(s, rules, t);
+    if (s.tiles[t].population_contribution != want) {
+      report.fail("derived/tile-population-matches-board",
+                  "tile " + std::to_string(t) + " banked " +
+                      std::to_string(s.tiles[t].population_contribution) + " population but " +
+                      "the board says " + std::to_string(want),
+                  seed, step);
+    }
+  }
+
   for (PlayerId p = 0; p < s.player_count; ++p) {
     if (s.players[p].stars < 0) {
       report.fail("state/stars-nonnegative",
@@ -293,6 +317,55 @@ void check_offers_are_applicable(const GameState& s, const Rules& rules, Report&
   }
 }
 
+// ORDER INDEPENDENCE. Two builds on different tiles are independent actions, so doing A then B
+// must leave the same position as B then A.
+//
+// This is a METAMORPHIC test: it needs no oracle and no expected value, only the observation
+// that the game should not care what order you did unrelated things in. It catches the windmill
+// bug directly and without knowing anything about windmills -- build the mill then the farm,
+// build the farm then the mill, compare. A check like this is worth more than any number of
+// specific assertions, because it does not have to anticipate WHICH derived value is wrong.
+void check_build_order_independence(const GameState& s, const Rules& rules, Report& report,
+                                    std::uint64_t seed, int step) {
+  if (s.phase != Phase::Select) return;
+  std::vector<Option> options;
+  struct Build { TileIdx tile; int slot; };
+  std::vector<Build> builds;
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()) && builds.size() < 4; ++t) {
+    enumerate_options(s, rules, t, Layer::Tile, false, options);
+    for (const Option& o : options) {
+      if (o.verb == Verb::Build && o.status == Availability::Available) {
+        builds.push_back(Build{t, o.action.index});
+        break;
+      }
+    }
+  }
+  for (std::size_t i = 0; i + 1 < builds.size(); ++i) {
+    const Build& a = builds[i];
+    const Build& b = builds[i + 1];
+    if (a.tile == b.tile) continue;
+    GameState ab = s, ba = s;
+    if (!apply_compound(ab, rules, a.tile, Verb::Build, a.slot, nullptr)) continue;
+    if (!apply_compound(ab, rules, b.tile, Verb::Build, b.slot, nullptr)) continue;
+    if (!apply_compound(ba, rules, b.tile, Verb::Build, b.slot, nullptr)) continue;
+    if (!apply_compound(ba, rules, a.tile, Verb::Build, a.slot, nullptr)) continue;
+    // Compare what the buildings were FOR, not the whole state: the phase cursor legitimately
+    // differs, and so does anything that consumed the state RNG.
+    for (CityId c = 0; c < s.city_count; ++c) {
+      if (ab.cities[c].population != ba.cities[c].population ||
+          ab.cities[c].level != ba.cities[c].level) {
+        report.fail("derived/build-order-independent",
+                    "building tile " + std::to_string(a.tile) + " then " +
+                        std::to_string(b.tile) + " gives city " + std::to_string(c) +
+                        " population " + std::to_string(ab.cities[c].population) +
+                        " but the other order gives " + std::to_string(ba.cities[c].population),
+                    seed, step);
+        return;
+      }
+    }
+  }
+}
+
 // The architecture's own claim, from options.hpp: `legal_actions()` is a PROJECTION of
 // `enumerate_options()`, "so the agent's view and the human's menu cannot drift". That is an
 // assertion, and assertions in comments are wishes. This is the test.
@@ -385,6 +458,7 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
     if (deep) {
       check_offers_are_applicable(s, rules, report, census, spec.seed, step);
       check_mask_matches_options(s, rules, report, spec.seed, step);
+      check_build_order_independence(s, rules, report, spec.seed, step);
     }
 
     // City level is monotonic (R17) -- it must never be recomputed from population.

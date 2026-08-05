@@ -80,6 +80,62 @@ int count_adjacent_improvements(const GameState& s, TileIdx tile, Improvement wa
   return total;
 }
 
+void add_population(GameState& s, const Rules& rules, CityId city_id, int amount,
+                    std::vector<std::string>* log);
+
+// What this tile contributes to its city's population, computed FROM THE BOARD.
+//
+// This is the oracle for the adjacency buildings. `Verb::Build` used to compute the yield once
+// and hand it to the city, which made it an event rather than a value: a Windmill built before
+// its Farms counted zero forever, and a Farm built beside an existing Windmill fed it nothing.
+// Anything derived from neighbours has to be recomputed when the neighbourhood changes.
+int tile_population_yield_impl(const GameState& s, const Rules& rules, TileIdx tile) {
+  const Tile& t = s.tiles[tile];
+  if (t.improvement == Improvement::None || t.owner == kNoPlayer) return 0;
+  const ImprovementStats& stats = rules.improvement(t.improvement);
+  if (stats.adjacency_source == Improvement::None) return stats.population;
+  return stats.adjacency_population *
+         count_adjacent_improvements(s, tile, stats.adjacency_source, t.owner);
+}
+
+// Recomputes `tile` and its eight neighbours, moving any difference into the owning city.
+// Called after ANY change to an improvement, so build order cannot matter.
+void resync_population_around(GameState& s, const Rules& rules, TileIdx tile,
+                              std::vector<std::string>* log) {
+  const Coord c = s.dims.coord(tile);
+  TileIdx affected[1 + kNeighbourCount];
+  int count = 0;
+  affected[count++] = tile;
+  for (const Coord off : kNeighbourOffsets) {
+    const Coord n{static_cast<std::int16_t>(c.x + off.x), static_cast<std::int16_t>(c.y + off.y)};
+    if (s.dims.contains(n)) affected[count++] = s.dims.index(n);
+  }
+  for (int i = 0; i < count; ++i) {
+    Tile& t = s.tiles[affected[i]];
+    const int want = tile_population_yield_impl(s, rules, affected[i]);
+    const int delta = want - t.population_contribution;
+    if (delta == 0) continue;
+    t.population_contribution = static_cast<std::int8_t>(want);
+    if (t.city != kNoCity) add_population(s, rules, t.city, delta, log);
+  }
+}
+
+// Recomputes EVERY tile. For rare, sweeping changes -- a capture re-parents a whole city's
+// territory, border growth claims a ring -- where working out the affected patch is more
+// error-prone than just doing the board. A capture happens a few dozen times a game; 256 tiles
+// is nothing, and the audit's oracle found this exact gap by noticing a tile that had banked 3
+// population while the board said 2.
+void resync_population_board(GameState& s, const Rules& rules, std::vector<std::string>* log) {
+  for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+    Tile& tile = s.tiles[t];
+    const int want = tile_population_yield_impl(s, rules, t);
+    const int delta = want - tile.population_contribution;
+    if (delta == 0) continue;
+    tile.population_contribution = static_cast<std::int8_t>(want);
+    if (tile.city != kNoCity) add_population(s, rules, tile.city, delta, log);
+  }
+}
+
 // --- rounding ---------------------------------------------------------------------------
 
 // Round half AWAY FROM ZERO (resolutions.md R10). Derived from a documented Warrior-vs-
@@ -468,6 +524,12 @@ void claim_territory(GameState& s, CityId city_id, int radius) {
       tile.city = city_id;
     }
   }
+}
+
+void claim_territory_and_resync(GameState& s, const Rules& rules, CityId city_id, int radius,
+                                std::vector<std::string>* log) {
+  claim_territory(s, city_id, radius);
+  resync_population_board(s, rules, log);
 }
 
 // A city is connected when a road/port network links it to the capital. Each connection gives
@@ -1273,6 +1335,11 @@ void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     if (s.tiles[t].city == city_id) s.tiles[t].owner = new_owner;
   }
+  // Ownership is an INPUT to every adjacency yield -- `count_adjacent_improvements` only counts
+  // neighbours owned by the same player -- so re-parenting a city's territory silently changes
+  // what its border buildings are worth, and what the neighbouring player's are worth too.
+  // Nothing recomputed that, so a captured border left stale population banked on both sides.
+  resync_population_board(s, rules, log);
   // City level is retained. Population is NOT recomputed into a level change -- if the trade
   // network loss drives it negative it stays negative and the level holds (R17).
   if (c.has(CityFlag::Capital) && old_owner != kNoPlayer) {
@@ -1302,7 +1369,7 @@ void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward r
     case CityReward::PopulationGrowth: add_population(s, rules, city_id, 3, log); break;
     case CityReward::BorderGrowth:
       c.add(CityFlag::BorderGrown);
-      claim_territory(s, city_id, rules.grown_city_border);
+      claim_territory_and_resync(s, rules, city_id, rules.grown_city_border, log);
       break;
     case CityReward::Park: c.park_count = static_cast<std::uint8_t>(c.park_count + 1); break;
     case CityReward::Explorer:
@@ -1509,7 +1576,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
         c.owner = s.current_player;
         c.tile = actor_tile;
         c.level = 1;
-        claim_territory(s, city_id, rules.new_city_border);
+        claim_territory_and_resync(s, rules, city_id, rules.new_city_border, log);
         if (log) log->push_back("Captured a village");
       } else {
         const CityId city_id = city_at(s, actor_tile);
@@ -1545,14 +1612,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       const ImprovementStats& stats = rules.improvement(imp);
       s.me().stars -= stats.cost;
       tile.improvement = imp;
-      int population = stats.population;
-      // Adjacency buildings score off neighbours rather than carrying a flat yield.
-      if (stats.adjacency_source != Improvement::None) {
-        population = stats.adjacency_population *
-                     count_adjacent_improvements(s, actor_tile, stats.adjacency_source,
-                                                 s.current_player);
-      }
-      if (tile.city != kNoCity) add_population(s, rules, tile.city, population, log);
+      // The yield is NOT computed here. Placing the building changes the neighbourhood, and
+      // the neighbourhood is what decides every adjacency yield -- including the yields of
+      // buildings that were already standing. Recomputing the patch is what makes a Windmill
+      // built before its Farms come good when they arrive.
+      resync_population_around(s, rules, actor_tile, log);
       break;
     }
     case Verb::Train: {
@@ -1682,6 +1746,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       // because a captured city otherwise inherits everything.
       s.tiles[actor_tile].improvement = Improvement::None;
       s.tiles[actor_tile].improvement_level = 0;
+      // Scorched earth has to take the population BACK -- both this tile's own yield and any
+      // adjacency bonus it was feeding to a neighbouring Windmill, Sawmill or Forge. Destroy
+      // previously removed the building and left the population it had granted, so razing a
+      // Farm made the city keep the food.
+      resync_population_around(s, rules, actor_tile, log);
       if (log) log->push_back("Destroyed a building");
       break;
     }
@@ -2201,6 +2270,15 @@ bool has_any_available_action(const GameState& s, const Rules& rules) {
 // IMMEDIATELY -- the real game makes it a true modal, and the engine already refuses every
 // other verb while one is outstanding, so the UI has to surface it rather than let the player
 // wander off.
+int tile_population_yield(const GameState& s, const Rules& rules, TileIdx tile) {
+  return tile_population_yield_impl(s, rules, tile);
+}
+
+void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,
+                           std::vector<std::string>* log) {
+  capture_city(s, rules, city, new_owner, log);
+}
+
 CityId pending_reward_city(const GameState& s) {
   for (CityId c = 0; c < s.city_count; ++c) {
     if (s.cities[c].owner == s.current_player && s.cities[c].pending_rewards > 0) return c;
