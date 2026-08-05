@@ -289,7 +289,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* --- ruin / event result popup ---------------------------------------------- */
 
-.result-scrim { z-index: 80; background: #05070cdd; }
+/* Above the level-up (95): both can fire from one action — a ruin granting Population
+   levels a city — and the FIND has to be readable before the CHOICE it caused. */
+.result-scrim { z-index: 100; background: #05070cdd; }
 .result-popup { border-color: var(--gold); box-shadow: 0 0 0 1px #6b551b, 0 22px 70px #000d; text-align: center; }
 .result-kicker { font-size: 11px; letter-spacing: .22em; color: var(--gold); font-weight: 800; }
 .result-title { font-size: 26px; font-weight: 900; margin-top: 8px; color: #fff5d6; }

@@ -502,11 +502,17 @@ class App {
 
     await this.guarded(async () => {
       const view = await this.rpc('act', { tile, verb: o.verb, target });
-      await this.setState(view);
-      // A negative cost is a REFUND (Disband). "(★-1)" would read as a price of minus one.
+      // REPORT BEFORE setState. setState runs syncLevelUp, which raises the level-up scrim —
+      // a true modal with no dismiss path at z-index 95. A ruin that grants Population can
+      // level a city, so reporting afterwards opened the "here is what you found" popup
+      // UNDERNEATH an undismissable modal, and the player only saw it much later, out of
+      // context. That is the reproducible version of "you should see what you get from a
+      // ruin". The result scrim now also outranks the level-up (style.css), so when both
+      // fire the find is read first and the choice waits behind it.
       const money = !o.cost ? '' : o.cost < 0 ? ` (+★${-o.cost})` : ` (★${o.cost})`;
       appendLog(`${labelForLog(o)}${money}`, 'you', this.state.turn);
       this.reportActionLog(view);
+      await this.setState(view);
       if (techTreeOpen()) await this.refreshTechTree();
       if (!this.modalOpen() && keepTile >= 0) {
         await this.loadSelection(this.followTile(actorId, keepTile), keepLayer);

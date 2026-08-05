@@ -11,7 +11,7 @@ original plan and parts of it have been overtaken by what the build actually fou
 ./build/cli/poly-cli --match rulebased rb_base --games 400   A/B a bot change
 ./build/cli/poly-cli --ladder --games 4         round robin, ~18 min
 ./build/cli/poly-cli --ladder --games 6 --paper 2020 AIIDE format, ~4 min
-./build/core/tests/poly_tests                   89 tests
+./build/core/tests/poly_tests                   97 tests
 ```
 
 **Everything defaults to the setup a player actually gets**: 16×16, four tribes, fog on — in
@@ -61,7 +61,8 @@ That table is `--paper`. In the **default** format (16×16, four tribes, fog on)
 still wins every pairing 4-0, but the rest of the field reorders — `paper2020` drops from 2nd
 to 6th and loses a game to `random`. See §3; run both.
 
-**Verified.** 89 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN.
+**Verified.** 97 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN. Eight of those
+tests are new and were written to reproduce defects found by PLAYING — see §5.
 
 ---
 
@@ -159,10 +160,13 @@ is exactly the kind of thing that should be requested by name.
 
 | 400 games | `--paper` | default (the real game) |
 |---|---|---|
-| control (`rb_base` mirror) | 45.5% | 45.5% |
+| control (`rb_base` mirror) | 45.5% | 48.5% |
 | `rb_kill` (kill-not-wound only) | 59.8% | 56.0% |
-| **`rulebased` (shipped)** | **63.0%** | **60.0%** |
-| `rulebased` vs `random` | 100% (200-0) | 97% (97-3) |
+| **`rulebased` (shipped)** | **63.0%** | **60.5%** |
+| `rulebased` vs `random` | 100% (200-0) | 100% (100-0) |
+
+Re-measured after the §5 combat fixes (Escape, Persist), which change every agent's play:
+control 48.5%, `rulebased` 60.5%. The edge holds.
 
 **A trap worth recording, because I walked into it.** My first four-player design was "A takes
 one seat, B takes the other three" — the shape of the playtest itself. Two *identical* agents
@@ -255,7 +259,46 @@ stop-and-ask list** and the owner was present. The options, for that conversatio
 
 ---
 
-## 5. Known gaps
+---
+
+## 5. Defects found by PLAYING, fixed 2026-08-05
+
+Five reports from the owner playing the build. **Every one was invisible to the 89 tests that
+passed at the time**, and the reason is uncomfortable: the suite tested the paths the engine
+offers, and each of these is a case where the engine offered the wrong path, or none. §7's
+"almost every real bug was found by running the game, not by testing it" now has five more.
+
+Each has a regression test, and the tests are written to fail on the *specific* condition —
+which took two attempts, because the obvious repros all passed:
+
+| Report | What it actually was |
+|---|---|
+| "Healing can only be done for an entire turn, moving takes it away" | Recover was gated on `TurnEnded`, which `Verb::Move` sets for every unit **without Dash** — Defender, Catapult, Mind Bender, Giant. My first test used the starting Warrior, which *has* Dash, and passed. (R33) |
+| "Abilities like escape do not work" | `Verb::Move` zeroes `moves_left` unconditionally and nothing restored it, so a Rider that **rode in** and attacked could not retreat — while attacking from a standing start worked fine. My first test attacked from a standing start, and passed. (R34) |
+| — (found while investigating Escape) | **Persist was never implemented.** Declared in `content.hpp`, assigned to the Knight in `rules.cpp`, asserted in `test_content.cpp`, and `game.cpp` never mentioned it. The kill was computed two lines away and discarded. A Knight could never chain. (R35) |
+| "Population rewards for lvl 4 does not work" | The reward menu read the city's **current** level, but a city banks a *count* of level-ups. Crossing two thresholds at once answered every outstanding choice with the top level's menu, so level 4's Population Growth was unreachable. (R36) |
+| "You should see what you get from a ruin" | Two defects. `live.json` lists six ruin rewards and four were implemented — no Explorer, no naval unit, so a **water ruin** could only ever give stars/tech/population. And the "here is what you found" popup sat at `z-index: 80` under the level-up modal at `95`, while `commit()` raised the level-up *before* reporting — so a ruin granting Population buried its own popup. (R37) |
+
+All five are written up with authority levels in `docs/rules-research/resolutions.md` (R33–R37).
+R33 is an `OWNER` ruling that **overrides the wiki**, which phrases recovery as happening
+"instead of moving and/or attacking"; it is tagged `_unverified` accordingly.
+
+**Verified in the running game, not just in tests** — four distinct ruin rewards observed by
+walking a unit onto ruins across 25 seeds, including the new Explorer, all in the
+`Ruin: <title> -- <body>` shape the popup parses.
+
+### What this says about the test suite
+
+The suite is not weak, it is *aimed wrong*. It asserts that mechanics work when invoked, and
+every one of these bugs is about **reachability**: a verb the engine never offers, a skill never
+consulted, a menu that cannot show an entry, a popup rendered under an opaque modal. None of
+that is visible from inside a test that sets up the state it wants and calls the thing directly.
+
+The cheapest correction is what the new tests do deliberately: assert on the **enumerator**
+(`enumerate_options` / `legal_*`) rather than only on `apply()`, and pick fixtures adversarially
+— the Defender rather than the Warrior, move-then-attack rather than attack-from-rest.
+
+## 6. Known gaps
 
 - **No map-type presets.** Generation is smoothed-noise blobs against a land quota. Continents,
   Pangea, Archipelago, Lakes, Waterworld and their water bands do not exist. `land_ratio` is the
@@ -272,7 +315,7 @@ stop-and-ask list** and the owner was present. The options, for that conversatio
 
 ---
 
-## 6. Rules confidence
+## 7. Rules confidence
 
 `docs/rules-research/resolutions.md` is the file to read before touching any rule. It records
 every open question with an authority level and, critically, **59 values flagged `_unverified`
@@ -339,7 +382,7 @@ remembered rule, give the self-test a real hearing.
 
 ---
 
-## 7. What the build actually taught us
+## 8. What the build actually taught us
 
 Recorded because these change how the remaining phases should be approached.
 

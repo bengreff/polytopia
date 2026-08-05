@@ -394,6 +394,73 @@ visible tiles would both draw markers the engine rejects and leak the hidden uni
   yes; the UI research says enemy cities render a bare name plate. Probably compatible — bare
   plate on the map, detail in the panel — but implement both readings explicitly and verify.
 
+---
+
+## Resolved by the owner — round 5 (2026-08-05), from PLAYING the game
+
+Every entry here was reported by the owner playing the build, and every one was invisible to the
+89 tests that passed at the time. The suite tested the paths the engine offers; these are all
+cases where the engine offered the wrong path, or none.
+
+**R33 — A unit that has MOVED may still Recover.** `OWNER`
+Reported as "healing can only be done for an entire turn, moving takes it away as an option."
+
+Recover was gated on `UnitFlag::TurnEnded`, and `Verb::Move` sets that flag for every unit
+*without* Dash — Defender, Catapult, Mind Bender, Giant. So walking a wounded Defender back
+behind the line and then healing it, the ordinary defensive move, was impossible: the unit had
+to stand still for a whole turn instead.
+
+Recover is now gated on its own terms — not freshly trained, has not attacked, has not already
+healed — and needs `UnitFlag::HasRecovered` to hold that last clause, because `TurnEnded` is no
+longer load-bearing here and without a dedicated bit a unit could heal repeatedly.
+
+*Note the boundary:* attacking still precludes healing, since the attack is the unit's action.
+The wiki phrases this as recovering "instead of moving and/or attacking", which reads the
+stricter way; the owner's ruling from play is the stronger authority and is recorded as such.
+
+**R34 — Escape grants a FRESH move after attacking.** `DERIVED` + `OWNER`
+Reported as "abilities like escape do not work."
+
+`Verb::Move` zeroes `moves_left` unconditionally, and nothing restored it, so a Rider that rode
+in and attacked could not retreat — while attacking from a standing start worked. `moves_left`
+was silently doing double duty as an undeclared "has moved" gate, contradicting
+`live-rules.md` §2.3: *"A Dash+Escape unit (the Rider) therefore gets move → attack → move."*
+The attack now restores the move budget for an Escape unit. Self-limiting: the retreat re-zeroes
+it and sets `TurnEnded`, so there is no second escape and no attack afterwards.
+
+**R35 — Persist lets a Knight attack again after a KILL.** `CORROBORATED`
+`Skill::Persist` was declared in `content.hpp`, assigned to the Knight in `rules.cpp` and
+asserted in `test_content.cpp` — and `game.cpp` never referenced it, so a Knight's turn ended on
+its first kill like anything else. The kill was even computed two lines earlier and discarded.
+Bounded by construction: it re-arms only on a kill, and kills are finite.
+
+**R36 — The level-up menu follows the level the reward was EARNED at, not the city's current
+level.** `DERIVED`
+Reported as "population rewards for lvl 4 does not work."
+
+A city banks a *count* of outstanding level-ups, and both reward menus read `c.level` directly.
+A city that crossed two thresholds in one step — a fat harvest, a capture, or Population Growth
+itself pushing it over — answered *every* outstanding choice with the menu for its current
+level, so the lower level's reward could never be taken. Reaching 5 in the same step offered
+Park / Super Unit twice and level 4's Population Growth never appeared.
+
+No new state was needed: with `pending` outstanding and the city at `level`, those rewards were
+earned at levels `level-pending+1 .. level`, so the next to resolve is the first of those.
+
+**R37 — Ruins grant Explorer and, on water, a veteran Rammer.** `CORROBORATED`
+Reported as "you should see what you get from a ruin."
+
+Two separate defects. The reward pool in `live.json` lists six outcomes and only four were
+implemented — no Explorer, and no naval unit — so a ruin on water could yield nothing but stars,
+tech or population. `run_explorer()` already existed and was reachable only from a city
+level-up. Both are now in the pool, and the land/water gift is hulled for the terrain.
+
+The second was pure UI: the "here is what you found" popup sits at `z-index: 80` and the
+level-up modal at `95`, and `commit()` called `setState` (which raises the level-up) *before*
+reporting the log. A ruin granting Population can level a city, so the find opened underneath an
+undismissable modal and was only seen much later, out of context. Reporting now happens first
+and the result scrim outranks the level-up.
+
 ## Source hazard
 
 A widely-circulated post presenting itself as the 2.8.6 changelog contains *"Seeing opponent's

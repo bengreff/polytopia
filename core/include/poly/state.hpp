@@ -77,6 +77,11 @@ enum class UnitFlag : std::uint16_t {
   Embarked = 1u << 4,    // Carried by a naval hull; see `carried_type`.
   FreshlyTrained = 1u << 5,  // Cannot act until next turn (R2).
   ArrivedThisTurn = 1u << 6,  // Blocks Capture and Examine, which need a turn start here (R25).
+  // Recover is NOT gated on TurnEnded, because moving sets that flag for any unit without
+  // Dash and healing after a retreat has to stay legal (R33). It therefore needs its own
+  // "already healed this turn" bit -- without one, dropping the TurnEnded gate would let a
+  // unit heal repeatedly in a single turn.
+  HasRecovered = 1u << 7,
 };
 
 struct Unit {

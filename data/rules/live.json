@@ -643,6 +643,7 @@
     "resources.lighthouse.terrain",
     "resources.ruin.reward_distribution",
     "resources.ruin.granted_units_are_veteran",
+    "combat.recover_allowed_after_moving",
     "city.border_growth_radius",
     "city.border_growth_claims_owned_tiles",
     "city.surplus_population_carries_over",

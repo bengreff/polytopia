@@ -101,6 +101,42 @@ CityId city_at(const GameState& s, TileIdx tile) {
   return kNoCity;
 }
 
+// May this unit heal right now?
+//
+// Deliberately NOT gated on UnitFlag::TurnEnded. Moving sets that flag for every unit without
+// Dash -- Defender, Catapult, Mind Bender, Giant -- so gating Recover on it meant "healing
+// costs a whole turn standing still", and walking a wounded Defender back behind the line and
+// then healing it was impossible. That is the ordinary defensive move (R33, owner-reported
+// from play).
+//
+// What it IS gated on: having attacked (the attack is the unit's action for the turn), being
+// freshly trained, and having already healed -- the last needing its own flag precisely
+// because TurnEnded is no longer load-bearing here.
+// Which level's reward menu is owed next.
+//
+// A city banks a COUNT of outstanding level-ups, not a list of levels, and both menus used to
+// read `c.level` directly. So a city that crossed two thresholds at once -- a fat harvest, a
+// capture, or Population Growth itself pushing it over -- answered every outstanding choice
+// with the menu for its CURRENT level, and the lower level's reward could never be taken.
+// That is why "Population Growth at level 4 does not work": a city that reached 5 in the same
+// step was offered Park / Super Unit twice.
+//
+// No new state needed: with `pending` outstanding and the city now at `level`, those rewards
+// were earned at levels level-pending+1 .. level, and the next to resolve is the first.
+int reward_menu_level(const City& c) {
+  const int earned_at = c.level - c.pending_rewards + 1;
+  return std::clamp(earned_at, 2, 15);
+}
+
+bool may_recover(const GameState& s, const Rules& rules, UnitId unit) {
+  if (unit == kNoUnit) return false;
+  const Unit& u = s.units[unit];
+  if (!u.alive() || u.owner != s.current_player) return false;
+  if (u.has(UnitFlag::FreshlyTrained) || u.has(UnitFlag::HasAttacked)) return false;
+  if (u.has(UnitFlag::HasRecovered)) return false;
+  return u.hp < max_hp_for(rules, u);
+}
+
 bool unit_can_act(const GameState& s, UnitId unit) {
   if (unit == kNoUnit) return false;
   const Unit& u = s.units[unit];
@@ -518,6 +554,7 @@ void begin_turn(GameState& s, const Rules& rules) {
     unit.remove(UnitFlag::HasAttacked);
     unit.remove(UnitFlag::TurnEnded);
     unit.remove(UnitFlag::ArrivedThisTurn);
+    unit.remove(UnitFlag::HasRecovered);
     // Clears here, not on spawn: the unit becomes usable on the owner's NEXT turn.
     unit.remove(UnitFlag::FreshlyTrained);
   }
@@ -781,7 +818,11 @@ Availability can_harvest(const GameState& s, const Rules& rules, TileIdx tile_id
 void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
   BlockReason scratch = BlockReason::None;
   for (UnitId u = 0; u < s.unit_count; ++u) {
-    if (unit_can_act(s, u)) mask.set(tile_to_slot(s.units[u].tile));
+    // `may_recover` is a SEPARATE clause because a unit that has moved is no longer
+    // `unit_can_act` -- yet healing it is still legal. Omitting this left the option
+    // enumerator offering Recover on a unit the selector would not hand out, which apply()
+    // then refused: a button in the UI that does nothing.
+    if (unit_can_act(s, u) || may_recover(s, rules, u)) mask.set(tile_to_slot(s.units[u].tile));
   }
   for (CityId c = 0; c < s.city_count; ++c) {
     const City& city = s.cities[c];
@@ -974,7 +1015,7 @@ void legal_targets(const GameState& s, const Rules& rules, ActionMask& mask) {
     }
     case Verb::ChooseReward: {
       const CityId city_id = city_at(s, tile_idx);
-      const int level = s.cities[city_id].level;
+      const int level = reward_menu_level(s.cities[city_id]);
       // live-rules.md §4.3. Levels 5+ repeat the Park / SuperUnit choice.
       if (level == 2) {
         mask.set(reward_to_slot(CityReward::Workshop));
@@ -1369,11 +1410,37 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       if (!a.alive()) {
         kill_unit(s, attacker);
       } else {
-        a.add(UnitFlag::HasAttacked);
+        const auto skills = static_cast<Skill>(rules.unit(a.type).skills);
+        // PERSIST: a Knight that KILLS keeps its attack (live-rules.md §2.3). This is what
+        // lets one Knight run a line of wounded units, and it was declared in content.hpp,
+        // assigned to the Knight in rules.cpp and asserted in test_content -- while game.cpp
+        // never mentioned the skill at all, so every Knight's turn ended on its first kill.
+        // Bounded by construction: it only re-arms on a kill, and kills are finite.
+        //
+        // Written as a condition rather than an early `break`: breaking here would skip the
+        // update_siege_flags() below and leave a city's Besieged flag stale after a Knight
+        // cleared the unit standing on it -- a silent income bug.
+        const bool persists = killed && has_skill(skills, Skill::Persist);
         a.moves_used = 1;
-        // Attacking ends the turn unless the unit has Escape (R26).
-        if (!has_skill(static_cast<Skill>(rules.unit(a.type).skills), Skill::Escape)) {
+        if (persists) {
+          // Keep the attack AND the ability to keep riding: Persist is a chain, and a Knight
+          // that killed something adjacent has usually just advanced onto its tile.
+          a.moves_left = static_cast<std::uint8_t>(rules.unit(a.type).move);
+        } else if (!has_skill(skills, Skill::Escape)) {
+          a.add(UnitFlag::HasAttacked);
+          // Attacking ends the turn unless the unit has Escape (R26).
           a.add(UnitFlag::TurnEnded);
+        } else {
+          a.add(UnitFlag::HasAttacked);
+          // ESCAPE grants a FRESH retreat move. `moves_left` was already spent if the unit
+          // rode in to make this attack (Verb::Move zeroes it), and nothing restored it -- so
+          // move -> attack -> move, the Rider's entire reason for having both Dash and Escape,
+          // was dead while attack -> move worked. That asymmetry is why the first test of
+          // Escape passed: it attacked from a standing start.
+          //
+          // Self-limiting: the retreat Move re-zeroes the budget and, because HasAttacked is
+          // now set, also sets TurnEnded -- so there is no second escape and no attack after.
+          a.moves_left = static_cast<std::uint8_t>(rules.unit(a.type).move);
         }
       }
       update_siege_flags(s);
@@ -1481,6 +1548,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       const int amount = (s.tiles[actor_tile].owner == u.owner) ? 4 : 2;
       u.hp = static_cast<std::int16_t>(
           std::min(max_hp_for(rules, u), u.hp + amount * kHpScale));
+      u.add(UnitFlag::HasRecovered);
       u.add(UnitFlag::TurnEnded);
       u.moves_left = 0;
       if (log) log->push_back("Recovered " + std::to_string(amount) + " HP");
@@ -1573,7 +1641,12 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       // state-dependent, so the effective distribution shifts with game state. Drawn from the
       // STATE's rng so replays reproduce. UNRESOLVED #17: v2.16.3 says "changed how ruin
       // rewards are calculated" with no detail, so the uniform claim may be stale.
-      enum Reward { kResources, kScrolls, kPopulation, kNewFriends, kRewardCount };
+      // The rules DATA lists six ruin rewards (live.json resources.ruin.rewards: resources,
+      // scrolls_of_wisdom, population, explorer, new_friends, rammer) and the audit documents
+      // the water case as a veteran Rammer (polyenv-audit.md). Only four were implemented, so
+      // a ruin on water could yield nothing but stars, tech or population -- the two naval and
+      // exploratory outcomes simply did not exist.
+      enum Reward { kResources, kScrolls, kPopulation, kNewFriends, kExplorer, kRewardCount };
       int eligible[kRewardCount];
       int count = 0;
       eligible[count++] = kResources;  // always available
@@ -1601,7 +1674,10 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       if (capital != kNoCity) eligible[count++] = kPopulation;
 
       const bool on_water = tile.terrain == Terrain::Water || tile.terrain == Terrain::Ocean;
-      if (!on_water && s.unit_count < kMaxUnits) eligible[count++] = kNewFriends;
+      // New Friends is a veteran Swordsman on land and a veteran Rammer at sea -- the same
+      // reward, hulled for the terrain it has to stand on.
+      if (s.unit_count < kMaxUnits) eligible[count++] = kNewFriends;
+      eligible[count++] = kExplorer;
 
       const int choice = eligible[s.rng.bounded(static_cast<std::uint32_t>(count))];
       switch (choice) {
@@ -1614,16 +1690,17 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
           if (log) log->push_back("Ruin: Population -- +3 to your capital");
           break;
         case kNewFriends: {
-          // A VETERAN Swordsman. Before 2.0.58 this was a Giant; do not reintroduce that.
+          // A VETERAN Swordsman on land, a veteran Rammer on water. Before 2.0.58 the land
+          // reward was a Giant; do not reintroduce that.
+          const UnitType gift = on_water ? UnitType::Rammer : UnitType::Swordsman;
           const UnitId id = s.unit_count++;
           Unit& u = s.units[id];
           u = Unit{};
-          u.type = UnitType::Swordsman;
-          u.carried_type = UnitType::Swordsman;
+          u.type = gift;
+          u.carried_type = gift;
           u.owner = s.current_player;
           u.tile = kNoTile;
-          u.hp = to_hp(rules.unit(UnitType::Swordsman).hp +
-                       static_cast<int>(rules.veteran_hp_bonus));
+          u.hp = to_hp(rules.unit(gift).hp + static_cast<int>(rules.veteran_hp_bonus));
           u.add(UnitFlag::Veteran);
           u.add(UnitFlag::FreshlyTrained);
           // The examining unit still occupies the ruin tile, so place the gift adjacent.
@@ -1644,10 +1721,18 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
             s.me().stars += 10;
             if (log) log->push_back("Ruin: Resources -- +10 stars");
           } else if (log) {
-            log->push_back("Ruin: New Friends -- a veteran Swordsman");
+            log->push_back(std::string("Ruin: New Friends -- a veteran ") +
+                           (on_water ? "Rammer" : "Swordsman"));
           }
           break;
         }
+        case kExplorer:
+          // The same event the level-2 city reward runs: reveals a swathe of map, spawns
+          // nothing. run_explorer() already existed and was reachable only from a city
+          // level-up, never from a ruin.
+          run_explorer(s, rules, s.current_player, actor_tile, log);
+          if (log) log->push_back("Ruin: Explorer -- a stretch of the map revealed");
+          break;
         default:
           s.me().stars += 10;
           if (log) log->push_back("Ruin: Resources -- +10 stars");
@@ -1838,9 +1923,10 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
       }
     }
 
-    // Recover -- always offered on a damaged unit that has not acted.
+    // Recover -- offered on a damaged unit that has not attacked or already healed. See
+    // may_recover(): moving does NOT take this away.
     if (u.hp < max_hp_for(rules, u)) {
-      const bool can = spent == BlockReason::None;
+      const bool can = may_recover(s, rules, id);
       const auto status = can ? Availability::Available : Availability::Blocked;
       if (keep(status, include_unavailable)) {
         Option o = make_option(Verb::Recover, Layer::Unit, 0, status,
@@ -1937,7 +2023,7 @@ void enumerate_options(const GameState& s, const Rules& rules, TileIdx tile, Lay
 
     if (c.pending_rewards > 0) {
       // A pending level-up blocks everything else, so offer only the choice.
-      const int level = c.level;
+      const int level = reward_menu_level(c);
       CityReward a = CityReward::Park;
       CityReward b = CityReward::SuperUnit;
       if (level == 2) { a = CityReward::Workshop; b = CityReward::Explorer; }
