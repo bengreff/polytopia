@@ -47,7 +47,10 @@ void legal_actions(const GameState& s, const Rules& rules, ActionMask& mask);
 
 // Applies one action. Returns false if it was not legal, leaving the state untouched.
 // `log` receives human-readable lines for the UI's action feed; pass nullptr to skip.
-bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log);
+// `precomputed` is the legality mask for THIS state, when the caller already has it. Passing
+// it skips recomputation -- it does not skip validation, so legality remains the engine's job.
+bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log,
+           const ActionMask* precomputed = nullptr);
 
 // nullopt while the game is ongoing. See outcome.hpp for why this is not a float.
 MaybeOutcome outcome(const GameState& s, const Rules& rules);

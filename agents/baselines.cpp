@@ -39,7 +39,7 @@ float rollout(GameState s, ForwardModel& model, PlayerId seat, Pcg32& rng, int d
     ActionMask mask;
     legal_actions(s, model.rules(), mask);
     if (mask.empty()) break;
-    if (!model.step(s, sample_uniform(mask, rng))) break;  // budget gone
+    if (!model.step(s, sample_uniform(mask, rng), &mask)) break;  // budget gone
   }
   return evaluate_leaf(s, model.rules(), seat, w);
 }
@@ -71,7 +71,9 @@ class OslaAgent final : public Agent {
 
     for (int i = 0; i < count; ++i) {
       GameState next = s;
-      if (!model.step(next, Action{slots[i]})) break;
+      // `mask` was computed for `s`, and `next` is a clone of it, so validation need not be
+      // repeated -- that was about half the cost of a node.
+      if (!model.step(next, Action{slots[i]}, &mask)) break;
       const float value = evaluate_leaf(next, model.rules(), seat, weights_);
       // Ties broken randomly, or the agent becomes a deterministic slot-order follower and
       // its measured strength turns into an artefact of enum declaration order.
@@ -106,7 +108,7 @@ class MonteCarloAgent final : public Agent {
       int done = 0;
       for (int r = 0; r < per_action && !model.exhausted(); ++r) {
         GameState next = s;
-        if (!model.step(next, Action{slots[i]})) break;
+        if (!model.step(next, Action{slots[i]}, &mask)) break;
         total += rollout(next, model, seat, rng_, kRolloutDepth, weights_);
         ++done;
       }
@@ -300,7 +302,7 @@ class RheaAgent final : public Agent {
         action = sample_uniform(mask, rng_);
         plan[i] = action.index;
       }
-      if (!model.step(working, action)) break;
+      if (!model.step(working, action, &mask)) break;
     }
     return evaluate_leaf(working, model.rules(), seat, weights_);
   }
@@ -337,7 +339,7 @@ class RuleBasedAgent final : public Agent {
     float best_score = -1e30f;
     for (int i = 0; i < count; ++i) {
       GameState next = s;
-      if (!model.step(next, Action{slots[i]})) break;
+      if (!model.step(next, Action{slots[i]}, &mask)) break;
       float score = evaluate_leaf(next, model.rules(), seat, weights_);
 
       // Expansion bias: the shipped bots grab villages far more eagerly than a balanced

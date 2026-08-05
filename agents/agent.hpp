@@ -36,10 +36,10 @@ class ForwardModel {
   // The ONLY way an agent may advance a state. Returns false when the budget is gone, so a
   // search that ignores the return value degrades into "stop expanding" rather than
   // silently overspending.
-  bool step(GameState& s, Action action) {
+  bool step(GameState& s, Action action, const ActionMask* mask = nullptr) {
     if (exhausted()) return false;
     ++spent_;
-    return apply(s, rules_, action, nullptr);
+    return apply(s, rules_, action, nullptr, mask);
   }
 
   [[nodiscard]] const Rules& rules() const { return rules_; }

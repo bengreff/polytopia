@@ -804,7 +804,15 @@ void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
       mask.set(tile_to_slot(t));
       continue;
     }
-    for (int i = 1; i < static_cast<int>(Improvement::Count); ++i) {
+    // Hoist the territory test OUT of the improvement loop. Every tile used to be tried
+    // against all 15 improvements even in enemy territory, where nothing is ever buildable.
+    // This is the hot path: legal_actions is called once per search node, so a constant
+    // factor here is a constant factor on every agent in the ladder.
+    const PlayerId owner = s.tiles[t].owner;
+    if (owner != s.current_player && owner != kNoPlayer) continue;  // enemy: nothing at all
+    const int first = (owner == s.current_player) ? 1 : static_cast<int>(Improvement::Road);
+    const int last = static_cast<int>(Improvement::Count);
+    for (int i = first; i < last; ++i) {
       if (can_build(s, rules, t, static_cast<Improvement>(i), scratch) == Availability::Available) {
         mask.set(tile_to_slot(t));
         break;
@@ -1237,10 +1245,18 @@ void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward r
 
 }  // namespace
 
-bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log) {
-  ActionMask mask;
-  legal_actions(s, rules, mask);
-  if (action.index < 0 || action.index >= kActionSlots || !mask.test(action.index)) return false;
+bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log,
+           const ActionMask* precomputed) {
+  // Legality is still the engine's job -- this only avoids RECOMPUTING it. A search has
+  // already built the mask for exactly this state in order to pick the action, and paying
+  // for it a second time inside apply was roughly half the cost of a search node.
+  ActionMask local;
+  const ActionMask* mask = precomputed;
+  if (mask == nullptr) {
+    legal_actions(s, rules, local);
+    mask = &local;
+  }
+  if (action.index < 0 || action.index >= kActionSlots || !mask->test(action.index)) return false;
 
   const int index = action.index;
 
