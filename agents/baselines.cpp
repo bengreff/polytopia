@@ -467,6 +467,17 @@ class RuleBasedAgent final : public Agent {
   }
   const char* name() const override { return name_; }
 
+  // The declined-actor set is the only state this agent carries between decisions, and it must
+  // NOT carry between games. `seed()` is the per-game reset hook every agent already gets, so
+  // clearing here is what makes "agents are stateless across games" (agent.hpp) true of this
+  // one rather than merely intended.
+  void seed(std::uint64_t value) override {
+    Agent::seed(value);
+    for (auto& word : declined_) word = 0;
+    declined_turn_ = -1;
+    declined_player_ = kNoPlayer;
+  }
+
  private:
   RuleBasedFlags flags_;
   const char* name_;

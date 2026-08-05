@@ -14,6 +14,20 @@
 
 namespace poly::agents {
 
+// THESE DEFAULTS ARE THE 2020 PAPER'S FORMAT, NOT THE GAME'S.
+//
+// 11x11, two players, full observability, 50-turn cap. That is deliberate and must stay --
+// the Phase 1 anchors are only comparable to the published table under the published setup.
+//
+// But it is NOT what `GameConfig` gives you when you press New Game (16x16, four tribes, fog
+// on, no turn limit), and for a long time it was the ONLY setup the harness could express:
+// `play_one` hardcoded two players, and the CLI had no flag for size, seats or fog. So every
+// measured number described a format nobody plays, and the format people do play was
+// unmeasured. game.cpp's own GameConfig comment predicted the cost of exactly this: "testing
+// against the wrong default hides whole classes of problem (village density, multi-front war,
+// naval relevance)."
+//
+// `playtest_default()` below is the other setup. Measure in both.
 struct MatchConfig {
   int games{20};
   int budget{2000};        // forward-model calls per decision, as in the 2020 paper
@@ -25,6 +39,24 @@ struct MatchConfig {
   std::uint64_t seed{1};
   Tribe tribe_a{Tribe::XinXi};
   Tribe tribe_b{Tribe::Imperius};
+
+  // Seats beyond the first are filled by agent B, so `play_match(a, b, ...)` reads as "one A
+  // against a field of B" -- which is the shape of the thing being playtested: a human on one
+  // seat against three bots.
+  int player_count{2};
+
+  // What a player actually gets from New Game. Keep in lockstep with GameConfig.
+  static MatchConfig playtest_default() {
+    MatchConfig cfg;
+    cfg.dims = MapDims{16, 16};
+    cfg.player_count = 4;
+    cfg.fog = true;
+    // The real game has no limit; a harness must have one or a stalemate hangs the run. This
+    // is a BACKSTOP, not a rule -- if matches routinely reach it, that is a finding about the
+    // agents, not a setting to raise.
+    cfg.turn_limit = 100;
+    return cfg;
+  }
 };
 
 struct MatchResult {

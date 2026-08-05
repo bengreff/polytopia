@@ -709,16 +709,31 @@ int main(int argc, char** argv) {
     std::string error;
     load_rules(g_rules_path, rules, error);
 
+    // `--playtest` FIRST, so the explicit flags below can still override individual fields of
+    // it. This switch is the whole point: without it the harness could only express the 2020
+    // paper's 11x11 two-player fog-off format, which is not what anyone plays.
     agents::MatchConfig cfg;
+    for (int i = 1; i < argc; ++i) {
+      if (std::string(argv[i]) == "--playtest") cfg = agents::MatchConfig::playtest_default();
+    }
     cfg.games = games;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       if (arg == "--budget" && i + 1 < argc) cfg.budget = std::atoi(argv[++i]);
       if (arg == "--turns" && i + 1 < argc) cfg.turn_limit = std::atoi(argv[++i]);
+      if (arg == "--players" && i + 1 < argc) cfg.player_count = std::atoi(argv[++i]);
+      if (arg == "--fog") cfg.fog = true;
+      if (arg == "--no-fog") cfg.fog = false;
+      if (arg == "--size" && i + 1 < argc) {
+        const int n = std::atoi(argv[++i]);
+        cfg.dims = MapDims{static_cast<std::int16_t>(n), static_cast<std::int16_t>(n)};
+      }
       if (arg == "--seed" && i + 1 < argc) {
         cfg.seed = static_cast<std::uint64_t>(std::atoi(argv[++i]));
       }
     }
+    std::printf("setup: %dx%d, %d players, fog %s, turn limit %d\n", cfg.dims.width,
+                cfg.dims.height, cfg.player_count, cfg.fog ? "on" : "off", cfg.turn_limit);
 
     if (mode == "--match") {
       auto a = agents::make_agent(agent_a);
@@ -763,6 +778,8 @@ int main(int argc, char** argv) {
   std::printf("  --ladder [N]         round robin over all baselines, N games per pairing\n");
   std::printf("  --games N            games per pairing\n");
   std::printf("  --budget N           forward-model calls per decision (default 2000)\n");
+  std::printf("  --playtest           the DEFAULT GAME setup: 16x16, 4 players, fog on\n");
+  std::printf("  --size N / --players N / --fog / --no-fog / --turns N\n");
   std::printf("  --turns N            turn limit per match game (default 60)\n");
   std::printf("  --rules <path>       rule data file (default data/rules/live.json)\n");
   std::printf("\n  agents: ");

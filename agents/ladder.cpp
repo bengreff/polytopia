@@ -10,22 +10,41 @@
 namespace poly::agents {
 namespace {
 
-// One game. `seat_of_a` says which side agent A plays, so the caller can alternate.
 struct GameOutcome {
   PlayerId winner{kNoPlayer};
   int turns{0};
 };
 
+// Which agent owns a seat, given the game's parity.
+//
+// SEATS ARE SPLIT EVENLY, not one-against-the-field. The obvious design for a four-player
+// match is "A takes one seat, B takes the other three" -- it is even the shape of the thing
+// being playtested, one human against three bots -- and it is a trap: two IDENTICAL agents
+// then score 25%, so every result has to be read against a null that moves with player count.
+// I ran exactly that and briefly read 31.5% as a catastrophic regression when it was in fact
+// above the null. Splitting the seats keeps 50% meaning "equal strength" at every player count,
+// which is the only way these numbers stay comparable to the two-player ladder.
+//
+// Alternating by seat index also means neither agent is systematically first to move.
+bool seat_belongs_to_a(PlayerId seat, int parity) { return ((seat + parity) % 2) == 0; }
+
+// One game. `parity` selects which half of the seats agent A plays.
 GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& cfg,
-                     std::uint64_t seed, PlayerId seat_of_a) {
+                     std::uint64_t seed, int parity) {
   GameConfig setup;
   setup.dims = cfg.dims;
   setup.seed = seed;
-  setup.player_count = 2;
+  setup.player_count = std::clamp(cfg.player_count, 2, kMaxPlayers);
   setup.turn_limit = cfg.turn_limit;
   setup.fog = cfg.fog;
+  // Distinct tribes for every seat. The two named tribes go to the contested seats; the rest
+  // walk the tribe list so a four-player game is not three copies of Imperius, whose starting
+  // resources would make the extra seats correlated rather than independent opponents.
   setup.tribes[0] = cfg.tribe_a;
   setup.tribes[1] = cfg.tribe_b;
+  for (int p = 2; p < setup.player_count; ++p) {
+    setup.tribes[p] = static_cast<Tribe>(p % static_cast<int>(Tribe::Count));
+  }
 
   GameState s;
   std::string error;
@@ -71,7 +90,7 @@ GameOutcome play_one(Agent& a, Agent& b, const Rules& rules, const MatchConfig& 
       continue;
     }
 
-    Agent& mover = (s.current_player == seat_of_a) ? a : b;
+    Agent& mover = seat_belongs_to_a(s.current_player, parity) ? a : b;
     // A FRESH budget per decision, which is what the paper's 2000-call figure means.
     ForwardModel model(rules, cfg.budget);
     const Action action = mover.choose(s, model, mask, s.current_player);
@@ -122,18 +141,18 @@ MatchResult play_match(Agent& a, Agent& b, const Rules& rules, const MatchConfig
   long long total_turns = 0;
 
   for (int g = 0; g < cfg.games; ++g) {
-    // Alternate seats. Without this, any map-generation asymmetry between seat 0 and seat 1
-    // is indistinguishable from a skill difference -- and seat 0 moves first, which is a real
-    // advantage in this game.
-    const PlayerId seat_of_a = static_cast<PlayerId>(g % 2);
+    // Swap which half of the seats A holds every game. Without this, any map-generation
+    // asymmetry between seats is indistinguishable from a skill difference -- and seat 0 moves
+    // first, which is a real advantage in this game.
+    const int parity = g % 2;
     const std::uint64_t seed = cfg.seed + static_cast<std::uint64_t>(g);
-    const GameOutcome outcome_of_game = play_one(a, b, rules, cfg, seed, seat_of_a);
+    const GameOutcome outcome_of_game = play_one(a, b, rules, cfg, seed, parity);
 
     ++result.games;
     total_turns += outcome_of_game.turns;
     if (outcome_of_game.winner == kNoPlayer) {
       ++result.draws;
-    } else if (outcome_of_game.winner == seat_of_a) {
+    } else if (seat_belongs_to_a(outcome_of_game.winner, parity)) {
       ++result.wins_a;
     } else {
       ++result.wins_b;

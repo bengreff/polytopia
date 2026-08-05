@@ -6,11 +6,19 @@ original plan and parts of it have been overtaken by what the build actually fou
 **Run it:** `./run.sh`, then open <http://localhost:8080>.
 
 ```
-./build/cli/poly-cli --selfplay 20            whole-engine smoke test
+./build/cli/poly-cli --selfplay 20             whole-engine smoke test
 ./build/cli/poly-cli --match rulebased random --games 20
-./build/cli/poly-cli --ladder --games 8        round robin, ~10 min
-./build/core/tests/poly_tests                  89 tests
+./build/cli/poly-cli --match rulebased rb_base --games 400 --playtest    A/B a bot change
+./build/cli/poly-cli --ladder --games 6         round robin, ~4 min
+./build/core/tests/poly_tests                   89 tests
 ```
+
+**`--playtest` runs the setup a player actually gets** (16×16, four tribes, fog on). Without it
+you get the 2020 paper's format (11×11, two players, fog off) — correct for the Phase 1
+anchors, but not what anyone plays. Every match prints its setup line; read it. See §3.
+
+**A/B a bot change against `rb_base` AND against an `rb_base` mirror control** — mirror controls
+sit anywhere in 45–52%, so 50% is not the null. See §3.
 
 ---
 
@@ -105,7 +113,55 @@ ladder.
 
 ---
 
-## 3. The browser opponent was playing at random
+## 3. The harness could only measure a format nobody plays
+
+Everything in §2 was first measured in the **2020 paper's format** — 11×11, two players, fog
+**off**, 50-turn cap — because that was the only format the harness could express. `play_one`
+hardcoded `player_count = 2`, and the CLI had no flag for size, seats or fog. The setup a
+player actually gets from New Game — **16×16, four tribes, fog on, no turn limit** — had never
+been measured at all.
+
+`game.cpp`'s own `GameConfig` comment called this exact shot: *"testing against the wrong
+default hides whole classes of problem (village density, multi-front war, naval relevance)."*
+
+Added `--playtest`, plus `--size`, `--players`, `--fog`/`--no-fog`, `--turns`. Every match now
+prints its setup line first, so a result can never again be read without knowing what produced
+it. The paper defaults are unchanged — they must stay for the Phase 1 anchors to mean anything.
+
+### The results do hold, but only after fixing how they were counted
+
+**Read A/B results against a measured control, never against 50%.** Mirror controls scatter:
+`random` 49.8%, `paper2020` 52.1%, `rb_base` 45.5% (400 games each, ±2.5%).
+
+| 400 games | paper format | playtest format |
+|---|---|---|
+| control (`rb_base` mirror) | 45.5% | 45.5% |
+| `rb_kill` (kill-not-wound only) | 59.8% | 56.0% |
+| **`rulebased` (shipped)** | **63.0%** | **60.0%** |
+| `rulebased` vs `random` | 100% (200-0) | 97% (97-3) |
+
+**A trap worth recording, because I walked into it.** My first four-player design was "A takes
+one seat, B takes the other three" — the shape of the playtest itself. Two *identical* agents
+then score **25%**, not 50%. I read the resulting 31.5% as a catastrophic regression before
+noticing it was above the null. Seats are now split evenly between the two agents at every
+player count, so 50% means "equal strength" everywhere and the numbers stay comparable to the
+two-player ladder.
+
+### Two things the playtest format shows that the paper format cannot
+
+- **Games run much longer: mean 63 turns against 23 in the paper format**, with many reaching
+  the 100-turn backstop and being settled on *score* rather than domination. The bot is tuned
+  and measured almost entirely on domination play. Score-mode endgame is unexamined.
+- **The bot sees through fog.** Fog is applied at *serialisation* time — `state_view_json(...,
+  viewer)` — for the human UI only. Agents always receive the true `GameState`, in the ladder
+  and in `advance_bots` alike. So with `fog: true`, the human is fogged and the opponent is
+  not. That may be an acceptable choice (many games let bots cheat) but it is currently
+  undocumented, and it means "fog on" is not a symmetric condition. There is no fogged-state
+  projection for agents to consume if we ever want one.
+
+---
+
+## 4. The browser opponent was playing at random
 
 **This was the largest gap between "the bot is good" and "the game is playable", and no amount
 of agent work would have closed it.** `advance_bots()` in `cli/main.cpp` — the function that
@@ -140,7 +196,7 @@ stop-and-ask list** and the owner was present. The options, for that conversatio
 
 ---
 
-## 4. Known gaps
+## 5. Known gaps
 
 - **No map-type presets.** Generation is smoothed-noise blobs against a land quota. Continents,
   Pangea, Archipelago, Lakes, Waterworld and their water bands do not exist. `land_ratio` is the
@@ -157,7 +213,7 @@ stop-and-ask list** and the owner was present. The options, for that conversatio
 
 ---
 
-## 5. Rules confidence
+## 6. Rules confidence
 
 `docs/rules-research/resolutions.md` is the file to read before touching any rule. It records
 every open question with an authority level and, critically, **59 values flagged `_unverified`
@@ -224,7 +280,7 @@ remembered rule, give the self-test a real hearing.
 
 ---
 
-## 6. What the build actually taught us
+## 7. What the build actually taught us
 
 Recorded because these change how the remaining phases should be approached.
 
