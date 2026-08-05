@@ -709,12 +709,13 @@ int main(int argc, char** argv) {
     std::string error;
     load_rules(g_rules_path, rules, error);
 
-    // `--playtest` FIRST, so the explicit flags below can still override individual fields of
-    // it. This switch is the whole point: without it the harness could only express the 2020
-    // paper's 11x11 two-player fog-off format, which is not what anyone plays.
+    // Preset FIRST, so the individual flags below can still override fields of it. The default
+    // is the game's own setup (16x16, four tribes, fog on); `--paper` asks for the 2020 AIIDE
+    // format instead, and `--playtest` is accepted as an explicit no-op spelling of the
+    // default for callers that would rather say it than assume it.
     agents::MatchConfig cfg;
     for (int i = 1; i < argc; ++i) {
-      if (std::string(argv[i]) == "--playtest") cfg = agents::MatchConfig::playtest_default();
+      if (std::string(argv[i]) == "--paper") cfg = agents::MatchConfig::paper_2020();
     }
     cfg.games = games;
     for (int i = 1; i < argc; ++i) {
@@ -778,7 +779,8 @@ int main(int argc, char** argv) {
   std::printf("  --ladder [N]         round robin over all baselines, N games per pairing\n");
   std::printf("  --games N            games per pairing\n");
   std::printf("  --budget N           forward-model calls per decision (default 2000)\n");
-  std::printf("  --playtest           the DEFAULT GAME setup: 16x16, 4 players, fog on\n");
+  std::printf("  --paper              the 2020 AIIDE setup: 11x11, 2 players, fog off\n");
+  std::printf("                       (default is the GAME setup: 16x16, 4 players, fog on)\n");
   std::printf("  --size N / --players N / --fog / --no-fog / --turns N\n");
   std::printf("  --turns N            turn limit per match game (default 60)\n");
   std::printf("  --rules <path>       rule data file (default data/rules/live.json)\n");

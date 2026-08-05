@@ -28,14 +28,18 @@ struct GameConfig {
   // format and remains what the agent is ultimately trained for, but it is not what a player
   // sees when they press New Game, and testing against the wrong default hides whole classes
   // of problem (village density, multi-front war, naval relevance).
-  MapDims dims{16, 16};
+  //
+  // This comment was already here and already right, and MatchConfig disagreed with it anyway
+  // for as long as the two remembered the numbers independently. The value now comes from one
+  // named constant, so a default that is correct here cannot be wrong there.
+  MapDims dims{kDefaultMapDims};
   std::uint64_t seed{1};
   GameMode mode{GameMode::Domination};
   int turn_limit{0};  // 0 = none
   bool fog{true};
   float land_ratio{0.6f};
 
-  int player_count{4};
+  int player_count{kDefaultPlayerCount};
   Tribe tribes[kMaxPlayers]{};
   bool is_human[kMaxPlayers]{};
   Difficulty difficulty[kMaxPlayers]{};

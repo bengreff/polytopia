@@ -14,47 +14,49 @@
 
 namespace poly::agents {
 
-// THESE DEFAULTS ARE THE 2020 PAPER'S FORMAT, NOT THE GAME'S.
+// THE DEFAULT IS THE GAME'S OWN SETUP: 16x16, four tribes, fog on. See kDefaultMapDims.
 //
-// 11x11, two players, full observability, 50-turn cap. That is deliberate and must stay --
-// the Phase 1 anchors are only comparable to the published table under the published setup.
-//
-// But it is NOT what `GameConfig` gives you when you press New Game (16x16, four tribes, fog
-// on, no turn limit), and for a long time it was the ONLY setup the harness could express:
-// `play_one` hardcoded two players, and the CLI had no flag for size, seats or fog. So every
-// measured number described a format nobody plays, and the format people do play was
-// unmeasured. game.cpp's own GameConfig comment predicted the cost of exactly this: "testing
+// It used to be the 2020 paper's 11x11 two-player fog-off duel, which was wrong twice over.
+// First, `play_one` hardcoded two players and the CLI had no flag for size, seats or fog, so
+// the paper format was the ONLY thing the harness could express and the format people actually
+// play went unmeasured. game.cpp's GameConfig comment predicted the cost precisely: "testing
 // against the wrong default hides whole classes of problem (village density, multi-front war,
-// naval relevance)."
+// naval relevance)." It was right -- `paper2020` rates 2nd in the duel and 6th in the real
+// game, where it loses to `random`.
 //
-// `playtest_default()` below is the other setup. Measure in both.
+// Second, and the reason this is a DEFAULT rather than just a flag: making the real setup
+// opt-in leaves the correct measurement as the one you have to remember to ask for. Anything
+// measured on autopilot should be measured on the thing being shipped.
+//
+// The paper format remains fully supported via `paper_2020()` / `--paper`. It is no longer a
+// gate in any case -- HANDOFF section 7 records that reproducing the published ordering was
+// dropped deliberately, so its only remaining role is as a stable relative yardstick.
 struct MatchConfig {
   int games{20};
-  int budget{2000};        // forward-model calls per decision, as in the 2020 paper
-  int turn_limit{50};      // bounds a match; the GAME has no limit. The paper used 50.
-  // The 2020 experiments ran with FULL OBSERVABILITY. Leaving fog on makes our numbers
-  // incomparable to the published table, which is the one thing the Phase 1 gate depends on.
-  bool fog{false};
-  MapDims dims{11, 11};
+  int budget{2000};  // forward-model calls per decision, as in the 2020 paper
+
+  MapDims dims{kDefaultMapDims};
+  int player_count{kDefaultPlayerCount};
+  bool fog{true};
+
+  // The real game has no turn limit; a harness must have one or a stalemate hangs the run.
+  // This is a BACKSTOP, not a rule -- if matches routinely reach it, that is a finding about
+  // the agents (they cannot close a game on a big map), not a number to raise.
+  int turn_limit{100};
+
   std::uint64_t seed{1};
   Tribe tribe_a{Tribe::XinXi};
   Tribe tribe_b{Tribe::Imperius};
 
-  // Seats beyond the first are filled by agent B, so `play_match(a, b, ...)` reads as "one A
-  // against a field of B" -- which is the shape of the thing being playtested: a human on one
-  // seat against three bots.
-  int player_count{2};
-
-  // What a player actually gets from New Game. Keep in lockstep with GameConfig.
-  static MatchConfig playtest_default() {
+  // The 2020 AIIDE experimental setup: 11x11, two players, FULL OBSERVABILITY, 50-turn cap.
+  // Fog off is not an oversight -- the published experiments ran without it, and turning it on
+  // makes the numbers incomparable to the published table.
+  static MatchConfig paper_2020() {
     MatchConfig cfg;
-    cfg.dims = MapDims{16, 16};
-    cfg.player_count = 4;
-    cfg.fog = true;
-    // The real game has no limit; a harness must have one or a stalemate hangs the run. This
-    // is a BACKSTOP, not a rule -- if matches routinely reach it, that is a finding about the
-    // agents, not a setting to raise.
-    cfg.turn_limit = 100;
+    cfg.dims = kCompetitiveMapDims;
+    cfg.player_count = kCompetitivePlayerCount;
+    cfg.fog = false;
+    cfg.turn_limit = 50;
     return cfg;
   }
 };

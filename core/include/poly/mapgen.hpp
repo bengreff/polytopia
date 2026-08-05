@@ -28,13 +28,17 @@
 namespace poly {
 
 struct MapConfig {
-  MapDims dims{11, 11};
+  // Both callers overwrite these from GameConfig, so the defaults never reach a generated map
+  // -- but they said 11x11 with two players while GameConfig said 16x16 with four, and a
+  // default that contradicts the one above it is a trap waiting for the first caller that
+  // forgets a field. Same constant, one answer.
+  MapDims dims{kDefaultMapDims};
   std::uint64_t seed{0};
   float land_ratio{0.5f};
   // Per LAND tile. Passed down from Rules so settlement counts stay tunable data.
   float village_density{0.062f};
   float ruin_density{0.030f};  // fraction of tiles that end up land; honoured as an exact quota
-  int player_count{2};
+  int player_count{kDefaultPlayerCount};
   Tribe tribes[kMaxPlayers]{};
 
   // Regression fixtures pin the capitals instead of letting the spread heuristic choose.

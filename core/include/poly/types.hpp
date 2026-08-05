@@ -77,6 +77,25 @@ struct MapDims {
   friend constexpr bool operator==(MapDims, MapDims) = default;
 };
 
+// THE DEFAULT GAME. One definition, because three structs used to declare this independently
+// and they disagreed: GameConfig said 16x16 with four tribes (right), while MatchConfig and
+// MapConfig each said 11x11 with two (the competitive duel). The measurement harness therefore
+// defaulted to a format nobody plays, and every result had to be read against a setup nobody
+// had stated. A default that is only correct in one of the three places it is written is not
+// a default, it is a coincidence.
+//
+// The 11x11 two-player duel is still the COMPETITIVE format and is what the agent is
+// ultimately trained for. It is reachable explicitly -- MatchConfig::paper_2020(), or --paper
+// on the CLI -- and it should be explicit, because the setup you have to remember to ask for
+// is the setup you forget.
+inline constexpr MapDims kDefaultMapDims{16, 16};
+inline constexpr int kDefaultPlayerCount = 4;
+
+// The 2020 AIIDE paper's experimental setup, kept nameable so a run that intends to reproduce
+// it says so rather than inheriting it by accident.
+inline constexpr MapDims kCompetitiveMapDims{11, 11};
+inline constexpr int kCompetitivePlayerCount = 2;
+
 // Polytopia uses 8-way adjacency: units move diagonally, and the "adjacent" that building
 // bonuses and city borders are defined in terms of includes diagonals. Encoding this once
 // here rather than per-call-site is deliberate; a 4-way slip would be silent and pervasive.

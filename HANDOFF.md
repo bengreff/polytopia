@@ -8,14 +8,16 @@ original plan and parts of it have been overtaken by what the build actually fou
 ```
 ./build/cli/poly-cli --selfplay 20             whole-engine smoke test
 ./build/cli/poly-cli --match rulebased random --games 20
-./build/cli/poly-cli --match rulebased rb_base --games 400 --playtest    A/B a bot change
-./build/cli/poly-cli --ladder --games 6         round robin, ~4 min
+./build/cli/poly-cli --match rulebased rb_base --games 400   A/B a bot change
+./build/cli/poly-cli --ladder --games 4         round robin, ~18 min
+./build/cli/poly-cli --ladder --games 6 --paper 2020 AIIDE format, ~4 min
 ./build/core/tests/poly_tests                   89 tests
 ```
 
-**`--playtest` runs the setup a player actually gets** (16×16, four tribes, fog on). Without it
-you get the 2020 paper's format (11×11, two players, fog off) — correct for the Phase 1
-anchors, but not what anyone plays. Every match prints its setup line; read it. See §3.
+**Everything defaults to the setup a player actually gets**: 16×16, four tribes, fog on. That
+comes from `kDefaultMapDims` in `types.hpp`, which `GameConfig`, `MatchConfig` and `MapConfig`
+all now share — they used to each declare it and they disagreed. `--paper` asks for the 2020
+AIIDE format (11×11, two players, fog off) explicitly. Every match prints its setup line first.
 
 **A/B a bot change against `rb_base` AND against an `rb_base` mirror control** — mirror controls
 sit anywhere in 45–52%, so 50% is not the null. See §3.
@@ -33,9 +35,9 @@ and level rewards, naval embark/upgrade, roads and city connections, temples, ve
 explorers, super units, healing, conversion, disband and destroy. Fog with a server-side
 knowledge model. Default environment is the base game's 16×16 with four tribes.
 
-**Measured.** Seven agents and an Elo ladder that runs the published experimental setup in
-about four minutes. The playable baseline (`rulebased`) now beats **every other agent 4-0** and
-closes games in 14–20 turns where the search agents run to the 50-turn limit:
+**Measured.** Seven agents and an Elo ladder. The playable baseline (`rulebased`) beats **every
+other agent 4-0** in both formats. Under `--paper` (11×11, 2p, no fog) it closes games in 14–20
+turns where the search agents run to the 50-turn limit:
 
 ```
   agent             elo   games          rulebased 100% vs all six
@@ -51,9 +53,9 @@ closes games in 14–20 turns where the search agents run to the 50-turn limit:
 The gap to the next agent is 782 Elo, so the ladder no longer resolves `rulebased` at all —
 every pairing is saturated. Measuring the next change to it needs `rb_base` (see §2), not this.
 
-That table is the **paper format**. `rulebased` also wins every pairing 4-0 in the playtest
-format (16×16, four tribes, fog on), but the rest of the field reorders — `paper2020` drops
-from 2nd to 6th and loses a game to `random`. See §3; run both.
+That table is `--paper`. In the **default** format (16×16, four tribes, fog on) `rulebased`
+still wins every pairing 4-0, but the rest of the field reorders — `paper2020` drops from 2nd
+to 6th and loses a game to `random`. See §3; run both.
 
 **Verified.** 89 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN.
 
@@ -128,16 +130,30 @@ been measured at all.
 `game.cpp`'s own `GameConfig` comment called this exact shot: *"testing against the wrong
 default hides whole classes of problem (village density, multi-front war, naval relevance)."*
 
-Added `--playtest`, plus `--size`, `--players`, `--fog`/`--no-fog`, `--turns`. Every match now
-prints its setup line first, so a result can never again be read without knowing what produced
-it. The paper defaults are unchanged — they must stay for the Phase 1 anchors to mean anything.
+**The harness now defaults to the game's own setup**, and `--paper` asks for the AIIDE format
+explicitly. The first pass here got that backwards — it added `--playtest` as an opt-in and
+left 11×11 as the default, which leaves the correct measurement as the one you have to remember
+to type. Anything measured on autopilot should be measured on the thing being shipped.
+
+The map size and seat count now come from `kDefaultMapDims` / `kDefaultPlayerCount` in
+`types.hpp`. `GameConfig`, `MatchConfig` and `MapConfig` each used to declare them separately
+and two of the three were wrong; a default that is only correct in one of the three places it
+is written is not a default, it is a coincidence.
+
+Also added `--size`, `--players`, `--fog`/`--no-fog`, `--turns`, which compose with the preset.
+Every match prints its setup line first, so a result can never again be read without knowing
+what produced it.
+
+Note that the paper format is **not a gate** — §7 records that reproducing the published
+ordering was dropped deliberately. Its remaining role is as a stable relative yardstick, which
+is exactly the kind of thing that should be requested by name.
 
 ### The results do hold, but only after fixing how they were counted
 
 **Read A/B results against a measured control, never against 50%.** Mirror controls scatter:
 `random` 49.8%, `paper2020` 52.1%, `rb_base` 45.5% (400 games each, ±2.5%).
 
-| 400 games | paper format | playtest format |
+| 400 games | `--paper` | default (the real game) |
 |---|---|---|
 | control (`rb_base` mirror) | 45.5% | 45.5% |
 | `rb_kill` (kill-not-wound only) | 59.8% | 56.0% |
@@ -156,7 +172,7 @@ two-player ladder.
 Same seven agents, same code, 4 games per pairing. `rulebased` is dominant in both, but
 **everything below it moves**:
 
-| | paper format (11×11, 2p, no fog) | playtest format (16×16, 4p, fog) |
+| | `--paper` (11×11, 2p, no fog) | default (16×16, 4p, fog) |
 |---|---|---|
 | 1 | rulebased 3057 | rulebased 2660 |
 | 2 | **paper2020 2275** | mcts 1905 |
@@ -174,7 +190,7 @@ run one format.
 
 **Do not over-read the ordering below `rulebased`.** 4 games per pairing is ±25%; only the top
 seat is resolved. The point is that the ordering is *format-dependent at all*, not the specific
-ranks. The playtest ladder also takes ~18 minutes against ~4 for the paper one.
+ranks. The default ladder also takes ~18 minutes against ~4 for `--paper`.
 
 ### A caveat on those Elo numbers: most pairings never actually finish
 
@@ -186,9 +202,9 @@ the table, so those ratings largely measure score accumulated at the cap, not vi
 If the mid-table ever needs to be resolved properly, raising `--turns` is the wrong instinct;
 the finding is that these agents cannot close a game on a big map, and that is the thing to fix.
 
-### Two things the playtest format shows that the paper format cannot
+### Two things the default format shows that `--paper` cannot
 
-- **Games run much longer: mean 63 turns against 23 in the paper format**, with many reaching
+- **Games run much longer: mean 63 turns against 23 under `--paper`**, with many reaching
   the 100-turn backstop and being settled on *score* rather than domination. The bot is tuned
   and measured almost entirely on domination play. Score-mode endgame is unexamined.
 - **The bot sees through fog.** Fog is applied at *serialisation* time — `state_view_json(...,
