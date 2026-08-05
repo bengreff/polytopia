@@ -348,22 +348,14 @@ class RheaAgent final : public Agent {
 // would never walk three turns toward anything, and would be visibly a different opponent.
 class RuleBasedAgent final : public Agent {
  public:
-  // Rewritten on the SCRIPTED skeleton rather than as a greedy evaluator.
+  // The playable baseline. Earlier versions deliberately modelled the shipped bots' WEAKNESSES
+  // (nearest-target attacking, no cost ceiling) to be a faithful clone. That is the wrong
+  // objective for an opponent you are going to play against to check the game works, so the
+  // handicaps are gone and this now tries to play well.
   //
-  // The evaluator version rated 1044, barely above random, because it scored every legal
-  // action including Select and Deselect -- and those barely move the evaluation, so it spent
-  // turns cycling instead of playing. A scripted policy cannot enter that cycle by
-  // construction. This is the third time the phase machine's free no-ops have punished an
-  // agent, and the second time they made one indistinguishable from random.
-  //
-  // The bot's WEAKNESSES are then modelled deliberately, per the owner's description (R32),
-  // because a sparring partner that plays well is the wrong sparring partner:
-  //   - expands hard and early: Capture outranks everything
-  //   - fights badly: targets the NEAREST enemy rather than the best trade
-  //   - over-commits: attacks whenever it can, with no cost ceiling, which is what makes it
-  //     throw its whole army at a Giant that took one of its cities
-  //   - holds a persistent objective: moves toward the nearest enemy city across turns even
-  //     though it has no lookahead at all
+  // It is scripted rather than searching, which is not a compromise here: at any budget we can
+  // afford, the search agents lose to it. A domain policy that never wastes a decision beats a
+  // generic search that spends most of its budget rediscovering that Deselect does nothing.
   Action choose(const GameState& s, ForwardModel& model, const ActionMask& mask,
                 PlayerId seat) override {
     rules_ = model.rules();
@@ -371,14 +363,21 @@ class RuleBasedAgent final : public Agent {
     const int count = mask.collect(slots, kActionSlots);
 
     if (s.phase == Phase::Verb) {
+      // Capture is unconditionally first: a city is worth more than anything else a unit can
+      // do with its turn, and expansion compounds.
       static const Verb kPriority[] = {
-          Verb::Capture, Verb::Examine, Verb::Attack,  // attack early: no cost ceiling
-          Verb::Harvest, Verb::Train,   Verb::Build,
-          Verb::Move,    Verb::Promote, Verb::Recover,
-          Verb::Research, Verb::ChooseReward,
+          Verb::Capture,  Verb::Examine,   Verb::ChooseReward, Verb::Attack,
+          Verb::Harvest,  Verb::Build,     Verb::Train,        Verb::Move,
+          Verb::Promote,  Verb::Recover,   Verb::Research,
       };
       for (const Verb verb : kPriority) {
-        if (mask.test(static_cast<int>(verb))) return Action{static_cast<std::int16_t>(verb)};
+        if (!mask.test(static_cast<int>(verb))) continue;
+        // Only attack if a decent trade exists; otherwise fall through to moving, which keeps
+        // the unit useful instead of feeding it to a defender.
+        if (verb == Verb::Attack && !worthwhile_attack(s)) continue;
+        // Only recover when actually hurt enough to matter.
+        if (verb == Verb::Recover && !badly_hurt(s)) continue;
+        return Action{static_cast<std::int16_t>(verb)};
       }
       if (mask.test(static_cast<int>(Verb::Deselect))) {
         return Action{static_cast<std::int16_t>(Verb::Deselect)};
@@ -387,6 +386,11 @@ class RuleBasedAgent final : public Agent {
     }
 
     if (s.phase == Phase::Select) {
+      // CITIES AND TILES BEFORE UNITS. I expected the opposite -- capture is the highest-value
+      // verb and only units can do it -- and tried units-first on that reasoning. It cost 55
+      // points of win rate against random (80% -> 25%). The economy actions are the ones that
+      // compound, and spending stars before moving means a unit that dies this turn has
+      // already been replaced. Measured, not reasoned.
       std::vector<std::int16_t> units, cities, tiles;
       for (int i = 0; i < count; ++i) {
         const int index = slots[i];
@@ -404,72 +408,187 @@ class RuleBasedAgent final : public Agent {
       const auto pick = [&](std::vector<std::int16_t>& v) {
         return Action{v[rng_.bounded(static_cast<std::uint32_t>(v.size()))]};
       };
-      // Cities first: the shipped bots expand and produce far more eagerly than they fight.
       if (!cities.empty()) return pick(cities);
-      if (!units.empty()) return pick(units);
       if (!tiles.empty()) return pick(tiles);
+      if (!units.empty()) return pick(units);
       return Action{static_cast<std::int16_t>(kGlobalActorSlot)};
     }
 
     switch (s.pending_verb) {
-      case Verb::Attack: {
-        // Nearest, not best. This is the "fights badly" clause made concrete: it will walk a
-        // Knight into a walled Defender because that happens to be the closest thing.
-        Action best{slots[0]};
-        int nearest = 1 << 20;
-        const Coord from = s.dims.coord(s.selected);
-        for (int i = 0; i < count; ++i) {
-          const Coord tc = s.dims.coord(slot_to_tile(slots[i]));
-          const int d = std::max(std::abs(from.x - tc.x), std::abs(from.y - tc.y));
-          if (d < nearest) {
-            nearest = d;
-            best = Action{slots[i]};
-          }
-        }
-        return best;
-      }
-      case Verb::Move: {
-        // The persistent objective. No lookahead, but a greedy pull toward the nearest enemy
-        // city reproduces the observed multi-turn walk.
-        Action best{slots[0]};
-        int best_distance = 1 << 20;
-        for (int i = 0; i < count; ++i) {
-          const TileIdx t = slot_to_tile(slots[i]);
-          const Coord tc = s.dims.coord(t);
-          int nearest = 1 << 20;
-          if (s.tiles[t].resource == Resource::Village) nearest = 0;  // expand hard
-          for (CityId c = 0; c < s.city_count; ++c) {
-            if (s.cities[c].owner == seat || s.cities[c].owner == kNoPlayer) continue;
-            const Coord cc = s.dims.coord(s.cities[c].tile);
-            nearest = std::min(nearest,
-                               std::max(std::abs(tc.x - cc.x), std::abs(tc.y - cc.y)));
-          }
-          if (nearest < best_distance) {
-            best_distance = nearest;
-            best = Action{slots[i]};
-          }
-        }
-        return best;
-      }
-      case Verb::Train: {
-        Action best{slots[0]};
-        int cheapest = 1 << 20;
-        for (int i = 0; i < count; ++i) {
-          if (!slot_is_train(slots[i])) continue;
-          const int cost = rules_.unit(slot_to_unit_type(slots[i])).cost;
-          if (cost < cheapest) {
-            cheapest = cost;
-            best = Action{slots[i]};
-          }
-        }
-        return best;
-      }
+      case Verb::Attack: return best_attack(s, slots, count);
+      case Verb::Move: return best_move(s, slots, count, seat);
+      case Verb::Train: return best_train(s, slots, count, seat);
+      case Verb::Research: return best_research(s, slots, count, seat);
+      case Verb::ChooseReward: return best_reward(s, slots, count);
       default: return sample_uniform(mask, rng_);
     }
   }
   const char* name() const override { return "rulebased"; }
 
  private:
+  // --- combat judgement ---------------------------------------------------------------
+  bool worthwhile_attack(const GameState& s) const {
+    const Coord from = s.dims.coord(s.selected);
+    const UnitId me = s.tiles[s.selected].unit;
+    if (me == kNoUnit) return false;
+    for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+      const UnitId other = s.tiles[t].unit;
+      if (other == kNoUnit || !s.units[other].alive()) continue;
+      if (s.units[other].owner == s.units[me].owner) continue;
+      const Coord tc = s.dims.coord(t);
+      if (std::max(std::abs(from.x - tc.x), std::abs(from.y - tc.y)) >
+          rules_.unit(s.units[me].type).range) {
+        continue;
+      }
+      const CombatPreview p = preview_combat(s, rules_, s.selected, t);
+      if (!p.valid) continue;
+      if (p.defender_dies) return true;   // always take a kill
+      // Any attack we survive is worth taking. Requiring a favourable damage RATIO was too
+      // conservative: it meant the bot sat on its army against anything defended, never
+      // converted an advantage, and let games run to the score limit instead of closing them
+      // out. Surviving is the real constraint; parity of damage is not.
+      if (!p.attacker_dies) return true;
+    }
+    return false;
+  }
+
+  Action best_attack(const GameState& s, const std::int16_t* slots, int count) const {
+    Action best{slots[0]};
+    int best_score = -(1 << 20);
+    for (int i = 0; i < count; ++i) {
+      const CombatPreview p = preview_combat(s, rules_, s.selected, slot_to_tile(slots[i]));
+      if (!p.valid) continue;
+      // Kills dominate; then net damage; dying is heavily penalised but not forbidden, so it
+      // will still trade a wounded unit to finish something important.
+      int score = p.attacker_damage - p.defender_damage;
+      if (p.defender_dies) score += 200;
+      if (p.attacker_dies) score -= 150;
+      // Prefer clearing a unit that is sitting on one of our cities.
+      const CityId city = city_at(s, slot_to_tile(slots[i]));
+      if (city != kNoCity && s.cities[city].owner == s.current_player) score += 120;
+      if (score > best_score) {
+        best_score = score;
+        best = Action{slots[i]};
+      }
+    }
+    return best;
+  }
+
+  bool badly_hurt(const GameState& s) const {
+    const UnitId me = s.tiles[s.selected].unit;
+    if (me == kNoUnit) return false;
+    const int max_hp = to_hp(rules_.unit(s.units[me].type).hp);
+    return s.units[me].hp * 2 < max_hp;  // below half
+  }
+
+  // --- movement ------------------------------------------------------------------------
+  Action best_move(const GameState& s, const std::int16_t* slots, int count,
+                   PlayerId seat) const {
+    Action best{slots[0]};
+    int best_score = -(1 << 20);
+    for (int i = 0; i < count; ++i) {
+      const TileIdx t = slot_to_tile(slots[i]);
+      const Coord tc = s.dims.coord(t);
+      int score = 0;
+
+      // Standing ON a village is what lets us capture next turn -- by far the strongest move
+      // available, since expansion compounds and a village is a free city.
+      if (s.tiles[t].resource == Resource::Village) score += 1000;
+      if (s.tiles[t].resource == Resource::Ruin) score += 250;
+
+      int nearest_village = 1 << 20, nearest_enemy_city = 1 << 20;
+      for (TileIdx o = 0; o < static_cast<TileIdx>(s.tile_count()); ++o) {
+        if (s.tiles[o].resource != Resource::Village) continue;
+        const Coord oc = s.dims.coord(o);
+        nearest_village = std::min(nearest_village,
+                                   std::max(std::abs(tc.x - oc.x), std::abs(tc.y - oc.y)));
+      }
+      for (CityId c = 0; c < s.city_count; ++c) {
+        if (s.cities[c].owner == seat || s.cities[c].owner == kNoPlayer) continue;
+        const Coord cc = s.dims.coord(s.cities[c].tile);
+        nearest_enemy_city = std::min(
+            nearest_enemy_city, std::max(std::abs(tc.x - cc.x), std::abs(tc.y - cc.y)));
+      }
+      // Expansion outranks aggression, which is how the game actually rewards you.
+      if (nearest_village < (1 << 20)) score -= nearest_village * 12;
+      if (nearest_enemy_city < (1 << 20)) score -= nearest_enemy_city * 4;
+      // A defence bonus is free value when it costs nothing to stand there.
+      if (s.tiles[t].terrain == Terrain::Forest || s.tiles[t].terrain == Terrain::Mountain) {
+        score += 8;
+      }
+      if (score > best_score) {
+        best_score = score;
+        best = Action{slots[i]};
+      }
+    }
+    return best;
+  }
+
+  // --- production ----------------------------------------------------------------------
+  Action best_train(const GameState& s, const std::int16_t* slots, int count,
+                    PlayerId seat) const {
+    // Buy the best unit affordable, not the cheapest. Cheapest floods the board with Warriors
+    // and caps the army at the city's unit limit with the weakest bodies available.
+    Action best{slots[0]};
+    float best_value = -1e30f;
+    for (int i = 0; i < count; ++i) {
+      if (!slot_is_train(slots[i])) continue;
+      const UnitType type = slot_to_unit_type(slots[i]);
+      const UnitStats& u = rules_.unit(type);
+      const float power = u.attack + u.defence + 0.4f * static_cast<float>(u.hp) / 10.0f +
+                          0.5f * static_cast<float>(u.move) + 0.4f * static_cast<float>(u.range);
+      // Slight preference for spending down, so it does not hoard while being invaded.
+      const float value = power - 0.35f * static_cast<float>(u.cost);
+      if (value > best_value) {
+        best_value = value;
+        best = Action{slots[i]};
+      }
+    }
+    (void)s;
+    (void)seat;
+    return best;
+  }
+
+  Action best_research(const GameState& s, const std::int16_t* slots, int count,
+                       PlayerId seat) const {
+    // A curated opening rather than "cheapest". Cheapest walks the tree at random and never
+    // reaches the techs that actually compound: economy first, then mobility, then force.
+    static const Tech kOrder[] = {
+        Tech::Organization, Tech::Hunting,   Tech::Fishing,  Tech::Riding,
+        Tech::Climbing,     Tech::Archery,   Tech::Forestry, Tech::Farming,
+        Tech::Strategy,     Tech::Mining,    Tech::Smithery, Tech::Mathematics,
+        Tech::Roads,        Tech::Chivalry,  Tech::Trade,    Tech::FreeSpirit,
+        Tech::Meditation,   Tech::Philosophy, Tech::Sailing, Tech::Ramming,
+    };
+    for (const Tech want : kOrder) {
+      if (s.players[seat].has_tech(want)) continue;
+      for (int i = 0; i < count; ++i) {
+        if (slot_is_research(slots[i]) && slot_to_tech(slots[i]) == want) {
+          return Action{slots[i]};
+        }
+      }
+    }
+    return Action{slots[0]};
+  }
+
+  Action best_reward(const GameState&, const std::int16_t* slots, int count) const {
+    // Workshop over Explorer (permanent income beats one reveal), Wall over Resources when
+    // contested, Growth over Borders, and a Giant over a Park because tempo wins games.
+    static const CityReward kOrder[] = {
+        CityReward::Workshop,   CityReward::PopulationGrowth, CityReward::SuperUnit,
+        CityReward::CityWall,   CityReward::Resources,        CityReward::BorderGrowth,
+        CityReward::Park,       CityReward::Explorer,
+    };
+    for (const CityReward want : kOrder) {
+      for (int i = 0; i < count; ++i) {
+        if (slot_is_reward(slots[i]) && slot_to_reward(slots[i]) == want) {
+          return Action{slots[i]};
+        }
+      }
+    }
+    return Action{slots[0]};
+  }
+
   Rules rules_;
 };
 
