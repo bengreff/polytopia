@@ -251,8 +251,8 @@ std::string handle_request(const json::Value& request) {
 
   if (method == "new_game") {
     GameConfig cfg;
-    cfg.dims.width = static_cast<std::int16_t>(params["width"].integer(11));
-    cfg.dims.height = static_cast<std::int16_t>(params["height"].integer(11));
+    cfg.dims.width = static_cast<std::int16_t>(params["width"].integer(16));
+    cfg.dims.height = static_cast<std::int16_t>(params["height"].integer(16));
     cfg.seed = static_cast<std::uint64_t>(params["seed"].integer(1));
     cfg.mode = parse_mode(params["mode"].str());
     // No turn limit by default -- games end by domination. Perfection still sets one.
@@ -263,10 +263,23 @@ std::string handle_request(const json::Value& request) {
     const auto& players = params["players"].arr();
     cfg.player_count = static_cast<int>(players.size());
     if (cfg.player_count < 2) {
-      cfg.player_count = 2;
+      // Base-game default: four tribes, yours chosen and the rest random.
+      cfg.player_count = 4;
       cfg.tribes[0] = Tribe::Imperius;
-      cfg.tribes[1] = Tribe::Bardur;
       cfg.is_human[0] = true;
+      Pcg32 pick;
+      pick.seed(cfg.seed, 0xA11CE);
+      bool used[kTribeCount] = {};
+      used[static_cast<int>(cfg.tribes[0])] = true;
+      for (int i = 1; i < cfg.player_count; ++i) {
+        int choice = 0;
+        for (int attempt = 0; attempt < 64; ++attempt) {
+          choice = static_cast<int>(pick.bounded(kTribeCount));
+          if (!used[choice]) break;
+        }
+        used[choice] = true;
+        cfg.tribes[i] = static_cast<Tribe>(choice);
+      }
     } else {
       // "random" picks an unused tribe. The UI randomises opponents; training pins them
       // explicitly by name, so the same entry point serves both without a second code path.

@@ -38,6 +38,11 @@ struct MapConfig {
   Tribe tribes[kMaxPlayers]{};
 
   // Regression fixtures pin the capitals instead of letting the spread heuristic choose.
+  // How many of its guaranteed resource each capital must get. A tribe whose STARTING TECH
+  // can already harvest that resource is given enough to level the capital on turn 1 -- e.g.
+  // Bardur opens with Hunting and two Game, which is 2 population for 4 of its 5 stars.
+  // Tribes that cannot harvest at turn 0 (Xin-xi needs Mining for its Metal) just get one.
+  int guaranteed_count[kMaxPlayers]{};
   bool fixed_starts{false};
   TileIdx start_tiles[kMaxPlayers]{};
 };

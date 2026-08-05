@@ -24,14 +24,18 @@
 namespace poly {
 
 struct GameConfig {
-  MapDims dims{11, 11};
+  // The base game's default setup: 16x16 with four tribes. The 11x11 duel is the COMPETITIVE
+  // format and remains what the agent is ultimately trained for, but it is not what a player
+  // sees when they press New Game, and testing against the wrong default hides whole classes
+  // of problem (village density, multi-front war, naval relevance).
+  MapDims dims{16, 16};
   std::uint64_t seed{1};
   GameMode mode{GameMode::Domination};
   int turn_limit{0};  // 0 = none
   bool fog{true};
   float land_ratio{0.6f};
 
-  int player_count{2};
+  int player_count{4};
   Tribe tribes[kMaxPlayers]{};
   bool is_human[kMaxPlayers]{};
   Difficulty difficulty[kMaxPlayers]{};

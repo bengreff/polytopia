@@ -127,6 +127,32 @@ bool new_game(const GameConfig& cfg, const Rules& rules, GameState& out, std::st
   map.seed = cfg.seed;
   map.land_ratio = cfg.land_ratio;
   map.village_density = rules.village_density;
+  // How many of its guaranteed resource each capital needs to LEVEL UP on turn 1, if the
+  // tribe's starting tech can harvest it at all. Bardur opens with Hunting and must therefore
+  // find enough Game to reach level 2; Xin-xi's Metal needs Mining, so it gets one for
+  // flavour and no guarantee. Computed from Rules rather than tabulated in mapgen, so the
+  // thresholds and yields stay in one place.
+  for (int p = 0; p < cfg.player_count; ++p) {
+    const TribeStats& tribe = rules.tribe(cfg.tribes[p]);
+    int count = 1;
+    if (tribe.has_start_tech) {
+      // Find a resource this tribe can harvest immediately, and size the guarantee to the
+      // population needed for level 2.
+      const int needed_population = rules.population_threshold[1];
+      for (int r = 1; r < static_cast<int>(Resource::Count); ++r) {
+        const ResourceStats& res = rules.resource(static_cast<Resource>(r));
+        if (res.population <= 0) continue;
+        if (res.needs_tech && res.tech != tribe.start_tech) continue;
+        // Covers both routes to population: harvesting directly (Fruit, Game, Fish) and
+        // building on the resource (Crop needs a Farm, Metal needs a Mine). Zebasi levels its
+        // capital by building a Farm, not by harvesting, so restricting this to `harvestable`
+        // silently excluded it.
+        count = (needed_population + res.population - 1) / res.population;
+        break;
+      }
+    }
+    map.guaranteed_count[p] = count;
+  }
   map.ruin_density = rules.ruin_density;
   map.player_count = cfg.player_count;
   for (int p = 0; p < cfg.player_count; ++p) map.tribes[p] = cfg.tribes[p];

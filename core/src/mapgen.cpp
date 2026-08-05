@@ -719,17 +719,18 @@ void force_capital_resources(Gen& g) {
     const Resource want = kGuaranteedResource[tribe_index];
     const Coord centre = g.at(g.capitals[sz(p)]);
 
-    bool present = false;
+    int have = 0;
     std::vector<TileIdx> ring;
     for (const Coord off : kNeighbourOffsets) {
       const Coord c{static_cast<std::int16_t>(centre.x + off.x),
                     static_cast<std::int16_t>(centre.y + off.y)};
       if (!g.dims.contains(c)) continue;
       const TileIdx t = g.dims.index(c);
-      if (st.tiles[t].resource == want) present = true;
+      if (st.tiles[t].resource == want) ++have;
       ring.push_back(t);
     }
-    if (present || ring.empty()) continue;
+    const int need = std::max(1, g.cfg->guaranteed_count[sz(p)]);
+    if (have >= need || ring.empty()) continue;
 
     const Terrain needed = want == Resource::Metal  ? Terrain::Mountain
                            : want == Resource::Game ? Terrain::Forest
@@ -738,6 +739,7 @@ void force_capital_resources(Gen& g) {
 
     // Prefer a tile that already has the right terrain and nothing on it; otherwise convert a
     // spare land tile. Never touch water, a village, or another already-placed resource.
+    for (; have < need; ++have) {
     TileIdx chosen = kNoTile;
     for (const TileIdx t : ring) {
       if (st.tiles[t].resource != Resource::None) continue;
@@ -755,7 +757,35 @@ void force_capital_resources(Gen& g) {
         break;
       }
     }
-    if (chosen != kNoTile) st.tiles[chosen].resource = want;
+    // Fish need water, and a capital ring can legitimately have none. Kickoo opens with
+    // Fishing, so without this it is the one tribe whose guaranteed resource silently fails
+    // to arrive. Flood a spare land tile rather than leaving the guarantee unmet; the tile is
+    // shallow because it touches the capital, which is land by construction.
+    if (chosen == kNoTile && needed == Terrain::Water) {
+      for (const TileIdx t : ring) {
+        if (st.tiles[t].resource != Resource::None) continue;
+        if (t == g.capitals[sz(p)]) continue;
+        chosen = t;
+        st.tiles[t].terrain = Terrain::Water;
+        break;
+      }
+    }
+    // Last resort: the ring is full of other resources. The guarantee is a RULE, not a
+    // preference -- Bardur must be able to level its capital -- so displace a lesser resource
+    // rather than silently under-delivering. Villages and ruins are never touched.
+    if (chosen == kNoTile) {
+      for (const TileIdx t : ring) {
+        const Resource here = st.tiles[t].resource;
+        if (here == Resource::Village || here == Resource::Ruin || here == want) continue;
+        if (needed != Terrain::Water && is_water_terrain(st.tiles[t].terrain)) continue;
+        chosen = t;
+        if (st.tiles[t].terrain != needed) st.tiles[t].terrain = needed;
+        break;
+      }
+    }
+    if (chosen == kNoTile) break;  // genuinely nowhere left
+    st.tiles[chosen].resource = want;
+    }
   }
 }
 
