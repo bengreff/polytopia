@@ -51,6 +51,10 @@ closes games in 14–20 turns where the search agents run to the 50-turn limit:
 The gap to the next agent is 782 Elo, so the ladder no longer resolves `rulebased` at all —
 every pairing is saturated. Measuring the next change to it needs `rb_base` (see §2), not this.
 
+That table is the **paper format**. `rulebased` also wins every pairing 4-0 in the playtest
+format (16×16, four tribes, fog on), but the rest of the field reorders — `paper2020` drops
+from 2nd to 6th and loses a game to `random`. See §3; run both.
+
 **Verified.** 89 tests, clean under `-Werror -Wconversion` and ASAN/UBSAN.
 
 ---
@@ -146,6 +150,41 @@ then score **25%**, not 50%. I read the resulting 31.5% as a catastrophic regres
 noticing it was above the null. Seats are now split evenly between the two agents at every
 player count, so 50% means "equal strength" everywhere and the numbers stay comparable to the
 two-player ladder.
+
+### The ladder reorders when you change the format
+
+Same seven agents, same code, 4 games per pairing. `rulebased` is dominant in both, but
+**everything below it moves**:
+
+| | paper format (11×11, 2p, no fog) | playtest format (16×16, 4p, fog) |
+|---|---|---|
+| 1 | rulebased 3057 | rulebased 2660 |
+| 2 | **paper2020 2275** | mcts 1905 |
+| 3 | mcts 2223 | mc 1693 |
+| 4 | mc 1991 | rhea 1647 |
+| 5 | osla 1945 | osla 1375 |
+| 6 | rhea 1734 | **paper2020 1375** |
+| 7 | random 1000 | random 1000 |
+
+`paper2020` falls from 2nd to joint-last-but-one, and **loses a game to `random`**. Its policy
+is nearest-target greedy, which holds up on a small two-player map and comes apart in a
+four-player game on 16×16. That is the concrete instance of "whole classes of problem" the
+`GameConfig` comment warned about, and it was invisible for as long as the harness could only
+run one format.
+
+**Do not over-read the ordering below `rulebased`.** 4 games per pairing is ±25%; only the top
+seat is resolved. The point is that the ordering is *format-dependent at all*, not the specific
+ranks. The playtest ladder also takes ~18 minutes against ~4 for the paper one.
+
+### A caveat on those Elo numbers: most pairings never actually finish
+
+Six of the 21 pairings ran to **exactly 100.0 turns** — the backstop — and were settled by the
+score tie-break rather than by anyone winning. Among the non-`rulebased` agents that is most of
+the table, so those ratings largely measure score accumulated at the cap, not victories.
+`rulebased`'s pairings all resolve in 30–45 turns, which is why it is the one rating to trust.
+
+If the mid-table ever needs to be resolved properly, raising `--turns` is the wrong instinct;
+the finding is that these agents cannot close a game on a big map, and that is the thing to fix.
 
 ### Two things the playtest format shows that the paper format cannot
 
