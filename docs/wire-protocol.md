@@ -23,6 +23,22 @@ the WASM target lands and the renderer talks to the module directly.
 
 ## Methods
 
+### `defaults` — the engine's New Game setup
+The base game's default: 16×16 with four tribes and fog on. Exists so the browser does not have
+to carry its own copy of it.
+
+It did carry one, and it was wrong — the UI opened an 11×11 duel while the engine's
+`GameConfig` said 16×16 with four tribes, so the setup actually being playtested was the
+competitive format rather than the base game. Six places held this value and four disagreed
+with the engine. Three now share one constant (`kDefaultMapDims`, `types.hpp`); the two in the
+browser cannot see a C++ constant, so they ask for it here.
+```jsonc
+params: {}
+result: {"width": 16, "height": 16, "players": 4, "fog": true, "land_ratio": 0.6}
+```
+Needs no game in progress. Read from a default-constructed `GameConfig`, so it cannot drift
+from what the engine would actually build.
+
 ### `map_info` — how many players this map can seat
 Player count is bounded by settlement sites, and `new_game` REFUSES a game with more players
 than the map can seat. The UI calls this when the map size changes and clamps its opponent

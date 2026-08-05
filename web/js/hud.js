@@ -920,6 +920,23 @@ export function initHud(app) {
   });
 }
 
+/**
+ * Seed the New Game dialog from the engine's own defaults, so reopening the dialog offers the
+ * same game the app just started. The form used to carry its own literals (11x11, 1 opponent)
+ * which disagreed with the engine's GameConfig.
+ */
+export function seedNewGameForm(config) {
+  $('ng-width').value = String(config.width);
+  $('ng-height').value = String(config.height);
+  $('ng-seed').value = String(config.seed);
+  $('ng-fog').checked = !!config.fog;
+  const opponents = Math.max(1, (config.players || []).length - 1);
+  const box = $('ng-opponents');
+  // Raise the ceiling first if needed; clampOpponents() lowers it again from map_info.
+  if (Number(box.max) < opponents) box.max = String(opponents);
+  box.value = String(opponents);
+}
+
 /** Hold the opponent count inside what the map can actually seat. */
 function clampOpponents() {
   const box = $('ng-opponents');

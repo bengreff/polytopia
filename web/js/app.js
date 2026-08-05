@@ -25,23 +25,54 @@ import {
   showCombatPreview, hideCombatPreview, openOption, closePopup, popupOpen,
   renderTechTree, closeTechTree, techTreeOpen,
   openLevelUp, closeLevelUp, levelUpOpen, levelUpCity,
-  showResult, closeResult, resultOpen, parseRuinLine,
+  showResult, closeResult, resultOpen, parseRuinLine, seedNewGameForm,
 } from './hud.js';
 
 // No turn_limit key: games end by domination, and Perfection sets its own limit engine-side.
 // The opponent's tribe is "random" — the engine draws an unused one from a seeded generator
 // and hides its identity until you meet them.
+/**
+ * Only the fields the ENGINE does not own. Map size, seat count and fog come from the
+ * `defaults` RPC at boot.
+ *
+ * This object used to hardcode an 11x11 duel while the engine's GameConfig said 16x16 with
+ * four tribes, so opening localhost gave you the competitive format rather than the base game
+ * — the setup that is actually being playtested was the one place nobody had checked. The
+ * value now has one owner and the browser asks for it.
+ */
 const DEFAULT_CONFIG = {
-  width: 11,
-  height: 11,
   seed: 12345,
   mode: 'domination',
-  fog: true,
-  players: [
-    { tribe: 'imperius', human: true, difficulty: 'normal' },
-    { tribe: 'random', human: false, difficulty: 'normal' },
-  ],
+  difficulty: 'normal',
+  myTribe: 'imperius',
 };
+
+/**
+ * Fills in map size, opponent count and fog from the engine. Falls back to the engine's own
+ * literals only if the call fails, and says so, rather than silently seeding a different game
+ * from the one the engine would have made.
+ */
+async function configFromEngine(app) {
+  let d;
+  try {
+    d = await app.rpc('defaults');
+  } catch (e) {
+    appendLog(`could not read engine defaults (${e.message}); using 16x16/4`, 'sys');
+    d = { width: 16, height: 16, players: 4, fog: true };
+  }
+  const players = [{ tribe: DEFAULT_CONFIG.myTribe, human: true, difficulty: DEFAULT_CONFIG.difficulty }];
+  for (let i = 1; i < d.players; i++) {
+    players.push({ tribe: 'random', human: false, difficulty: DEFAULT_CONFIG.difficulty });
+  }
+  return {
+    width: d.width,
+    height: d.height,
+    seed: DEFAULT_CONFIG.seed,
+    mode: DEFAULT_CONFIG.mode,
+    fog: d.fog,
+    players,
+  };
+}
 
 /** How many enemy units we will probe with preview_combat on one selection. */
 const MAX_PREVIEWS = 40;
@@ -70,7 +101,8 @@ class App {
     this.ui = { hover: null, dpr: window.devicePixelRatio || 1, showIds: false };
     this.rpcId = 0;
     this.busy = false;
-    this.lastConfig = DEFAULT_CONFIG;
+    // Filled from the engine at boot; see configFromEngine.
+    this.lastConfig = null;
   }
 
   // --- transport ------------------------------------------------------------
@@ -730,7 +762,11 @@ async function main() {
     updateHud(app);
   });
 
-  await app.newGame(DEFAULT_CONFIG);
+  // Ask the engine what a new game looks like before opening one, so the browser and the
+  // engine cannot disagree about the default setup the way they silently did.
+  const config = await configFromEngine(app);
+  seedNewGameForm(config);
+  await app.newGame(config);
 }
 
 main();

@@ -279,6 +279,30 @@ std::string handle_request(const json::Value& request) {
   const std::string method = request["method"].str();
   const json::Value& params = request["params"];
 
+  // The engine's default New Game setup, so the UI does not have to carry its own copy.
+  //
+  // It did carry one, and it was wrong: the browser opened an 11x11 duel while GameConfig said
+  // 16x16 with four tribes. That made SIX places holding this value -- GameConfig, MatchConfig,
+  // MapConfig, app.js's DEFAULT_CONFIG and index.html's two form defaults -- of which four
+  // disagreed with the engine. Three were fixed by pointing them at one constant; the two in
+  // the browser cannot see that constant, so they ask for it instead.
+  if (method == "defaults") {
+    const GameConfig cfg;
+    json::Writer w;
+    w.begin_object();
+    w.field("id", id);
+    w.key("result");
+    w.begin_object();
+    w.field("width", cfg.dims.width);
+    w.field("height", cfg.dims.height);
+    w.field("players", cfg.player_count);
+    w.field("fog", cfg.fog);
+    w.field("land_ratio", cfg.land_ratio);
+    w.end_object();
+    w.end_object();
+    return w.text();
+  }
+
   if (method == "map_info") {
     // How many players a map of this size can seat, so the UI can bound its opponent picker
     // instead of offering counts that generation will then refuse.

@@ -14,10 +14,14 @@ original plan and parts of it have been overtaken by what the build actually fou
 ./build/core/tests/poly_tests                   89 tests
 ```
 
-**Everything defaults to the setup a player actually gets**: 16×16, four tribes, fog on. That
-comes from `kDefaultMapDims` in `types.hpp`, which `GameConfig`, `MatchConfig` and `MapConfig`
-all now share — they used to each declare it and they disagreed. `--paper` asks for the 2020
-AIIDE format (11×11, two players, fog off) explicitly. Every match prints its setup line first.
+**Everything defaults to the setup a player actually gets**: 16×16, four tribes, fog on — in
+the browser and in the harness. `--paper` asks for the 2020 AIIDE format (11×11, two players,
+fog off) explicitly. Every match prints its setup line first.
+
+That value had **six homes and four of them were wrong**, including the browser, which opened
+an 11×11 duel. `GameConfig`, `MatchConfig` and `MapConfig` now share `kDefaultMapDims` /
+`kDefaultPlayerCount` from `types.hpp`; `web/js/app.js` and the New Game form read the new
+`defaults` RPC at boot. A default written in six places is not a default.
 
 **A/B a bot change against `rb_base` AND against an `rb_base` mirror control** — mirror controls
 sit anywhere in 45–52%, so 50% is not the null. See §3.
