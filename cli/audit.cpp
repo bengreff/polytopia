@@ -119,6 +119,13 @@ const char* unit_name(UnitType t) {
   return (i >= 0 && i < kUnitTypeCount) ? kNames[i] : "?";
 }
 
+const char* ruin_reward_name(RuinReward r) {
+  static const char* kNames[] = {"none", "Resources", "Scrolls of Wisdom", "Population",
+                                 "New Friends", "Explorer"};
+  const int i = static_cast<int>(r);
+  return (i >= 0 && i < static_cast<int>(RuinReward::Count)) ? kNames[i] : "?";
+}
+
 const char* reward_name(CityReward r) {
   static const char* kNames[] = {"workshop", "explorer", "city_wall", "resources",
                                  "population_growth", "border_growth", "park", "super_unit"};
@@ -659,7 +666,7 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
       if (recent.size() > 12) recent.erase(recent.begin());
     }
 
-    std::vector<std::string> log;
+    EventLog log;
     if (!apply(s, rules, action, &log)) {
       report.fail("legality/mask-action-applies",
                   "action " + std::to_string(action.index) + " was in the legal mask and " +
@@ -668,17 +675,14 @@ void audit_game(const GameSpec& spec, const Rules& rules, Report& report, Census
       break;
     }
     // Ruin outcomes announce themselves; the census is how we learn one can never be rolled.
-    for (const std::string& line : log) {
-      if (line.rfind("Ruin: ", 0) != 0) continue;
-      const std::size_t dash = line.find(" -- ");
-      if (dash == std::string::npos) {
-        report.fail("ruin/log-shape",
-                    "ruin line does not match the 'Ruin: <title> -- <body>' the UI parses: " +
-                        line,
-                    spec.seed, step);
+    for (const Event& e : log) {
+      if (e.kind != EventKind::RuinReward) continue;
+      if (e.ruin_reward == RuinReward::None) {
+        report.fail("ruin/reward-identified",
+                    "a ruin produced an event with no reward kind", spec.seed, step);
         continue;
       }
-      census.take("ruin/" + line.substr(6, dash - 6));
+      census.take(std::string("ruin/") + ruin_reward_name(e.ruin_reward));
     }
   }
 }

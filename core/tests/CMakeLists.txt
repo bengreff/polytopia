@@ -11,6 +11,6 @@ add_executable(poly_tests
 )
 
 target_include_directories(poly_tests PRIVATE .)
-target_link_libraries(poly_tests PRIVATE poly poly_flags)
+target_link_libraries(poly_tests PRIVATE poly poly_wire poly_flags)
 
 add_test(NAME poly_tests COMMAND poly_tests)

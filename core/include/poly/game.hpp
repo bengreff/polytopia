@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "poly/action.hpp"
+#include "poly/event.hpp"
 #include "poly/outcome.hpp"
 #include "poly/options.hpp"
 #include "poly/rules.hpp"
@@ -57,7 +58,7 @@ void legal_actions(const GameState& s, const Rules& rules, ActionMask& mask);
 // `log` receives human-readable lines for the UI's action feed; pass nullptr to skip.
 // `precomputed` is the legality mask for THIS state, when the caller already has it. Passing
 // it skips recomputation -- it does not skip validation, so legality remains the engine's job.
-bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log,
+bool apply(GameState& s, const Rules& rules, Action action, EventLog* log,
            const ActionMask* precomputed = nullptr);
 
 // nullopt while the game is ongoing. See outcome.hpp for why this is not a float.
@@ -88,7 +89,7 @@ void resync_derived_state(GameState& s, const Rules& rules);
 // Test seam for capture, which is otherwise only reachable through a unit standing on a city
 // at the start of its turn -- too much choreography for a test about population bookkeeping.
 void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,
-                           std::vector<std::string>* log);
+                           EventLog* log);
 
 // Damage a would deal to b, and b's retaliation, in half-point HP units.
 struct CombatResult {
@@ -122,11 +123,8 @@ void recompute_visibility(GameState& s, const Rules& rules, PlayerId player);
 // Marks newly-encountered tribes. Meeting is an event that reveals identity and pays stars
 // scaled to the met tribe's score (resolutions.md C3), so it must run after visibility.
 void check_meetings(GameState& s, const Rules& rules, PlayerId player,
-                    std::vector<std::string>* log);
+                    EventLog* log);
 
-// Serialises a StateView per docs/wire-protocol.md. `viewer` = kNoPlayer for full
-// observability. Fog is applied HERE, server-side: unexplored tiles are omitted entirely,
-// so a UI bug cannot leak the map.
 // True while the current player still has ANY available action anywhere -- units, cities,
 // tiles or research. Drives when End Turn lights up.
 bool has_any_available_action(const GameState& s, const Rules& rules);
@@ -142,8 +140,6 @@ void enumerate_research(const GameState& s, const Rules& rules, bool include_una
 // through apply(), so there is one implementation of what an action does. Rolls back on any
 // failure. Pass tile = kNoTile for the global actor (research, end turn).
 bool apply_compound(GameState& s, const Rules& rules, TileIdx tile, Verb verb, int target_slot,
-                    std::vector<std::string>* log);
-
-std::string state_view_json(const GameState& s, const Rules& rules, PlayerId viewer);
+                    EventLog* log);
 
 }  // namespace poly

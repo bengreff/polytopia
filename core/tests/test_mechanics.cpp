@@ -52,7 +52,7 @@ TEST("explorer: reveals fog immediately rather than spawning a unit") {
 
   s.cities[capital].pending_rewards = 1;
   s.cities[capital].level = 2;
-  std::vector<std::string> log;
+  EventLog log;
   CHECK(apply_compound(s, rules, s.cities[capital].tile, Verb::ChooseReward,
                        reward_to_slot(CityReward::Explorer), &log));
 
@@ -81,7 +81,7 @@ TEST("super unit: spawning a Giant shoves the unit occupying the city") {
 
   s.cities[capital].pending_rewards = 1;
   s.cities[capital].level = 5;
-  std::vector<std::string> log;
+  EventLog log;
   CHECK(apply_compound(s, rules, tile, Verb::ChooseReward,
                        reward_to_slot(CityReward::SuperUnit), &log));
 
@@ -516,13 +516,14 @@ TEST("ruin: every reward is reachable and names itself in the log") {
     const TileIdx tile = s.units[u].tile;
     s.tiles[tile].resource = Resource::Ruin;
     s.units[u].remove(UnitFlag::ArrivedThisTurn);
-    std::vector<std::string> log;
+    EventLog log;
     if (!apply_compound(s, rules, tile, Verb::Examine, tile_to_slot(tile), &log)) continue;
-    for (const std::string& line : log) {
-      // Every ruin outcome must announce itself in the shape the UI parses: "Ruin: <title> -- <body>".
-      if (line.rfind("Ruin: ", 0) != 0) continue;
-      CHECK(line.find(" -- ") != std::string::npos);
-      const std::string title = line.substr(6, line.find(" -- ") - 6);
+    for (const Event& e : log) {
+      // Assert on the KIND, not on prose. Matching a sentence only ever tested that I had
+      // written the same regex on both sides.
+      if (e.kind != EventKind::RuinReward) continue;
+      CHECK(e.ruin_reward != RuinReward::None);
+      const std::string title = std::to_string(static_cast<int>(e.ruin_reward));
       bool known = false;
       for (const std::string& t : seen) known = known || t == title;
       if (!known) seen.push_back(title);
@@ -565,7 +566,7 @@ namespace {
 // Places an improvement directly, bypassing cost and tech, and returns the city's population.
 int build_at(GameState& s, const Rules& rules, TileIdx tile, Improvement imp) {
   s.players[0].stars = 999;
-  std::vector<std::string> log;
+  EventLog log;
   const bool ok = apply_compound(s, rules, tile, Verb::Build, improvement_to_slot(imp), &log);
   CHECK(ok);
   return 0;
@@ -681,7 +682,7 @@ TEST("adjacency yields survive a capture") {
   // Every tile must agree with the board after the capture, whatever it was before.
   for (CityId c = 0; c < s.city_count; ++c) {
     if (s.cities[c].owner == 1) {
-      std::vector<std::string> log;
+      EventLog log;
       capture_city_for_test(s, rules, c, 0, &log);
       break;
     }
@@ -698,7 +699,7 @@ TEST("adjacency yields survive border growth") {
   const CityId capital = my_capital(s);
   s.cities[capital].level = 4;
   s.cities[capital].pending_rewards = 1;
-  std::vector<std::string> log;
+  EventLog log;
   CHECK(apply_compound(s, rules, s.cities[capital].tile, Verb::ChooseReward,
                        reward_to_slot(CityReward::BorderGrowth), &log));
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {

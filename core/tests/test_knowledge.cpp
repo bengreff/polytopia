@@ -8,6 +8,7 @@
 #include <string>
 
 #include "poly/game.hpp"
+#include "wire/state_view.hpp"
 #include "poly/mapgen.hpp"
 #include "poly/json.hpp"
 #include "testing.hpp"

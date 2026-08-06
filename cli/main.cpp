@@ -25,6 +25,7 @@
 #include "agents/agent.hpp"
 #include "agents/ladder.hpp"
 #include "agents/registry.hpp"
+#include "wire/state_view.hpp"
 
 namespace poly::audit {
 int run(int games, const Rules& rules, bool verbose);
@@ -221,8 +222,8 @@ std::string error_response(int id, const std::string& message) {
 // anything. The comment here promised "bots/scripted.cpp replaces this"; that file was never
 // written. `poly_agents` was already linked into this binary, so the fix is to call the
 // agent the ladder measures rather than to write a third policy that could drift from it.
-std::vector<std::string> advance_bots(GameState& s, const Rules& rules, int step_budget) {
-  std::vector<std::string> log;
+EventLog advance_bots(GameState& s, const Rules& rules, int step_budget) {
+  EventLog log;
 
   // Held across calls so the agent's RNG advances over the whole game instead of replaying
   // the same stream every time the human ends a turn.
@@ -533,7 +534,7 @@ std::string handle_request(const json::Value& request) {
     return w.text();
   }
 
-  std::vector<std::string> log;
+  EventLog log;
   if (method == "act") {
     // One human-scale action, driven through the phase machine by apply_compound.
     const auto tile = static_cast<TileIdx>(params["tile"].integer(-1));
@@ -570,9 +571,9 @@ std::string handle_request(const json::Value& request) {
     std::string out = "[";
     for (std::size_t i = 0; i < log.size(); ++i) {
       if (i != 0) out += ',';
-      json::Writer escaped;
-      escaped.value(log[i]);
-      out += escaped.text();
+      // Structured, with the sentence alongside. The browser can switch on `kind` instead of
+      // regex-matching prose, which is what it had to do while the engine wrote the copy.
+      out += event_json(log[i], g_rules);
     }
     out += ']';
     return out;

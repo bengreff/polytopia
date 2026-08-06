@@ -41,6 +41,7 @@ if(POLY_ASAN)
 endif()
 
 add_subdirectory(core)
+add_subdirectory(wire)
 add_subdirectory(agents)
 add_subdirectory(cli)
 

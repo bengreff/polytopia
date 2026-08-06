@@ -25,7 +25,7 @@ import {
   showCombatPreview, hideCombatPreview, openOption, closePopup, popupOpen,
   renderTechTree, closeTechTree, techTreeOpen,
   openLevelUp, closeLevelUp, levelUpOpen, levelUpCity,
-  showResult, closeResult, resultOpen, parseRuinLine, seedNewGameForm,
+  showResult, closeResult, resultOpen, seedNewGameForm,
 } from './hud.js';
 
 // No turn_limit key: games end by domination, and Perfection sets its own limit engine-side.
@@ -84,7 +84,7 @@ const SCAN_BUDGET = 40;
  * Engine log lines the UI has already said, in more detail, from the option it committed.
  * Everything else the engine reports is kept verbatim.
  */
-const ENGINE_LINE_ALREADY_SAID = /^(Trained a unit|Researched a technology|Captured a village)$/;
+const EVENT_ALREADY_SAID = new Set(['unit_trained', 'researched', 'village_captured']);
 
 class App {
   constructor() {
@@ -467,21 +467,23 @@ class App {
    * rolled SERVER-SIDE, so this log line is the only place the answer exists — and it must be
    * shown, not filed in the log panel under the bot chatter.
    */
+  /**
+   * The engine now sends STRUCTURED events — `{kind, text, tile, city, unit, value}` — instead
+   * of sentences. Switching on `kind` replaces the regex that used to recover fields by
+   * matching the engine's prose for a double hyphen, which made an English string the real
+   * contract between the two sides.
+   */
   reportActionLog(view) {
-    const lines = view && Array.isArray(view.log) ? view.log : [];
-    for (const line of lines) {
-      // The engine's generic summaries duplicate the line the UI just wrote, which already
-      // names the unit, the tech and the price. Its SPECIFIC lines — level-ups, ruin
-      // rewards, damage — say things the UI cannot know and are always kept.
-      if (ENGINE_LINE_ALREADY_SAID.test(String(line))) continue;
-      appendLog(line, 'sys', this.state ? this.state.turn : undefined);
+    const events = view && Array.isArray(view.log) ? view.log : [];
+    for (const e of events) {
+      // Kinds the UI has already narrated from the option it committed, which names the unit,
+      // the tech and the price. Everything else says something the UI cannot know.
+      if (EVENT_ALREADY_SAID.has(e.kind)) continue;
+      if (e.text) appendLog(e.text, 'sys', this.state ? this.state.turn : undefined);
     }
-    const ruin = lines.find((l) => /^Ruin:/i.test(String(l)));
-    if (ruin) {
-      const { title, body } = parseRuinLine(ruin);
-      showResult('ANCIENT RUINS', title, body);
-    }
-    return lines;
+    const ruin = events.find((e) => e.kind === 'ruin_reward');
+    if (ruin) showResult('ANCIENT RUINS', ruin.reward || 'Ruins', ruin.text || '');
+    return events;
   }
 
   /** Commit an option that the engine reported as `available`. */

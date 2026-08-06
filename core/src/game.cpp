@@ -5,7 +5,6 @@
 #include <cstring>
 #include <queue>
 
-#include "poly/json.hpp"
 #include "poly/mapgen.hpp"
 #include "poly/options.hpp"
 
@@ -81,7 +80,7 @@ int count_adjacent_improvements(const GameState& s, TileIdx tile, Improvement wa
 }
 
 void add_population(GameState& s, const Rules& rules, CityId city_id, int amount,
-                    std::vector<std::string>* log);
+                    EventLog* log);
 
 // What this tile contributes to its city's population, computed FROM THE BOARD.
 //
@@ -101,7 +100,7 @@ int tile_population_yield_impl(const GameState& s, const Rules& rules, TileIdx t
 // Recomputes `tile` and its eight neighbours, moving any difference into the owning city.
 // Called after ANY change to an improvement, so build order cannot matter.
 void resync_population_around(GameState& s, const Rules& rules, TileIdx tile,
-                              std::vector<std::string>* log) {
+                              EventLog* log) {
   const Coord c = s.dims.coord(tile);
   TileIdx affected[1 + kNeighbourCount];
   int count = 0;
@@ -125,7 +124,7 @@ void resync_population_around(GameState& s, const Rules& rules, TileIdx tile,
 // error-prone than just doing the board. A capture happens a few dozen times a game; 256 tiles
 // is nothing, and the audit's oracle found this exact gap by noticing a tile that had banked 3
 // population while the board said 2.
-void resync_population_board(GameState& s, const Rules& rules, std::vector<std::string>* log) {
+void resync_population_board(GameState& s, const Rules& rules, EventLog* log) {
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     Tile& tile = s.tiles[t];
     const int want = tile_population_yield_impl(s, rules, t);
@@ -491,7 +490,7 @@ void reveal_from_units(GameState& s, const Rules& rules, PlayerId player) {
 }
 
 void check_meetings(GameState& s, const Rules& rules, PlayerId player,
-                    std::vector<std::string>* log) {
+                    EventLog* log) {
   // Meeting a tribe is an EVENT, not a passive flag (resolutions.md C3): first sight of
   // another tribe's unit or city reveals their identity AND pays stars scaled to their
   // score. Modelling it as a flag would silently drop an economic mechanic.
@@ -521,7 +520,7 @@ void check_meetings(GameState& s, const Rules& rules, PlayerId player,
 namespace {
 
 void add_population(GameState& s, const Rules& rules, CityId city_id, int amount,
-                    std::vector<std::string>* log) {
+                    EventLog* log) {
   City& c = s.cities[city_id];
   c.population = static_cast<std::int16_t>(c.population + amount);
 
@@ -532,7 +531,7 @@ void add_population(GameState& s, const Rules& rules, CityId city_id, int amount
     c.population = static_cast<std::int16_t>(c.population - population_needed(s, rules, city_id));
     c.level = static_cast<std::int8_t>(c.level + 1);
     c.pending_rewards = static_cast<std::int8_t>(c.pending_rewards + 1);
-    if (log) log->push_back("City reached level " + std::to_string(c.level));
+    if (log) log->push_back(Event{EventKind::CityLevelUp, RuinReward::None, c.owner, city_id, kNoUnit, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, c.level, 0});
   }
 }
 
@@ -617,7 +616,7 @@ void recompute_city_connections(GameState& s, const Rules& rules, PlayerId playe
 // New territory reveals fog (R18) and can complete a route (R22), neither of which
 // claim_territory itself knows about.
 void claim_territory_and_resync(GameState& s, const Rules& rules, CityId city_id, int radius,
-                                std::vector<std::string>* log) {
+                                EventLog* log) {
   const PlayerId owner = s.cities[city_id].owner;
   claim_territory(s, city_id, radius);
   resync_population_board(s, rules, log);
@@ -1302,7 +1301,7 @@ UnitId spawn_unit(GameState& s, const Rules& rules, UnitType type, PlayerId owne
 // moment it is granted, revealing fog, then vanishes. Modelling it as a controllable unit is
 // why it appeared not to work at all: it spawned with no moves and nothing ever drove it.
 void run_explorer(GameState& s, const Rules& rules, PlayerId owner, TileIdx from,
-                  std::vector<std::string>* log) {
+                  EventLog* log) {
   const int budget = rules.unit(UnitType::Explorer).move;  // 12 in v2.16.3, not the wiki's 15
   TileIdx at = from;
   int revealed = 0;
@@ -1356,12 +1355,12 @@ void run_explorer(GameState& s, const Rules& rules, PlayerId owner, TileIdx from
   }
   check_meetings(s, rules, owner, log);
   if (log) {
-    log->push_back("Explorer revealed " + std::to_string(revealed) + " tiles");
+    log->push_back(Event{EventKind::ExplorerRevealed, RuinReward::None, owner, kNoCity, kNoUnit, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, revealed, 0});
   }
 }
 
 void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new_owner,
-                  std::vector<std::string>* log) {
+                  EventLog* log) {
   City& c = s.cities[city_id];
   const PlayerId old_owner = c.owner;
   c.owner = new_owner;
@@ -1397,7 +1396,7 @@ void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new
     c.population = static_cast<std::int16_t>(c.population - rules.connection_population);
   }
   if (log) {
-    log->push_back("Player " + std::to_string(new_owner) + " captured a city");
+    log->push_back(Event{EventKind::CityCaptured, RuinReward::None, new_owner, city_id, kNoUnit, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
   }
 
   // Domination is decided on capitals, so a player who has lost every city is out.
@@ -1411,7 +1410,7 @@ void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new
 }
 
 void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward reward,
-                  std::vector<std::string>* log) {
+                  EventLog* log) {
   City& c = s.cities[city_id];
   switch (reward) {
     case CityReward::Workshop: c.add(CityFlag::Workshop); break;
@@ -1438,14 +1437,14 @@ void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward r
         if (shove != kNoTile && shove != tile) {
           s.units[occupant].tile = shove;
           s.tiles[shove].unit = occupant;
-          if (log) log->push_back("The Giant shoved a unit aside");
+          if (log) log->push_back(Event{EventKind::OccupantShoved, RuinReward::None, kNoPlayer, city_id, occupant, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
         } else {
           kill_unit(s, occupant);
-          if (log) log->push_back("The Giant crushed a surrounded unit");
+          if (log) log->push_back(Event{EventKind::OccupantCrushed, RuinReward::None, kNoPlayer, city_id, occupant, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
         }
       }
       spawn_unit(s, rules, UnitType::Giant, c.owner, tile, city_id, false);
-      if (log) log->push_back("A Giant arrives");
+      if (log) log->push_back(Event{EventKind::SuperUnitArrived, RuinReward::None, c.owner, city_id, kNoUnit, kNoUnit, kNoTile, UnitType::Giant, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     default:
@@ -1485,7 +1484,7 @@ void resync_caches_after(GameState& s, const Rules& rules) {
   }
 }
 
-bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log,
+bool apply(GameState& s, const Rules& rules, Action action, EventLog* log,
            const ActionMask* precomputed) {
   // Legality is still the engine's job -- this only avoids RECOMPUTING it. A search has
   // already built the mask for exactly this state in order to pick the action, and paying
@@ -1577,10 +1576,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
             static_cast<std::int16_t>(s.units[attacker].hp - combat.defender_damage);
       }
       if (log) {
-        log->push_back("Attack for " + std::to_string(combat.attacker_damage / kHpScale) +
-                       (combat.retaliates
-                            ? ", retaliation " + std::to_string(combat.defender_damage / kHpScale)
-                            : ", no retaliation"));
+        log->push_back(Event{EventKind::Attacked, RuinReward::None, s.units[attacker].owner, kNoCity, attacker,
+                             defender, actor_tile, UnitType::Warrior, Improvement::None,
+                             Resource::None, Tech::Climbing,
+                             combat.attacker_damage / kHpScale,
+                             combat.retaliates ? combat.defender_damage / kHpScale : -1});
       }
       const TileIdx target_tile = s.units[defender].tile;
       const bool killed = !s.units[defender].alive();
@@ -1657,7 +1657,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
         c.tile = actor_tile;
         c.level = 1;
         claim_territory_and_resync(s, rules, city_id, rules.new_city_border, log);
-        if (log) log->push_back("Captured a village");
+        if (log) log->push_back(Event{EventKind::VillageCaptured, RuinReward::None, s.current_player, city_id, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       } else {
         const CityId city_id = city_at(s, actor_tile);
         if (city_id != kNoCity) capture_city(s, rules, city_id, s.current_player, log);
@@ -1686,7 +1686,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
         s.me().stars -= bridge ? 5 : 2;
         tile.add(bridge ? TileFlag::Bridge : TileFlag::Road);
         recompute_city_connections(s, rules, s.current_player);
-        if (log) log->push_back(bridge ? "Built a bridge" : "Built a road");
+        if (log) log->push_back(Event{bridge ? EventKind::BuiltBridge : EventKind::BuiltRoad, RuinReward::None, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
         break;
       }
       const ImprovementStats& stats = rules.improvement(imp);
@@ -1724,7 +1724,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       s.tiles[actor_tile].unit = id;
       s.cities[city_id].unit_count =
           static_cast<std::uint8_t>(s.cities[city_id].unit_count + 1);
-      if (log) log->push_back("Trained a unit");
+      if (log) log->push_back(Event{EventKind::UnitTrained, RuinReward::None, s.current_player, city_id, id, kNoUnit, actor_tile, type, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     case Verb::Research: {
@@ -1735,7 +1735,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       }
       s.me().stars -= rules.tech_cost(tech, city_count, s.me().has_tech(Tech::Philosophy));
       s.me().grant_tech(tech);
-      if (log) log->push_back("Researched a technology");
+      if (log) log->push_back(Event{EventKind::Researched, RuinReward::None, s.current_player, kNoCity, kNoUnit, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, tech, 0, 0});
       break;
     }
     case Verb::ChooseReward: {
@@ -1752,7 +1752,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       u.add(UnitFlag::HasRecovered);
       u.add(UnitFlag::TurnEnded);
       u.moves_left = 0;
-      if (log) log->push_back("Recovered " + std::to_string(amount) + " HP");
+      if (log) log->push_back(Event{EventKind::UnitHealed, RuinReward::None, u.owner, kNoCity, id, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, amount, 0});
       break;
     }
     case Verb::Promote: {
@@ -1761,7 +1761,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       // maxHealth += 5, THEN heal completely. No other stat changes. Once per unit.
       u.add(UnitFlag::Veteran);
       u.hp = static_cast<std::int16_t>(max_hp_for(rules, u));
-      if (log) log->push_back("Promoted to veteran");
+      if (log) log->push_back(Event{EventKind::UnitPromoted, RuinReward::None, s.current_player, kNoCity, id, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     case Verb::Heal: {
@@ -1784,7 +1784,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       }
       healer.add(UnitFlag::TurnEnded);
       healer.moves_left = 0;
-      if (log) log->push_back("Healed " + std::to_string(healed) + " nearby units");
+      if (log) log->push_back(Event{EventKind::UnitsHealed, RuinReward::None, healer.owner, kNoCity, id, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, healed, 0});
       break;
     }
     case Verb::Convert: {
@@ -1803,7 +1803,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       s.units[id].add(UnitFlag::TurnEnded);
       s.units[id].moves_left = 0;
       recompute_visibility(s, rules, converted.owner);
-      if (log) log->push_back("Converted an enemy unit");
+      if (log) log->push_back(Event{EventKind::UnitConverted, RuinReward::None, s.current_player, kNoCity, target, kNoUnit, kNoTile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     case Verb::UpgradeNaval: {
@@ -1815,20 +1815,22 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       s.units[id].type = into;
       s.units[id].add(UnitFlag::TurnEnded);
       s.units[id].moves_left = 0;
-      if (log) log->push_back("Upgraded a naval unit");
+      if (log) log->push_back(Event{EventKind::NavalUpgrade, RuinReward::None, s.current_player, kNoCity, id, kNoUnit, actor_tile, into, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     case Verb::Disband: {
       const UnitId id = s.tiles[actor_tile].unit;
       // Disband refunds half the unit's cost, rounded down.
-      s.me().stars += rules.unit(s.units[id].type).cost / 2;
+      const int refund = rules.unit(s.units[id].type).cost / 2;
+      s.me().stars += refund;
       kill_unit(s, id);
-      if (log) log->push_back("Disbanded a unit");
+      if (log) log->push_back(Event{EventKind::UnitDisbanded, RuinReward::None, s.current_player, kNoCity, id, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, refund, 0});
       break;
     }
     case Verb::Destroy: {
       // Scorched earth: the documented counterplay to losing a city, which only makes sense
       // because a captured city otherwise inherits everything.
+      const Improvement razed = s.tiles[actor_tile].improvement;
       s.tiles[actor_tile].improvement = Improvement::None;
       s.tiles[actor_tile].improvement_level = 0;
       // Scorched earth has to take the population BACK -- both this tile's own yield and any
@@ -1836,7 +1838,7 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       // previously removed the building and left the population it had granted, so razing a
       // Farm made the city keep the food.
       resync_population_around(s, rules, actor_tile, log);
-      if (log) log->push_back("Destroyed a building");
+      if (log) log->push_back(Event{EventKind::DestroyedBuilding, RuinReward::None, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, razed, Resource::None, Tech::Climbing, 0, 0});
       break;
     }
     case Verb::Examine: {
@@ -1889,11 +1891,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       switch (choice) {
         case kScrolls:
           s.me().grant_tech(free_tech);
-          if (log) log->push_back("Ruin: Scrolls of Wisdom -- a free technology");
+          if (log) log->push_back(Event{EventKind::RuinReward, RuinReward::ScrollsOfWisdom, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, free_tech, 0, 0});
           break;
         case kPopulation:
           add_population(s, rules, capital, 3, log);
-          if (log) log->push_back("Ruin: Population -- +3 to your capital");
+          if (log) log->push_back(Event{EventKind::RuinReward, RuinReward::Population, s.current_player, capital, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 3, 0});
           break;
         case kNewFriends: {
           // A VETERAN Swordsman on land, a veteran Rammer on water. Before 2.0.58 the land
@@ -1925,10 +1927,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
           if (u.tile == kNoTile) {
             --s.unit_count;  // nowhere to stand; fall back to stars
             s.me().stars += 10;
-            if (log) log->push_back("Ruin: Resources -- +10 stars");
+            if (log) log->push_back(Event{EventKind::RuinReward, RuinReward::Resources, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 10, 0});
           } else if (log) {
-            log->push_back(std::string("Ruin: New Friends -- a veteran ") +
-                           (on_water ? "Rammer" : "Swordsman"));
+            log->push_back(Event{EventKind::RuinReward, RuinReward::NewFriends,
+                                 s.current_player, kNoCity, id, kNoUnit, actor_tile, gift,
+                                 Improvement::None, Resource::None, Tech::Climbing, 0, 0});
           }
           break;
         }
@@ -1937,11 +1940,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
           // nothing. run_explorer() already existed and was reachable only from a city
           // level-up, never from a ruin.
           run_explorer(s, rules, s.current_player, actor_tile, log);
-          if (log) log->push_back("Ruin: Explorer -- a stretch of the map revealed");
+          if (log) log->push_back(Event{EventKind::RuinReward, RuinReward::Explorer, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 0, 0});
           break;
         default:
           s.me().stars += 10;
-          if (log) log->push_back("Ruin: Resources -- +10 stars");
+          if (log) log->push_back(Event{EventKind::RuinReward, RuinReward::Resources, s.current_player, kNoCity, kNoUnit, kNoUnit, actor_tile, UnitType::Warrior, Improvement::None, Resource::None, Tech::Climbing, 10, 0});
           break;
       }
 
@@ -2371,7 +2374,7 @@ void resync_derived_state(GameState& s, const Rules& rules) {
 }
 
 void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,
-                           std::vector<std::string>* log) {
+                           EventLog* log) {
   capture_city(s, rules, city, new_owner, log);
 }
 
@@ -2430,7 +2433,7 @@ CombatPreview preview_combat(const GameState& s, const Rules& rules, TileIdx fro
 // so there is exactly one implementation of what an action DOES -- this only bundles the
 // keystrokes. Any step failing rolls the whole thing back.
 bool apply_compound(GameState& s, const Rules& rules, TileIdx tile, Verb verb, int target_slot,
-                    std::vector<std::string>* log) {
+                    EventLog* log) {
   const GameState snapshot = s;
   const bool global = tile == kNoTile;
   const int select_slot = global ? kGlobalActorSlot : tile_to_slot(tile);
