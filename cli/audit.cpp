@@ -197,6 +197,81 @@ void check_state(const GameState& s, const Rules& rules, Report& report, std::ui
     }
   }
 
+  // EVERY CACHED DERIVED VALUE, checked by IDEMPOTENCE.
+  //
+  // Population was one instance of a general problem: the engine caches things it derives from
+  // the board -- the Besieged flag, ConnectedToCapital, explored tiles -- and recomputes them
+  // only at the handful of places someone remembered. Any other path that changes the board
+  // leaves them stale, and stale caches are silent.
+  //
+  // Rather than reimplement each rule (and risk the oracle being the wrong one), this asks the
+  // engine to recompute and asserts NOTHING CHANGES. That is the definition of a cache being
+  // in sync, it needs no second implementation, and it covers every cached value at once --
+  // including any added later.
+  {
+    GameState resynced = s;
+    resync_derived_state(resynced, rules);
+    for (CityId c = 0; c < s.city_count; ++c) {
+      if (resynced.cities[c].has(CityFlag::Besieged) != s.cities[c].has(CityFlag::Besieged)) {
+        report.fail("derived/siege-flag-in-sync",
+                    "city " + std::to_string(c) + " Besieged=" +
+                        std::to_string(s.cities[c].has(CityFlag::Besieged)) +
+                        " but the board says " +
+                        std::to_string(resynced.cities[c].has(CityFlag::Besieged)),
+                    seed, step);
+      }
+      if (resynced.cities[c].has(CityFlag::ConnectedToCapital) !=
+          s.cities[c].has(CityFlag::ConnectedToCapital)) {
+        report.fail("derived/city-connection-in-sync",
+                    "city " + std::to_string(c) + " ConnectedToCapital=" +
+                        std::to_string(s.cities[c].has(CityFlag::ConnectedToCapital)) +
+                        " but the board says " +
+                        std::to_string(resynced.cities[c].has(CityFlag::ConnectedToCapital)),
+                    seed, step);
+      }
+    }
+    for (PlayerId p = 0; p < s.player_count; ++p) {
+      for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+        if (resynced.explored[p].test(t) && !s.explored[p].test(t)) {
+          report.fail("derived/visibility-in-sync",
+                      "player " + std::to_string(p) + " should see tile " + std::to_string(t) +
+                          " but it is still fogged",
+                      seed, step);
+          break;
+        }
+      }
+    }
+  }
+
+  // Counts the engine keeps by hand, recomputed independently. These have no recompute
+  // function to lean on, so they DO need a second implementation -- but they are simple enough
+  // that the second implementation is obviously right.
+  for (CityId c = 0; c < s.city_count; ++c) {
+    if (s.cities[c].owner == kNoPlayer) continue;
+    int actual = 0;
+    for (UnitId u = 0; u < s.unit_count; ++u) {
+      if (s.units[u].alive() && s.units[u].home_city == c) ++actual;
+    }
+    if (s.cities[c].unit_count != actual) {
+      report.fail("derived/city-unit-count",
+                  "city " + std::to_string(c) + " has banked unit_count " +
+                      std::to_string(s.cities[c].unit_count) + " but owns " +
+                      std::to_string(actual) + " living units -- this gates Train, so a drift " +
+                      "here silently changes how many units a city may build",
+                  seed, step);
+    }
+  }
+  for (PlayerId p = 0; p < s.player_count; ++p) {
+    bool has_city = false;
+    for (CityId c = 0; c < s.city_count; ++c) {
+      if (s.cities[c].owner == p) has_city = true;
+    }
+    if (s.players[p].alive && !has_city) {
+      report.fail("derived/player-alive",
+                  "player " + std::to_string(p) + " is alive with no cities", seed, step);
+    }
+  }
+
   for (PlayerId p = 0; p < s.player_count; ++p) {
     if (s.players[p].stars < 0) {
       report.fail("state/stars-nonnegative",

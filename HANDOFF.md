@@ -411,6 +411,44 @@ board says 2."* Ownership is an input to every adjacency yield, so **capturing a
 changes what the border buildings are worth on both sides — and nothing recomputed it. Border
 growth had the same hole. Neither was reported by anyone; both now resync.
 
+### The general form: every CACHED derived value needs an oracle
+
+Population was one instance. The engine caches several things it derives from the board and
+recomputes each only where someone remembered:
+
+| cached | derived from | was recomputed at |
+|---|---|---|
+| `Tile::population_contribution` | improvements + ownership of the 8 neighbours | build only |
+| `CityFlag::Besieged` | is an enemy standing on the city | attack, capture, build |
+| `CityFlag::ConnectedToCapital` | the road/port network + ownership | `begin_turn`, road build |
+| `explored` (fog) | units + territory | move, `begin_turn` |
+
+Every other path left them stale, **and stale caches are silent**: a wrongly-connected city is
+wrongly *populated*, because a connection is worth population at both ends (R23). Fixing
+`ConnectedToCapital` visibly changed the game — MCTS pairings went from running to the 50-turn
+limit to winning in 10, because cities finally grow at the right rate.
+
+The oracle for a cached value is **idempotence**: ask the engine to recompute and assert nothing
+changes. No second implementation to get wrong, and it covers every cached value at once,
+including ones added later. That is `derived/siege-flag-in-sync`,
+`derived/city-connection-in-sync`, `derived/visibility-in-sync`, plus independent recounts for
+`City::unit_count` and `Player::alive`, which have no recompute function to lean on.
+
+**The fix is one choke point in `apply()`, not N mutation sites.** I patched four sites
+individually and the audit kept finding a fifth; that is the signal that per-site recompute is
+the wrong shape.
+
+### Two measurement mistakes worth not repeating
+
+- **I claimed the choke point cost 7×** (an MCTS pairing went 48s → 348s) and built a
+  verb-classification table to avoid it. Then I measured properly: forward-model throughput is
+  ~455k steps/sec with the choke point and ~390k without. **It is free.** The pairing got slower
+  because fixing connections made cities grow, so the boards are much bigger — a change in the
+  *game*, not in the cost of a step. The table bought nothing and is gone. §9 already said
+  "profile before optimising"; I spent three builds proving it again.
+- **A threshold I guessed reported a busy turn as a loop.** See above; thresholds are now
+  measured and printed.
+
 ### Cost, honestly
 
 Making unit selection ask the enumerator costs **MCTS about 33%** (48s vs ~36s for a 4-game

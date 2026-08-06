@@ -75,6 +75,16 @@ int population_needed(const GameState& s, const Rules& rules, CityId city);
 // something changed the board without resyncing, and the audit asserts they agree.
 int tile_population_yield(const GameState& s, const Rules& rules, TileIdx tile);
 
+// Recomputes every CACHED DERIVED value from the board: siege flags, city connections,
+// visibility, and per-tile population yields.
+//
+// This exists for the AUDIT, not as a safety net, and the distinction matters. Calling it
+// after every action would paper over exactly the bugs it is meant to expose. Its job is to be
+// IDEMPOTENT: running it on a legal position must change nothing, and any difference means
+// some path mutated the board without resyncing. That is a general oracle for cached state,
+// and it needs no second implementation that could itself be wrong.
+void resync_derived_state(GameState& s, const Rules& rules);
+
 // Test seam for capture, which is otherwise only reachable through a unit standing on a city
 // at the start of its turn -- too much choreography for a test about population bookkeeping.
 void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,

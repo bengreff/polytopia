@@ -706,3 +706,37 @@ TEST("adjacency yields survive border growth") {
              tile_population_yield(s, rules, t));
   }
 }
+
+TEST("cached derived state stays in sync with the board") {
+  // Siege flags, city connections and fog are all DERIVED and all CACHED, and each was
+  // recomputed only where someone remembered. The general oracle is idempotence: recomputing
+  // on a legal position must change nothing. This is the unit-test form of the audit's
+  // derived/* checks, so a regression shows up without running a 60-game sweep.
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules, 16, 9);
+  Pcg32 rng;
+  rng.seed(1234);
+  for (int step = 0; step < 1500; ++step) {
+    if (outcome(s, rules).has_value()) break;
+    ActionMask mask;
+    legal_actions(s, rules, mask);
+    if (mask.empty()) break;
+    std::int16_t slots[kActionSlots];
+    const int count = mask.collect(slots, kActionSlots);
+    if (!apply(s, rules, Action{slots[rng.bounded(static_cast<std::uint32_t>(count))]}, nullptr)) {
+      break;
+    }
+    GameState resynced = s;
+    resync_derived_state(resynced, rules);
+    for (CityId c = 0; c < s.city_count; ++c) {
+      CHECK_EQ(s.cities[c].has(CityFlag::Besieged),
+               resynced.cities[c].has(CityFlag::Besieged));
+      CHECK_EQ(s.cities[c].has(CityFlag::ConnectedToCapital),
+               resynced.cities[c].has(CityFlag::ConnectedToCapital));
+    }
+    for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+      CHECK_EQ(static_cast<int>(s.tiles[t].population_contribution),
+               tile_population_yield(s, rules, t));
+    }
+  }
+}

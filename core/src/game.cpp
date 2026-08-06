@@ -462,6 +462,34 @@ void recompute_visibility(GameState& s, const Rules& rules, PlayerId player) {
   }
 }
 
+// The UNIT half of visibility, without the full-map territory scan.
+//
+// Vision is purely ADDITIVE -- revealed tiles never re-fog (R18) -- so nothing ever has to be
+// recomputed from scratch; it only has to be extended. Splitting the two halves matters
+// because the territory scan is O(tiles) per player and territory changes on a handful of
+// verbs, while units move constantly. Calling the full version after every action cost MCTS 7x
+// (48s -> 348s per pairing), which is not a price a search-first project can pay for a scan
+// whose answer almost never changes.
+void reveal_from_units(GameState& s, const Rules& rules, PlayerId player) {
+  ExploredMap& seen = s.explored[player];
+  for (UnitId u = 0; u < s.unit_count; ++u) {
+    const Unit& unit = s.units[u];
+    if (unit.owner != player || !unit.alive() || unit.tile == kNoTile) continue;
+    int radius = rules.unit(unit.type).vision;
+    if (has_skill(static_cast<Skill>(rules.unit(unit.type).skills), Skill::Scout)) {
+      radius = std::max(radius, rules.scout_vision_radius);
+    }
+    if (s.tiles[unit.tile].terrain == Terrain::Mountain) radius += rules.mountain_vision_bonus;
+    const Coord c = s.dims.coord(unit.tile);
+    for (int dy = -radius; dy <= radius; ++dy) {
+      for (int dx = -radius; dx <= radius; ++dx) {
+        const Coord n{static_cast<std::int16_t>(c.x + dx), static_cast<std::int16_t>(c.y + dy)};
+        if (s.dims.contains(n)) seen.set(s.dims.index(n));
+      }
+    }
+  }
+}
+
 void check_meetings(GameState& s, const Rules& rules, PlayerId player,
                     std::vector<std::string>* log) {
   // Meeting a tribe is an EVENT, not a passive flag (resolutions.md C3): first sight of
@@ -526,12 +554,6 @@ void claim_territory(GameState& s, CityId city_id, int radius) {
   }
 }
 
-void claim_territory_and_resync(GameState& s, const Rules& rules, CityId city_id, int radius,
-                                std::vector<std::string>* log) {
-  claim_territory(s, city_id, radius);
-  resync_population_board(s, rules, log);
-}
-
 // A city is connected when a road/port network links it to the capital. Each connection gives
 // +1 population to BOTH ends (resolutions.md R23), which is why capturing a capital is
 // devastating: it collapses the whole network at once and drives the captured capital's
@@ -590,6 +612,19 @@ void recompute_city_connections(GameState& s, const Rules& rules, PlayerId playe
         s.cities[capital].population + (connected - previously) * rules.connection_population);
   }
   (void)rules;
+}
+
+// New territory reveals fog (R18) and can complete a route (R22), neither of which
+// claim_territory itself knows about.
+void claim_territory_and_resync(GameState& s, const Rules& rules, CityId city_id, int radius,
+                                std::vector<std::string>* log) {
+  const PlayerId owner = s.cities[city_id].owner;
+  claim_territory(s, city_id, radius);
+  resync_population_board(s, rules, log);
+  if (owner != kNoPlayer) {
+    recompute_city_connections(s, rules, owner);
+    recompute_visibility(s, rules, owner);
+  }
 }
 
 void update_siege_flags(GameState& s) {
@@ -1335,11 +1370,27 @@ void capture_city(GameState& s, const Rules& rules, CityId city_id, PlayerId new
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     if (s.tiles[t].city == city_id) s.tiles[t].owner = new_owner;
   }
+  // Territory changing hands invalidates more than population. A sea or road route through
+  // these tiles is severed for the loser and possibly created for the captor (R22), and
+  // territory reveals fog (R18). Only begin_turn recomputed either, so a captured city stayed
+  // wrongly connected -- and therefore wrongly POPULATED, since each connection is worth
+  // population to both ends -- for the rest of the turn.
+  //
   // Ownership is an INPUT to every adjacency yield -- `count_adjacent_improvements` only counts
   // neighbours owned by the same player -- so re-parenting a city's territory silently changes
   // what its border buildings are worth, and what the neighbouring player's are worth too.
   // Nothing recomputed that, so a captured border left stale population banked on both sides.
   resync_population_board(s, rules, log);
+  // Territory changing hands invalidates more than population. A sea or road route that ran
+  // through these tiles is severed for the loser and possibly created for the captor (R22),
+  // and territory reveals fog (R18) -- so both players' networks and both players' vision are
+  // stale until recomputed. Only begin_turn was doing it, which meant a captured city stayed
+  // wrongly connected, and therefore wrongly populated, for the rest of the turn.
+  for (const PlayerId p : {old_owner, new_owner}) {
+    if (p == kNoPlayer) continue;
+    recompute_city_connections(s, rules, p);
+    recompute_visibility(s, rules, p);
+  }
   // City level is retained. Population is NOT recomputed into a level change -- if the trade
   // network loss drives it negative it stays negative and the level holds (R17).
   if (c.has(CityFlag::Capital) && old_owner != kNoPlayer) {
@@ -1404,6 +1455,35 @@ void grant_reward(GameState& s, const Rules& rules, CityId city_id, CityReward r
 }
 
 }  // namespace
+
+// ONE CHOKE POINT FOR CACHED STATE.
+//
+// Siege flags, city connections and fog are all DERIVED from the board, and each was
+// recomputed only at the handful of sites someone remembered -- begin_turn, road building, an
+// attack. Every other path that razed a port, converted a body or handed over territory left
+// them stale, and stale caches are silent: a wrongly-connected city is wrongly POPULATED,
+// because a connection is worth population at both ends. I patched four sites individually and
+// the audit kept finding a fifth, which is the signal that per-site recompute is the wrong
+// shape.
+//
+// It recomputes EVERYTHING, deliberately. I first built a table classifying what each verb
+// could invalidate, because an MCTS pairing had gone from 48s to 348s and I assumed this was
+// why. Measuring says otherwise: forward-model throughput is ~470k steps/sec with this and
+// ~390k without, i.e. the choke point is free and the difference was noise. The pairing got
+// slower because fixing the connection bug made cities GROW properly, so the boards are much
+// bigger -- a change in the game, not in the cost of a step. The classification table bought
+// nothing and was one more thing to fall out of date, so it is gone.
+//
+// (HANDOFF section 9 already records "profile before optimising; the obvious culprit was not
+// the real one". I spent three builds proving it again.)
+void resync_caches_after(GameState& s, const Rules& rules) {
+  update_siege_flags(s);
+  for (PlayerId p = 0; p < s.player_count; ++p) {
+    if (!s.players[p].alive) continue;
+    recompute_city_connections(s, rules, p);
+    recompute_visibility(s, rules, p);
+  }
+}
 
 bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::string>* log,
            const ActionMask* precomputed) {
@@ -1617,6 +1697,11 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
       // buildings that were already standing. Recomputing the patch is what makes a Windmill
       // built before its Farms come good when they arrive.
       resync_population_around(s, rules, actor_tile, log);
+      // A PORT carries a city connection exactly as a road does (R22), and only the
+      // Road/Bridge branch above recomputed the network -- so building a port linked nothing
+      // until the next begin_turn happened to rebuild it. Recomputing for every building is
+      // both correct and cheap: builds are rare next to moves.
+      recompute_city_connections(s, rules, s.current_player);
       break;
     }
     case Verb::Train: {
@@ -1865,6 +1950,8 @@ bool apply(GameState& s, const Rules& rules, Action action, std::vector<std::str
     }
     default: break;
   }
+
+  resync_caches_after(s, rules);
 
   s.phase = Phase::Select;
   s.selected = kNoTile;
@@ -2272,6 +2359,15 @@ bool has_any_available_action(const GameState& s, const Rules& rules) {
 // wander off.
 int tile_population_yield(const GameState& s, const Rules& rules, TileIdx tile) {
   return tile_population_yield_impl(s, rules, tile);
+}
+
+void resync_derived_state(GameState& s, const Rules& rules) {
+  update_siege_flags(s);
+  for (PlayerId p = 0; p < s.player_count; ++p) {
+    recompute_city_connections(s, rules, p);
+    recompute_visibility(s, rules, p);
+  }
+  resync_population_board(s, rules, nullptr);
 }
 
 void capture_city_for_test(GameState& s, const Rules& rules, CityId city, PlayerId new_owner,
