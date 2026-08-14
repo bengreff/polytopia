@@ -88,13 +88,27 @@ void add_population(GameState& s, const Rules& rules, CityId city_id, int amount
 // and hand it to the city, which made it an event rather than a value: a Windmill built before
 // its Farms counted zero forever, and a Farm built beside an existing Windmill fed it nothing.
 // Anything derived from neighbours has to be recomputed when the neighbourhood changes.
+// The LEVEL of an adjacency building: how many friendly sources feed it, capped at 8.
+//
+// This is a real, named quantity in the game -- the wiki talks about a "level 3 Sawmill" and
+// says a Sawmill drops to level 0 when its Lumber Huts are destroyed -- and the engine did not
+// model it. It matters because a MARKET pays per LEVEL of each neighbour, not per neighbour.
+int adjacency_level(const GameState& s, const Rules& rules, TileIdx tile) {
+  const Tile& t = s.tiles[tile];
+  if (t.improvement == Improvement::None || t.owner == kNoPlayer) return 0;
+  const ImprovementStats& stats = rules.improvement(t.improvement);
+  if (stats.adjacency_source == Improvement::None) return 0;
+  return std::min(kAdjacencyLevelCap,
+                  count_adjacent_improvements(s, tile, stats.adjacency_source, t.owner));
+}
+
 int tile_population_yield_impl(const GameState& s, const Rules& rules, TileIdx tile) {
   const Tile& t = s.tiles[tile];
   if (t.improvement == Improvement::None || t.owner == kNoPlayer) return 0;
   const ImprovementStats& stats = rules.improvement(t.improvement);
   if (stats.adjacency_source == Improvement::None) return stats.population;
-  return stats.adjacency_population *
-         count_adjacent_improvements(s, tile, stats.adjacency_source, t.owner);
+  // Population follows the same capped level: a Forge is 2 population per level, a Sawmill 1.
+  return stats.adjacency_population * adjacency_level(s, rules, tile);
 }
 
 // Recomputes `tile` and its eight neighbours, moving any difference into the owning city.
@@ -111,6 +125,9 @@ void resync_population_around(GameState& s, const Rules& rules, TileIdx tile,
   }
   for (int i = 0; i < count; ++i) {
     Tile& t = s.tiles[affected[i]];
+    if (rules.improvement(t.improvement).adjacency_source != Improvement::None) {
+      t.improvement_level = static_cast<std::uint8_t>(adjacency_level(s, rules, affected[i]));
+    }
     const int want = tile_population_yield_impl(s, rules, affected[i]);
     const int delta = want - t.population_contribution;
     if (delta == 0) continue;
@@ -127,6 +144,9 @@ void resync_population_around(GameState& s, const Rules& rules, TileIdx tile,
 void resync_population_board(GameState& s, const Rules& rules, EventLog* log) {
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     Tile& tile = s.tiles[t];
+    if (rules.improvement(tile.improvement).adjacency_source != Improvement::None) {
+      tile.improvement_level = static_cast<std::uint8_t>(adjacency_level(s, rules, t));
+    }
     const int want = tile_population_yield_impl(s, rules, t);
     const int delta = want - tile.population_contribution;
     if (delta == 0) continue;
@@ -252,9 +272,26 @@ int player_income(const GameState& s, const Rules& rules, PlayerId player) {
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     const Tile& tile = s.tiles[t];
     if (tile.improvement != Improvement::Market || tile.owner != player) continue;
-    total += count_adjacent_improvements(s, t, Improvement::Sawmill, player);
-    total += count_adjacent_improvements(s, t, Improvement::Windmill, player);
-    total += count_adjacent_improvements(s, t, Improvement::Forge, player);
+    // SUM OF LEVELS, not a count of buildings. The engine counted neighbours, so a Market
+    // beside a level-4 Sawmill paid 1 star instead of 4 -- it could never pay more than the
+    // number of adjacent buildings, which caps at 8 and is usually 1 or 2. R21 said "sum of
+    // levels" all along and the wiki states it outright: "1 star per turn for each level of
+    // each adjacent sawmill, windmill or forge".
+    const Coord c = s.dims.coord(t);
+    for (const Coord off : kNeighbourOffsets) {
+      const Coord n{static_cast<std::int16_t>(c.x + off.x),
+                    static_cast<std::int16_t>(c.y + off.y)};
+      if (!s.dims.contains(n)) continue;
+      const TileIdx nt = s.dims.index(n);
+      const Tile& neighbour = s.tiles[nt];
+      if (neighbour.owner != player) continue;
+      if (neighbour.improvement != Improvement::Sawmill &&
+          neighbour.improvement != Improvement::Windmill &&
+          neighbour.improvement != Improvement::Forge) {
+        continue;
+      }
+      total += neighbour.improvement_level;
+    }
   }
   return total;
 }

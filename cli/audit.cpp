@@ -193,6 +193,23 @@ void check_state(const GameState& s, const Rules& rules, Report& report, std::ui
   // the check is an ORACLE: recompute it independently and assert equality. That catches every
   // path that mutates the board without resyncing -- build, destroy, capture, border growth,
   // a ruin -- rather than the one path someone remembered to test.
+  // `improvement_level` is a second cached derived value on the same tiles -- a Sawmill's
+  // level is its adjacent Lumber Hut count -- and a Market's income reads it, so drift here is
+  // silently wrong income rather than a visible error.
+  {
+    GameState probe = s;
+    resync_derived_state(probe, rules);
+    for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
+      if (probe.tiles[t].improvement_level != s.tiles[t].improvement_level) {
+        report.fail("derived/improvement-level-matches-board",
+                    "tile " + std::to_string(t) + " banked level " +
+                        std::to_string(s.tiles[t].improvement_level) + " but the board says " +
+                        std::to_string(probe.tiles[t].improvement_level),
+                    seed, step);
+      }
+    }
+  }
+
   for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
     const int want = tile_population_yield(s, rules, t);
     if (s.tiles[t].population_contribution != want) {

@@ -54,6 +54,12 @@ struct ImprovementStats {
   int adjacency_population{0};
 };
 
+// A Sawmill/Windmill/Forge has a LEVEL: the number of friendly adjacent sources feeding it.
+// "It is possible to get a level 0 Sawmill if every associated Lumber Hut is destroyed" (wiki,
+// Sawmill). The cap is stated on the Market page: "1 star per turn for each level of each
+// adjacent sawmill, windmill or forge, with a maximum level of 8."
+inline constexpr int kAdjacencyLevelCap = 8;
+
 struct ResourceStats {
   int harvest_cost{0};
   int population{0};

@@ -461,6 +461,24 @@ reporting the log. A ruin granting Population can level a city, so the find open
 undismissable modal and was only seen much later, out of context. Reporting now happens first
 and the result scrim outranks the level-up.
 
+**R38 — A Sawmill/Windmill/Forge has a LEVEL, and a Market pays per level.** `PRIMARY`
+Confirmed 2026-08-13 against the wiki, and it upgrades R21 from `OWNER` to `PRIMARY`.
+
+- *Sawmill:* "It is possible to get a level 0 Sawmill if every associated Lumber Hut is
+  destroyed." A building's level is its count of friendly adjacent sources — Lumber Huts for a
+  Sawmill, Farms for a Windmill, Mines for a Forge.
+- *Market:* "A Market provides 1 star per turn for each level of each adjacent sawmill, windmill
+  or forge, **with a maximum level of 8**."
+
+The engine counted BUILDINGS, not levels: `count_adjacent_improvements(market, Sawmill)`. So a
+Market beside a level-4 Sawmill paid 1 star instead of 4, and could never pay more than the
+number of adjacent buildings — usually one or two. R21 said "sum of levels" from the start; the
+implementation quietly did something else, and nothing compared them.
+
+`Tile::improvement_level` now carries the level for adjacency buildings as well as temples, is
+capped at 8, and is resynced by the same path as `population_contribution`. The audit oracles it
+(`derived/improvement-level-matches-board`), because it is now an input to income.
+
 ## Source hazard
 
 A widely-circulated post presenting itself as the 2.8.6 changelog contains *"Seeing opponent's

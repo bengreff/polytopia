@@ -741,3 +741,50 @@ TEST("cached derived state stays in sync with the board") {
     }
   }
 }
+
+TEST("market: pays one star per LEVEL of each adjacent sawmill, not one per building") {
+  // Wiki, Market: "A Market provides 1 star per turn for each level of each adjacent sawmill,
+  // windmill or forge, with a maximum level of 8." Wiki, Sawmill: a Sawmill's LEVEL is how many
+  // friendly Lumber Huts feed it -- "it is possible to get a level 0 Sawmill if every
+  // associated Lumber Hut is destroyed". The engine counted BUILDINGS, so a Market beside a
+  // level-4 Sawmill paid 1 instead of 4 and could never pay more than its neighbour count.
+  const Rules rules = Rules::defaults();
+  GameState s = game(rules);
+  const CityId capital = my_capital(s);
+  const Coord c = s.dims.coord(s.cities[capital].tile);
+
+  // A 3x3 patch we control: sawmill in the middle, market beside it, huts around the sawmill.
+  const auto at = [&](int dx, int dy) {
+    return s.dims.index(Coord{static_cast<std::int16_t>(c.x + dx),
+                              static_cast<std::int16_t>(c.y + dy)});
+  };
+  if (c.x < 3 || c.y < 3 || c.x + 3 >= s.dims.width || c.y + 3 >= s.dims.height) return;
+  for (int dx = -1; dx <= 3; ++dx) {
+    for (int dy = -1; dy <= 3; ++dy) {
+      const TileIdx t = at(dx, dy);
+      s.tiles[t].terrain = Terrain::Field;
+      s.tiles[t].owner = 0;
+      s.tiles[t].city = capital;
+      s.tiles[t].improvement = Improvement::None;
+      s.tiles[t].improvement_level = 0;
+      s.tiles[t].population_contribution = 0;
+    }
+  }
+  const TileIdx sawmill = at(2, 2);
+  const TileIdx market = at(3, 2);
+  s.tiles[sawmill].improvement = Improvement::Sawmill;
+  s.tiles[market].improvement = Improvement::Market;
+  // Three Lumber Huts touching the sawmill -> a level 3 sawmill.
+  for (const auto off : {std::pair{1, 1}, std::pair{1, 2}, std::pair{1, 3}}) {
+    s.tiles[at(off.first, off.second)].improvement = Improvement::LumberHut;
+  }
+  resync_derived_state(s, rules);
+
+  CHECK_EQ(static_cast<int>(s.tiles[sawmill].improvement_level), 3);
+  // The market is the only income source outside cities, so the level shows up directly.
+  int city_total = 0;
+  for (CityId ci = 0; ci < s.city_count; ++ci) {
+    if (s.cities[ci].owner == 0) city_total += city_income(s, rules, ci);
+  }
+  CHECK_EQ(player_income(s, rules, 0) - city_total, 3);
+}
