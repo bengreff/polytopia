@@ -410,15 +410,22 @@ void reachable_tiles(const GameState& s, const Rules& rules, UnitId unit_id, Act
   // Movement is destination-only; the engine routes (resolutions.md R19). So this is a
   // bounded BFS over move points rather than a path enumeration -- which is exactly why the
   // action space needs no path encoding and the ~186 head holds.
-  std::vector<int> cost(static_cast<std::size_t>(s.tile_count()), -1);
-  std::queue<TileIdx> frontier;
-  cost[static_cast<std::size_t>(u.tile)] = 0;
-  frontier.push(u.tile);
+  // STACK SCRATCH, not heap. Profiling a self-play run put `operator new`, `malloc`, `free`
+  // and `std::deque<short>::__add_back_capacity` at the top -- the forward model's real cost
+  // was allocating and freeing this BFS's working set, once per call, on the hottest path in
+  // the project. GameState is already a fixed-size POD for exactly this reason; its scratch
+  // should be too. kMaxTiles is 1024, so this is 6KB of stack and no allocator traffic.
+  int cost[kMaxTiles];
+  TileIdx frontier[kMaxTiles];
+  int head = 0, tail = 0;
+  const int live = s.tile_count();
+  for (int i = 0; i < live; ++i) cost[i] = -1;
+  cost[u.tile] = 0;
+  frontier[tail++] = u.tile;
 
-  while (!frontier.empty()) {
-    const TileIdx current = frontier.front();
-    frontier.pop();
-    const int spent = cost[static_cast<std::size_t>(current)];
+  while (head != tail) {
+    const TileIdx current = frontier[head++];
+    const int spent = cost[current];
     if (spent >= u.moves_left) continue;
 
     // Zone of Control: entering a tile adjacent to an enemy consumes ALL remaining movement
@@ -444,13 +451,13 @@ void reachable_tiles(const GameState& s, const Rules& rules, UnitId unit_id, Act
 
       const int next_cost = spent + 1;
       if (next_cost > u.moves_left) continue;
-      if (cost[static_cast<std::size_t>(next)] >= 0 &&
-          cost[static_cast<std::size_t>(next)] <= next_cost) {
+      if (cost[next] >= 0 &&
+          cost[next] <= next_cost) {
         continue;
       }
-      cost[static_cast<std::size_t>(next)] = next_cost;
+      cost[next] = next_cost;
       out.set(tile_to_slot(next));
-      frontier.push(next);
+      frontier[tail++] = next;
     }
   }
 }
@@ -611,15 +618,19 @@ void recompute_city_connections(GameState& s, const Rules& rules, PlayerId playe
 
   // Flood the road network from the capital. Roads and ports carry the link; a tile owned by
   // an enemy never does -- sea routes may cross NEUTRAL water but not enemy territory (R22).
-  std::vector<bool> seen(static_cast<std::size_t>(s.tile_count()), false);
-  std::queue<TileIdx> frontier;
-  frontier.push(s.cities[capital].tile);
-  seen[static_cast<std::size_t>(s.cities[capital].tile)] = true;
+  // Stack scratch for the same reason as reachable_tiles: this runs for every player after
+  // every action, so a heap allocation here is an allocation on the hot path.
+  bool seen[kMaxTiles];
+  TileIdx frontier[kMaxTiles];
+  int head = 0, tail = 0;
+  const int live = s.tile_count();
+  for (int i = 0; i < live; ++i) seen[i] = false;
+  frontier[tail++] = s.cities[capital].tile;
+  seen[s.cities[capital].tile] = true;
   int connected = 0;
 
-  while (!frontier.empty()) {
-    const TileIdx at = frontier.front();
-    frontier.pop();
+  while (head != tail) {
+    const TileIdx at = frontier[head++];
     const CityId here = city_at(s, at);
     if (here != kNoCity && s.cities[here].owner == player && here != capital) {
       s.cities[here].add(CityFlag::ConnectedToCapital);
@@ -631,14 +642,14 @@ void recompute_city_connections(GameState& s, const Rules& rules, PlayerId playe
                     static_cast<std::int16_t>(c.y + off.y)};
       if (!s.dims.contains(n)) continue;
       const TileIdx t = s.dims.index(n);
-      if (seen[static_cast<std::size_t>(t)]) continue;
+      if (seen[t]) continue;
       const Tile& tile = s.tiles[t];
       if (tile.owner != kNoPlayer && tile.owner != player) continue;  // never through enemies
       const bool carries = tile.has(TileFlag::Road) || tile.has(TileFlag::Bridge) ||
                            tile.improvement == Improvement::Port || city_at(s, t) != kNoCity;
       if (!carries) continue;
-      seen[static_cast<std::size_t>(t)] = true;
-      frontier.push(t);
+      seen[t] = true;
+      frontier[tail++] = t;
     }
   }
 
@@ -933,6 +944,12 @@ Availability can_build(const GameState& s, const Rules& rules, TileIdx tile_idx,
     reason = BlockReason::NoResource;
     return Availability::Blocked;
   }
+  // AFFORDABILITY BEFORE THE BOARD SCAN. The per-city-limit test below walks every tile, and
+  // this function is called once per tile per improvement by legal_select -- so the scan made
+  // legality generation O(tiles^2 x improvements), and it was the hottest thing in the engine.
+  // Both checks return non-Available, so the only difference is which reason is reported, and
+  // "you cannot afford it" is the more useful of the two anyway.
+  if (s.me().stars < stats.cost) return Availability::CannotAfford;
   if (stats.per_city_limit > 0 && tile.city != kNoCity) {
     int existing = 0;
     for (TileIdx t = 0; t < static_cast<TileIdx>(s.tile_count()); ++t) {
@@ -943,7 +960,6 @@ Availability can_build(const GameState& s, const Rules& rules, TileIdx tile_idx,
       return Availability::Blocked;
     }
   }
-  if (s.me().stars < stats.cost) return Availability::CannotAfford;
   return Availability::Available;
 }
 
@@ -987,7 +1003,11 @@ void legal_select(const GameState& s, const Rules& rules, ActionMask& mask) {
   // costs nothing measurable and still asks the enumerator the question that matters, which is
   // "does this spent unit have anything left".
   {
-    std::vector<Option> unit_options;
+    // THREAD_LOCAL SCRATCH. A fresh vector here means a malloc/free per legality generation,
+    // which profiling showed as the last allocator traffic on the hot path. Reusing the buffer
+    // keeps its capacity between calls; thread_local rather than static because the whole point
+    // of a POD GameState is that many environments step in parallel.
+    static thread_local std::vector<Option> unit_options;
     for (UnitId u = 0; u < s.unit_count; ++u) {
       const Unit& unit = s.units[u];
       if (!unit.alive() || unit.owner != s.current_player || unit.tile == kNoTile) continue;
