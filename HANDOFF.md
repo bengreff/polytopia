@@ -38,12 +38,13 @@ Paste this file as the prompt for the next session.
 
 ## What exists
 
-- **Repo `~/polytopia`:** everything is **staged but not committed**. Claude Code's
-  permission check blocked both `git commit` and `gh repo create bengreff/polytopia --public
-  --source . --remote origin --push`. Ben wants a commit to `main` and a push to a new public
-  repo `bengreff/polytopia`; run those once permission is granted. The staged change removes
-  the old from-memory engine and adds the real-code engine, the tools and the design docs.
-  `game/` stays ignored.
+- **Repo `~/polytopia`:**
+  - Everything is committed to `main` locally (`ef8e537` and later). The history holds no game
+    files (checked).
+  - **Not pushed:** the permission check blocked `gh repo create bengreff/polytopia --public
+    --source . --remote origin --push` again. Ben can run it himself (`! gh repo create ...`) or
+    allow it.
+  - `game/` stays ignored.
 - **`game/`** is in .gitignore and contains Midjiwan's files. Never commit or publish it.
   - `game/android/`: APKMirror bundle of **2.17.3.16375**, signed by Midjiwan. Game version
     123, logic data version 28.
