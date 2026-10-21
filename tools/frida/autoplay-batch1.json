@@ -1,0 +1,58 @@
+[
+ {
+  "mode": 2,
+  "mapPreset": 3,
+  "mapSize": 11,
+  "opponents": 1,
+  "difficulty": 3,
+  "tribe": 7,
+  "turns": 20
+ },
+ {
+  "mode": 2,
+  "mapPreset": 6,
+  "mapSize": 14,
+  "opponents": 2,
+  "difficulty": 2,
+  "tribe": 13,
+  "turns": 20
+ },
+ {
+  "mode": 1,
+  "mapPreset": 1,
+  "mapSize": 16,
+  "opponents": 3,
+  "difficulty": 1,
+  "tribe": 4,
+  "turns": 30
+ },
+ {
+  "mode": 2,
+  "mapPreset": 4,
+  "mapSize": 16,
+  "opponents": 3,
+  "difficulty": 0,
+  "tribe": 10,
+  "turns": 20
+ },
+ {
+  "mode": 5,
+  "rulesMode": 2,
+  "mapPreset": 5,
+  "mapSize": 14,
+  "opponents": 2,
+  "difficulty": 3,
+  "tribe": 7,
+  "turns": 20
+ },
+ {
+  "mode": 5,
+  "rulesMode": 1,
+  "mapPreset": 2,
+  "mapSize": 18,
+  "opponents": 3,
+  "difficulty": 1,
+  "tribe": 13,
+  "turns": 20
+ }
+]

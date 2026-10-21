@@ -1,0 +1,1 @@
+[{"assembly": "GameLogicAssembly", "cls": "MapGenerator", "method": "GenerateInternal", "argc": 3, "depth": 0, "backtrace": false}, {"assembly": "GameLogicAssembly", "cls": "MapGenerator", "method": "ClearMapData", "argc": 1, "depth": 0}, {"assembly": "GameLogicAssembly", "cls": "ActionUtils", "method": "AddScore", "argc": 3, "depth": 0, "backtrace": false}]

@@ -1,0 +1,162 @@
+[
+ {
+  "assembly": "PolytopiaAssembly",
+  "cls": "GameManager",
+  "method": "CreateSinglePlayerGame",
+  "argc": 0,
+  "depth": 0
+ },
+ {
+  "assembly": "PolytopiaAssembly",
+  "cls": "ClientBase",
+  "method": "CreateSession",
+  "argc": 2,
+  "depth": 4
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "CreateLocalGame",
+  "argc": 4,
+  "depth": 4,
+  "retDepth": 1,
+  "snapshots": [
+   {
+    "ret": true
+   }
+  ]
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "CreateAIOpponent",
+  "argc": 5,
+  "retDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "AddAIOpponent",
+  "argc": 4,
+  "depth": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameSettings",
+  "method": "GetMapGeneratorSettings",
+  "argc": 0,
+  "selfDepth": 2,
+  "retDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "GenerateInternal",
+  "argc": 3,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "GenerateMapFromNoise",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "TryGenerateMapFromIslands",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "AddContinents",
+  "argc": 7,
+  "depth": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "GeneratePlayerCapitalPositions",
+  "argc": 2,
+  "depth": 1
+ },
+ {
+  "assembly": "PolytopiaAssembly",
+  "cls": "ClientBase",
+  "method": "SendCommand",
+  "argc": 1,
+  "depth": 2
+ },
+ {
+  "assembly": "PolytopiaAssembly",
+  "cls": "ClientBase",
+  "method": "OnFinishedProcessingActions",
+  "argc": 0,
+  "backtrace": false,
+  "snapshots": [
+   {
+    "field": "currentGameState"
+   }
+  ]
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "StartMatchCommand",
+  "method": "Execute",
+  "argc": 1,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "AI",
+  "method": "GetMove",
+  "argc": 3,
+  "depth": 1,
+  "retDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "CommandTriggerUtils",
+  "method": "TryGetTriggerCommand",
+  "argc": 2,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionUtils",
+  "method": "LevelUpCity",
+  "argc": 3,
+  "depth": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "CityRewardCommand",
+  "method": "Execute",
+  "argc": 1,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionUtils",
+  "method": "AddScore",
+  "argc": 3,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionUtils",
+  "method": "RemoveScore",
+  "argc": 2,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "ClearMapData",
+  "argc": 1,
+  "depth": 0
+ }
+]

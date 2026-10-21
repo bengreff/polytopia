@@ -1,0 +1,130 @@
+[
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "CreateLocalGame",
+  "argc": 4,
+  "depth": 3,
+  "retDepth": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "CreateAIOpponent",
+  "argc": 5
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "AddAIOpponent",
+  "argc": 4
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "AddNaturePlayer",
+  "argc": 1,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "GenerateMap",
+  "argc": 1,
+  "depth": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameSettings",
+  "method": "ApplyGameTypeDefaults",
+  "argc": 2,
+  "selfDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameSettings",
+  "method": "GetMapGeneratorSettings",
+  "argc": 0,
+  "selfDepth": 2,
+  "retDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "Generate",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGenerator",
+  "method": "GenerateWithSeed",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "MapGeneratorPreNaval",
+  "method": "Generate",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "PolytopiaAssembly",
+  "cls": "SettingsUtils",
+  "method": "GetOrCreateRandomSeed",
+  "argc": 0
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionManager",
+  "method": "ExecuteCommand",
+  "argc": 2,
+  "depth": 2,
+  "snapshot": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionManager",
+  "method": "ExecuteCommands",
+  "argc": 1,
+  "depth": 3
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "GameStateUtils",
+  "method": "PerformCommands",
+  "argc": 4,
+  "depth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "ActionManagerUtils",
+  "method": "PerformAllQueuedActions",
+  "argc": 1,
+  "depth": 0,
+  "backtrace": false
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "AI",
+  "method": "GetMove",
+  "argc": 3,
+  "depth": 1,
+  "retDepth": 2
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "CommandTriggerUtils",
+  "method": "TryGetTriggerCommand",
+  "argc": 2,
+  "depth": 1
+ },
+ {
+  "assembly": "GameLogicAssembly",
+  "cls": "StartMatchCommand",
+  "method": "Execute",
+  "argc": 1,
+  "depth": 0
+ }
+]

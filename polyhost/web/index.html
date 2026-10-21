@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Polytopia, real rules</title>
+<style>
+  :root { --ink: #fff; --dim: #b9c0cc; --card: rgba(8, 10, 16, .92); --gold: #ffcf3f; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--ink);
+               font: 15px/1.35 "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+
+  #hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 38px;
+         text-align: center; text-shadow: 0 2px 4px #000; pointer-events: none; }
+  #hud small { display: block; font-style: italic; font-size: 17px; color: var(--ink); }
+  #hud b { font-size: 34px; font-weight: 400; }
+  #hud .star { color: var(--gold); }
+
+  #banner { position: fixed; top: 92px; left: 50%; transform: translateX(-50%); padding: 8px 18px; border-radius: 20px;
+            background: var(--card); font-size: 15px; pointer-events: none; transition: opacity .4s; white-space: nowrap; }
+
+  .roundbar { position: fixed; bottom: 14px; display: flex; gap: 18px; }
+  #leftbar { left: 18px; } #rightbar { right: 18px; }
+  .round { width: 74px; text-align: center; cursor: pointer; }
+  .round .disc { width: 66px; height: 66px; margin: 0 auto; border-radius: 50%; border: 3px solid #fff; background: #111;
+                 display: flex; align-items: center; justify-content: center; font-size: 30px; box-shadow: 0 3px 8px rgba(0,0,0,.6); }
+  .round span { display: block; font-style: italic; font-size: 14px; margin-top: 3px; text-shadow: 0 1px 3px #000; }
+  .round.pulse .disc { animation: pulse 1.2s ease-in-out infinite; border-color: var(--gold); }
+  .round.off { opacity: .35; pointer-events: none; }
+  @keyframes pulse { 50% { transform: scale(1.09); box-shadow: 0 0 22px var(--gold); } }
+
+  #card { position: fixed; left: 50%; bottom: 112px; transform: translateX(-50%); width: min(620px, 94vw);
+          background: var(--card); border-radius: 22px; padding: 14px 18px 12px; display: none; }
+  #card h3 { margin: 0; font-size: 24px; font-weight: 500; font-style: italic; }
+  #card p { margin: 2px 0 10px; color: var(--dim); font-size: 16px; }
+  #card .close { position: absolute; right: 14px; top: 12px; width: 30px; height: 30px; border-radius: 50%; background: #fff;
+                 color: #000; display: flex; align-items: center; justify-content: center; cursor: pointer; font-weight: 700; }
+  #actions { display: flex; flex-wrap: wrap; gap: 12px 14px; }
+  .act { width: 84px; text-align: center; cursor: pointer; position: relative; }
+  .act .disc { width: 62px; height: 62px; margin: 0 auto; border-radius: 50%; background: #2b8be0; display: flex;
+               align-items: center; justify-content: center; font-size: 28px; border: 2px solid rgba(255,255,255,.85); }
+  .act .cost { position: absolute; top: -6px; right: 6px; font-size: 15px; text-shadow: 0 1px 3px #000; }
+  .act .cost::before { content: "★"; color: var(--gold); margin-right: 1px; }
+  .act span { display: block; font-size: 13px; margin-top: 4px; line-height: 1.15; }
+  .act.off { opacity: .4; cursor: default; }
+  .act.unit .disc { background: #3a7d3a; } .act.danger .disc { background: #8a2b2b; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.72); display: none; align-items: center; justify-content: center; z-index: 5; }
+  .panel { background: #10141c; border-radius: 22px; padding: 20px 22px; max-width: 96vw; max-height: 88vh; overflow: auto; }
+  .panel h2 { margin: 0 0 12px; font-weight: 500; font-style: italic; }
+  .tree { display: grid; grid-template-columns: repeat(5, 150px); gap: 14px; }
+  .branch { display: flex; flex-direction: column; gap: 8px; }
+  .tech { border-radius: 14px; padding: 8px 10px; background: #1d2330; border: 2px solid #2a3242; font-size: 14px; cursor: default; }
+  .tech.have { background: #1f5fa8; border-color: #6fb0ff; }
+  .tech.can { border-color: var(--gold); cursor: pointer; }
+  .tech.can:hover { background: #2a3550; }
+  .tech .price { float: right; } .tech .price::before { content: "★"; color: var(--gold); }
+  .tech.tier2 { margin-left: 10px; } .tech.tier3 { margin-left: 20px; }
+  .choice { display: flex; gap: 14px; margin-top: 8px; }
+  .choice button { flex: 1; font: inherit; font-size: 18px; padding: 16px 18px; border-radius: 16px; border: 2px solid var(--gold);
+                   background: #2b2410; color: #fff; cursor: pointer; }
+  .form { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: center; min-width: 300px; }
+  select { font: inherit; padding: 6px; border-radius: 8px; background: #1d2330; color: #fff; border: 1px solid #39435a; }
+  .btn { font: inherit; padding: 10px 18px; border-radius: 12px; border: 0; background: #2b8be0; color: #fff; cursor: pointer; margin-top: 14px; }
+  .muted { color: var(--dim); font-size: 13px; }
+  #log { font-size: 14px; color: var(--dim); max-height: 50vh; overflow: auto; min-width: 320px; }
+  #toast { position: fixed; top: 132px; left: 50%; transform: translateX(-50%); background: var(--card); border-radius: 14px;
+           padding: 8px 14px; font-size: 14px; color: var(--dim); max-width: 90vw; opacity: 0; transition: opacity .4s; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div id="hud">
+  <div><small>Score</small><b id="score">0</b></div>
+  <div><small>Stars (<span id="income">+0</span>)</small><b><span class="star">★</span><span id="stars">0</span></b></div>
+  <div><small>Turn</small><b id="turn">0</b></div>
+</div>
+<div id="banner"></div>
+<div id="toast"></div>
+
+<div id="card">
+  <div class="close" id="closecard">✕</div>
+  <h3 id="cardtitle"></h3>
+  <p id="cardtext"></p>
+  <div id="actions"></div>
+</div>
+
+<div class="roundbar" id="leftbar">
+  <div class="round" id="menubtn"><div class="disc">☰</div><span>Menu</span></div>
+  <div class="round" id="logbtn"><div class="disc">📜</div><span>Bot's turn</span></div>
+</div>
+<div class="roundbar" id="rightbar">
+  <div class="round" id="techbtn"><div class="disc">🧪</div><span>Tech Tree</span></div>
+  <div class="round" id="endbtn"><div class="disc">✓</div><span>End Turn</span></div>
+</div>
+
+<div class="overlay" id="techview"><div class="panel"><h2>Tech Tree</h2><div class="tree" id="tree"></div>
+  <p class="muted">Gold border: you can research it now. Click to research. Blue: researched.</p></div></div>
+<div class="overlay" id="choiceview"><div class="panel"><h2 id="choicetitle">City upgrade</h2><div id="choices"></div></div></div>
+<div class="overlay" id="logview"><div class="panel"><h2>Bot's last turn</h2><div id="log"></div></div></div>
+<div class="overlay" id="menuview"><div class="panel"><h2>New game</h2>
+  <div class="form">
+    <label>Your tribe</label><select id="tribe"></select>
+    <label>Bot tribe</label><select id="opponent"></select>
+    <label>Bot difficulty</label><select id="difficulty"><option value="0">Easy</option><option value="1" selected>Normal</option><option value="2">Hard</option><option value="3">Crazy</option></select>
+    <label>Game mode</label><select id="mode"><option value="2" selected>Domination</option><option value="1">Perfection</option><option value="4">Might</option></select>
+    <label>Map type</label><select id="map"><option value="1">Drylands</option><option value="2">Lakes</option><option value="3" selected>Continents</option><option value="6">Pangea</option><option value="4">Archipelago</option><option value="5">Water world</option></select>
+    <label>Map size</label><select id="size"><option value="11" selected>Tiny 11×11</option><option value="14">Small 14×14</option><option value="16">Normal 16×16</option><option value="18">Large 18×18</option></select>
+    <label>Fog</label><select id="reveal"><option value="0">On</option><option value="1">Reveal map</option></select>
+  </div>
+  <button class="btn" id="newgame">Start new game</button>
+  <p class="muted">Rules, map generation and the bot are the game's own compiled code (Android 2.17.3), loaded without Unity.<br>
+  Drag to pan, scroll or pinch to zoom. Tap a unit, then a highlighted tile. Tap the unit again to select its tile.</p>
+</div></div>
+<script src="app.js"></script>
+</body>
+</html>

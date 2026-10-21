@@ -1,0 +1,13 @@
+[
+ {"assembly": "GameLogicAssembly", "cls": "MapGenerator", "method": "GenerateInternal", "argc": 3, "depth": 0, "backtrace": false},
+ {"assembly": "GameLogicAssembly", "cls": "MapGenerator", "method": "Generate", "argc": 4, "depth": 0, "snapshots": [{"arg": 1}]},
+ {"assembly": "GameLogicAssembly", "cls": "MapFairnessCalculations", "method": "GetInequality", "argc": 1, "depth": 0, "backtrace": false},
+ {"assembly": "GameLogicAssembly", "cls": "GameStateUtils", "method": "AddAIOpponent", "argc": 4, "depth": 0},
+ {"assembly": "GameLogicAssembly", "cls": "GameStateUtils", "method": "SetPlayerColors", "argc": 1, "depth": 0},
+ {"assembly": "GameLogicAssembly", "cls": "GameStateUtils", "method": "CreateLocalGame", "argc": 4, "depth": 0, "snapshots": [{"ret": true}]},
+ {"assembly": "GameLogicAssembly", "cls": "ActionUtils", "method": "TrainUnitScored", "argc": 4, "depth": 0, "snapshots": [{"arg": 1}]},
+ {"assembly": "GameLogicAssembly", "cls": "GameSettings", "method": "ApplyGameTypeDefaults", "argc": 2, "selfDepth": 3},
+ {"assembly": "GameLogicAssembly", "cls": "GameSettings", "method": "GetMapGeneratorSettings", "argc": 0, "selfDepth": 3, "retDepth": 2},
+ {"assembly": "GameLogicAssembly", "cls": "GameRules", "method": "LoadPreset", "argc": 1, "depth": 0},
+ {"assembly": "GameLogicAssembly", "cls": "StartMatchCommand", "method": ".ctor", "argc": 1, "depth": 0}
+]
