@@ -7,6 +7,7 @@
 //   polyhost env [port]          serve the bot interface (py/polyenv.py)
 //   polyhost envtest <games> [seed] [every] [turn cap]   check the bot interface against the game
 //   polyhost envbench <games>    time the bot interface's parts on championship games
+//   polyhost fogtest <games> [seed] [every]   the fog-leak test: hidden changes must not reach the observation
 
 #include "envtest.hpp"
 #include "serve.hpp"
@@ -432,6 +433,9 @@ int main(int argc, char** argv) {
                                          argc > 4 ? std::atoi(argv[4]) : 25, argc > 5 ? std::atoi(argv[5]) : 60);
         return st.sweepMismatch || st.botMissing || st.duplicates || st.cloneMismatch ? 1 : 0;
     } else if (cmd == "envbench") envBench(argc > 2 ? std::atoi(argv[2]) : 4);
+    else if (cmd == "fogtest")
+        return envtest::fogTest(argc > 2 ? std::atoi(argv[2]) : 4, argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 1,
+                                argc > 4 ? std::atoi(argv[4]) : 20);
     else die("unknown command " + cmd);
     return 0;
 }

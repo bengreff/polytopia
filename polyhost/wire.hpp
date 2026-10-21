@@ -11,8 +11,10 @@
 //   op 5 SAVE     u32 slot                                -> u32 size, GameState bytes
 //   op 6 LOAD     u32 slot, spec, u32 size, bytes          -> status block
 //   op 7 DUMP     u32 slot                                -> the full GameState as JSON
-//   op 8 INFO                                             -> versions and observation sizes
+//   op 8 INFO                                             -> versions and observation sizes, legal-list version
 //   op 9 FREE     u32 slot
+//   op 10 OWNERS  u32 slot                                -> u16 w, u16 h, u8 owner[w*h], u8 capitalOf[w*h]
+//                 (the true state, not an observation: for training targets and checks only)
 //
 //   spec          i32 tribe0, i32 bot0, i32 tribe1, i32 bot1, i32 mode, i32 mapPreset, i32 mapSize, u64 seed
 //   status block  u8 current player, u8 ended, u8 winner, u32 turn, u16 n, n x (i16 type, a, b, arg)
@@ -178,8 +180,21 @@ struct Server {
             w.put<int32_t>(env::T_COUNT);
             w.put<int32_t>(env::G_COUNT);
             w.put<int32_t>(env::kTechSlots);
+            w.put<int32_t>(env::kLegalVersion);
         } else if (op == 9) {
             slots.erase(r.get<uint32_t>());
+        } else if (op == 10) {
+            env::Match& m = slot(r.get<uint32_t>());
+            std::vector<uint8_t> owner(size_t(m.width) * m.height), capital(owner.size());
+            for (Object* t : m.tiles()) {
+                int16_t i = m.index(env::at<env::Coord>(t, api.tCoords));
+                owner[i] = env::at<uint8_t>(t, api.tOwner);
+                capital[i] = env::at<uint8_t>(t, api.tCapitalOf);
+            }
+            w.put<uint16_t>(uint16_t(m.width));
+            w.put<uint16_t>(uint16_t(m.height));
+            w.raw(owner.data(), owner.size());
+            w.raw(capital.data(), capital.size());
         } else {
             throw std::runtime_error("unknown op " + std::to_string(op));
         }

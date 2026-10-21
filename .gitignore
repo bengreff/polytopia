@@ -1,3 +1,6 @@
 game/
 build/
 __pycache__/
+data/
+.venv/
+runs/

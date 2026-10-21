@@ -186,6 +186,158 @@ inline void checkClone(env::Api& api, env::Match& m, int action, Stats& st) {
     }
 }
 
+// The fog-leak test (M0). On a copy of the state, changes only what `viewer` may not know, and
+// checks that the observation is byte-identical: everything on unexplored tiles (terrain,
+// climate, resource, improvement, unit, owner), invisible enemy units, the opponent's stars and
+// techs, the random seed, the next unit id, and the enemy-unit facts the client doesn't show (XP,
+// age, home city). A positive control then changes a fact the viewer does see (own stars) and
+// requires the observation to change.
+//
+// The legal list is the client's own list, computed from the true state, so it may depend on hidden
+// facts exactly as the client's menus do (a bridge offered on a visible tile depends on the fogged
+// tile across the water). On a second copy, changed only in ways that keep the state consistent
+// (no owner or home-city changes), the test fails if any changed row acts on an unexplored tile,
+// which no client menu can do; the other changes are counted and reported.
+struct FogStats {
+    int checks = 0, leaks = 0, controlFailures = 0, legalChanged = 0, fogRows = 0, hiddenTiles = 0, invisibleUnits = 0;
+    std::map<std::string, int> changedRows;
+};
+
+struct Perturb {
+    env::Api& api;
+    uint8_t viewer;
+    std::mt19937_64& rng;
+    bool consistentOnly;
+
+    void apply(env::Match& b, FogStats& st) {
+        Game& g = api.g;
+        Object* bs = b.state();
+        const Method* invisible = methodWith(api.unit, "IsInvisible", 2, "GameState");
+        for (Object* t : b.tiles()) {
+            Object* u = env::at<Object*>(t, api.tUnit);
+            if (!b.exploredBy(t, viewer)) {
+                if (!consistentOnly) ++st.hiddenTiles;
+                env::put<int32_t>(t, api.tTerrain, int32_t(1 + rng() % 5));
+                env::put<int32_t>(t, api.tClimate, int32_t(2 + rng() % 14));
+                if (!consistentOnly) env::put<uint8_t>(t, api.tOwner, uint8_t(rng() % 2 ? 0 : 3 - viewer));
+                if (Object* res = env::at<Object*>(t, api.tResource)) env::put<int32_t>(res, api.resType, int32_t(1 + rng() % 8));
+                if (Object* imp = env::at<Object*>(t, api.tImprovement)) {
+                    env::put<uint16_t>(imp, api.iLevel, uint16_t(1 + rng() % 5));
+                    env::put<int16_t>(imp, api.iPopulation, int16_t(rng() % 4));
+                }
+                if (u) {
+                    env::put<uint16_t>(u, api.uHealth, uint16_t(10 + rng() % 90));
+                    env::put<int32_t>(u, api.uType, int32_t(1 + rng() % 10));
+                }
+            } else if (u && env::at<uint8_t>(u, api.uOwner) != viewer) {
+                Object* r = nullptr;
+                if (tryCall(invisible, u, {bs, &viewer}, &r) && r && unbox<bool>(r)) {
+                    if (!consistentOnly) ++st.invisibleUnits;
+                    env::put<uint16_t>(u, api.uHealth, uint16_t(10 + rng() % 90));
+                }
+                env::put<uint16_t>(u, api.uXp, uint16_t(rng() % 20));
+                env::put<uint16_t>(u, api.uCreated, uint16_t(rng() % 10));
+                if (!consistentOnly) env::put<env::Coord>(u, api.uHome, env::Coord{int32_t(rng() % 14), int32_t(rng() % 14)});
+            }
+        }
+        Object* ps = b.players();
+        for (int i = 0, n = env::listCount(ps); i < n; ++i) {
+            Object* p = env::listAt<Object*>(ps, i);
+            if (env::at<uint8_t>(p, api.pId) == viewer) continue;
+            int stars = int(rng() % 200);
+            call(method(g.player, "set_Currency", 1), p, {&stars});
+            if (Object* techs = env::at<Object*>(p, api.pTech)) {
+                int extra = int(1 + rng() % 50);
+                call(method(object_get_class(techs), "Add", 1), techs, {&extra});
+            }
+        }
+        int32_t seed = int32_t(rng() % 1000000);
+        field_set_value(bs, field(g.gameState, "<Seed>k__BackingField"), &seed);
+        uint32_t unitId = uint32_t(1000 + rng() % 1000);
+        field_set_value(bs, field(g.gameState, "<CurrentUnitId>k__BackingField"), &unitId);
+    }
+};
+
+inline void checkFog(env::Api& api, env::Match& m, FogStats& st, std::mt19937_64& rng) {
+    Game& g = api.g;
+    uint8_t viewer = m.currentPlayer();
+    std::string bytes = m.save();
+    env::Match a(api), b(api), c(api);
+    a.load(m.spec, bytes);
+    b.load(m.spec, bytes);
+    c.load(m.spec, bytes);
+    std::vector<int16_t> ta(size_t(a.width) * a.height * env::T_COUNT), tb(ta.size());
+    int32_t ga[env::G_COUNT], gb[env::G_COUNT];
+    uint8_t ka[env::kTechSlots], kb[env::kTechSlots];
+    a.observe(viewer, ta.data(), ga, ka);
+
+    Perturb{api, viewer, rng, false}.apply(b, st);
+    b.observe(viewer, tb.data(), gb, kb);
+    ++st.checks;
+    bool leak = ta != tb || std::memcmp(ga, gb, sizeof ga) || std::memcmp(ka, kb, sizeof ka);
+    if (leak && st.leaks++ < 5) {
+        for (size_t i = 0; i < ta.size(); ++i)
+            if (ta[i] != tb[i]) { std::printf("  LEAK: tile %zu feature %zu: %d -> %d\n", i / env::T_COUNT, i % env::T_COUNT, ta[i], tb[i]); break; }
+        for (int i = 0; i < env::G_COUNT; ++i)
+            if (ga[i] != gb[i]) std::printf("  LEAK: global %d: %d -> %d\n", i, ga[i], gb[i]);
+    }
+
+    // Positive control: the viewer's own stars are visible, so the observation must change.
+    Object* me = b.player(viewer);
+    int mine = unbox<int>(call(api.getCurrency, me)) + 7;
+    call(method(g.player, "set_Currency", 1), me, {&mine});
+    b.observe(viewer, tb.data(), gb, kb);
+    if (!std::memcmp(ga, gb, sizeof ga)) ++st.controlFailures;
+
+    Perturb{api, viewer, rng, true}.apply(c, st);
+    c.computeLegal();
+    std::set<std::tuple<int, int, int, int>> la, lc;
+    for (const Cmd& x : a.legal) la.insert({x.type, x.a, x.b, x.arg});
+    for (const Cmd& x : c.legal) lc.insert({x.type, x.a, x.b, x.arg});
+    st.legalChanged += la != lc;
+    std::vector<Object*> tiles = a.tiles();
+    for (auto* pair : {&la, &lc})
+        for (auto& x : *pair)
+            if (!(pair == &la ? lc : la).count(x)) {
+                int type = std::get<0>(x), at = std::get<1>(x);
+                bool diplomacy = type == 27 || type == 29 || type == 30 || type == 32;  // the diplomacy screen
+                bool fog = !diplomacy && at >= 0 && !a.exploredBy(tiles[at], viewer);
+                st.fogRows += fog;
+                ++st.changedRows[std::to_string(type) + (pair == &la ? " lost" : " gained") + (fog ? ", acting on an unexplored tile" : "")];
+            }
+}
+
+inline int fogTest(int games, uint64_t seed, int every) {
+    Game g;
+    env::Api api(g);
+    FogStats st;
+    std::mt19937_64 rng(seed);
+    for (int k = 0; k < games; ++k) {
+        env::Spec spec;
+        const int tribes[] = {2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+        spec.seats[0].tribe = tribes[rng() % 12];
+        spec.seats[1].tribe = tribes[rng() % 12];
+        spec.seed = rng();
+        env::Match m(api);
+        m.create(spec);
+        int decisions = 0;
+        while (!m.ended() && m.turn() < 100) {
+            if (++decisions % every == 0) checkFog(api, m, st, rng);
+            int bot = m.botChoice();
+            if (!m.step(bot >= 0 ? bot : env::Match::kBotOwn)) die("step failed: " + m.lastError);
+        }
+        std::printf("game %d: %d checks so far, %d leaks, %d control failures, %d fog rows\n", k, st.checks, st.leaks,
+                    st.controlFailures, st.fogRows);
+        std::fflush(stdout);
+    }
+    std::printf("\nfog leak: %d states checked (%d hidden tiles and %d invisible enemy units perturbed), %d leaks, "
+                "%d positive-control failures\n", st.checks, st.hiddenTiles, st.invisibleUnits, st.leaks, st.controlFailures);
+    std::printf("legal list: changed in %d of %d states under consistent hidden changes; %d changed rows act on an "
+                "unexplored tile (must be 0). Changed rows by CommandType:\n", st.legalChanged, st.checks, st.fogRows);
+    for (auto& [k, n] : st.changedRows) std::printf("  type %-45s %d\n", k.c_str(), n);
+    return st.leaks || st.fogRows ? 1 : st.controlFailures ? 2 : 0;
+}
+
 // Plays `games` games with both seats driven from outside: mostly the built-in AI's choice, with
 // some random legal commands for variety. Checks every decision for bot coverage and encoding, and
 // every `every`-th decision for legality and clone determinism.
@@ -213,9 +365,14 @@ inline Stats run(int games, uint64_t seed, int every, int turnCap) {
             if (bot < 0) {
                 Object* cmd = m.botCommand();
                 std::string name = class_get_name(object_get_class(cmd));
-                if (name == "StayCommand") {
+                // Outside the agent's list by design: the AI's StayCommand, and commands on tiles the
+                // player hasn't explored (the AI sees the whole map; Ben: fine for the built-in AI).
+                Cmd enc = m.encode(cmd);
+                bool fog = enc.a >= 0 && !m.exploredBy(m.tiles()[enc.a], m.currentPlayer()) &&
+                           !(enc.type == 27 || enc.type == 29 || enc.type == 30 || enc.type == 32);
+                if (name == "StayCommand" || fog) {
                     ++st.botOnly;
-                    ++st.botOnlyByClass[name];
+                    ++st.botOnlyByClass[name + (fog ? " on an unexplored tile" : "")];
                 } else if (st.botMissing++ < 5) {
                     Json j;
                     Reflect::command(j, cmd);
@@ -237,7 +394,8 @@ inline Stats run(int games, uint64_t seed, int every, int turnCap) {
     }
     std::printf("\n%d games (%d ended), %d decisions, %d commands\n", st.games, st.ended, st.states, st.commands);
     std::printf("legality: %d states swept, %d mismatched\n", st.swept, st.sweepMismatch);
-    std::printf("bot coverage: %d checked, %d not in the legal list, %d bot-only (StayCommand)\n", st.botChecked, st.botMissing, st.botOnly);
+    std::printf("bot coverage: %d checked, %d not in the legal list, %d outside it by design:\n", st.botChecked, st.botMissing, st.botOnly);
+    for (auto& [name, n] : st.botOnlyByClass) std::printf("  %-40s %d\n", name.c_str(), n);
     std::printf("accepted by IsValid but not offered by the game's generators (expected, see checkLegal):\n");
     for (auto& [name, n] : st.notOffered) std::printf("  %-28s %d\n", name.c_str(), n);
     std::printf("encoding: %d duplicate encodings\n", st.duplicates);

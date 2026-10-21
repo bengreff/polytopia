@@ -51,6 +51,9 @@ struct Cmd {
     bool operator==(const Cmd& o) const { return type == o.type && a == o.a && b == o.b && arg == o.arg; }
 };
 
+// Legal-list version, recorded with data. 2: tile menus only on explored tiles, as the client.
+constexpr int kLegalVersion = 2;
+
 // Observation layout, versioned so recorded data says which encoder made it. Tile features are
 // zero on unexplored tiles; unit features describe the unit the viewer's client shows there (the
 // game's TileData.GetUnit, which hides invisible enemy units). Owners are relative (see rel()).
@@ -367,6 +370,13 @@ public:
         computeLegal();
     }
 
+    bool exploredBy(Object* tile, uint8_t player) {
+        Object* explorers = at<Object*>(tile, api.tExplorers);
+        for (int i = 0, n = listCount(explorers); i < n; ++i)
+            if (listAt<uint8_t>(explorers, i) == player) return true;
+        return false;
+    }
+
     int16_t index(Coord c) const { return c.x < 0 || c.y < 0 || c.x >= width || c.y >= height ? -1 : int16_t(c.y * width + c.x); }
 
     Cmd encode(Object* cmd) {
@@ -456,6 +466,10 @@ public:
                 }
                 addAll(call(api.unitActions, nullptr, {gsObj, me, t, &no}));
             }
+            // The client opens a tile's menus (train, build, abilities) only for tiles the player has
+            // explored: tapping a hidden tile clears the selection (ClientInteraction.SelectTile,
+            // Tile.get_IsHidden). The generators alone would offer roads and bridges into the fog.
+            if (!exploredBy(t, p)) continue;
             addAll(call(api.trainable, nullptr, {gsObj, me, t, &no}));
             addAll(call(api.buildable, nullptr, {gsObj, me, t, &no}));
             addAll(call(api.abilities, nullptr, {gsObj, me, t, &no}));

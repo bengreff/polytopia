@@ -30,6 +30,7 @@ DEVICE_DIR = '/data/local/tmp/poly'
 
 # Must match env.hpp; checked against the server's INFO reply.
 OBS_VERSION = 1
+LEGAL_VERSION = 2
 TILE_FEATURES = [
     'explored', 'terrain', 'climate', 'owner', 'capital_of', 'ruling_city', 'resource', 'road', 'route', 'effects',
     'improvement', 'imp_owner', 'imp_level', 'imp_population', 'imp_production', 'imp_border', 'imp_connected',
@@ -109,8 +110,8 @@ class Env:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         info = self.info()
-        if (info['obs_version'], info['tile_features'], info['global_features'], info['tech_slots']) != (
-                OBS_VERSION, len(TILE_FEATURES), len(GLOBAL_FEATURES), TECH_SLOTS):
+        if (info['obs_version'], info['tile_features'], info['global_features'], info['tech_slots'],
+                info['legal_version']) != (OBS_VERSION, len(TILE_FEATURES), len(GLOBAL_FEATURES), TECH_SLOTS, LEGAL_VERSION):
             raise EnvError(f'server observation layout {info} does not match this client')
         self.game_version = info['game_version']
 
@@ -143,9 +144,9 @@ class Env:
         return Status(cur, bool(ended), winner, turn, legal), p + 8 * n
 
     def info(self):
-        v = struct.unpack('<6i', self.request(8))
+        v = struct.unpack('<7i', self.request(8))
         return dict(zip(['game_version', 'logic_version', 'obs_version', 'tile_features', 'global_features',
-                         'tech_slots'], v))
+                         'tech_slots', 'legal_version'], v))
 
     def new(self, slot, spec):
         """Creates a match in `slot` (replacing any) and plays bot seats up to the first outside decision."""
@@ -196,6 +197,15 @@ class Env:
 
     def free(self, slot):
         self.request(9, struct.pack('<I', slot))
+
+    def owners(self, slot):
+        """The true owner and capitalOf player id of every tile, [h, w] each. Not an observation:
+        for training targets and checks only."""
+        buf = self.request(10, struct.pack('<I', slot))
+        w, h = struct.unpack_from('<HH', buf)
+        owner = np.frombuffer(buf, dtype=np.uint8, count=w * h, offset=4).reshape(h, w).copy()
+        capital = np.frombuffer(buf, dtype=np.uint8, count=w * h, offset=4 + w * h).reshape(h, w).copy()
+        return owner, capital
 
 
 def describe(cmd, width=14):
