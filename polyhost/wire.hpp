@@ -15,6 +15,12 @@
 //   op 9 FREE     u32 slot
 //   op 10 OWNERS  u32 slot                                -> u16 w, u16 h, u8 owner[w*h], u8 capitalOf[w*h]
 //                 (the true state, not an observation: for training targets and checks only)
+//   op 11 REPLAY  u32 slot, spec, u32 size, start blob, u32 size, final blob
+//                                                         -> u32 commands left, status block
+//                 (blobs as the game's server sends them: i32 version, then the GameState)
+//   op 12 RSTEP   u32 slot                                -> u8 player, i32 label, i16 type, a, b, arg,
+//                                                            u8 ok, u32 commands left, status block
+//                 (plays the next recorded command; label as env::Match::replayStep)
 //
 //   spec          i32 tribe0, i32 bot0, i32 tribe1, i32 bot1, i32 mode, i32 mapPreset, i32 mapSize, u64 seed
 //   status block  u8 current player, u8 ended, u8 winner, u32 turn, u16 n, n x (i16 type, a, b, arg)
@@ -195,6 +201,27 @@ struct Server {
             w.put<uint16_t>(uint16_t(m.height));
             w.raw(owner.data(), owner.size());
             w.raw(capital.data(), capital.size());
+        } else if (op == 11) {
+            uint32_t id = r.get<uint32_t>();
+            env::Spec spec = readSpec(r);
+            std::string start = r.bytes(r.get<uint32_t>());
+            std::string final = r.bytes(r.get<uint32_t>());
+            env::Match& m = fresh(id);
+            m.loadReplay(spec, start, final);
+            w.put<uint32_t>(uint32_t(m.replayCount - m.replayAt));
+            status(w, m);
+        } else if (op == 12) {
+            env::Match& m = slot(r.get<uint32_t>());
+            uint8_t player = 0;
+            int32_t label = 0;
+            env::Cmd recorded;
+            bool ok = m.replayStep(&player, &label, &recorded);
+            w.put<uint8_t>(player);
+            w.put<int32_t>(label);
+            w.raw(&recorded, sizeof recorded);
+            w.put<uint8_t>(ok);
+            w.put<uint32_t>(uint32_t(m.replayCount - m.replayAt));
+            status(w, m);
         } else {
             throw std::runtime_error("unknown op " + std::to_string(op));
         }

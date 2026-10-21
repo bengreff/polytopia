@@ -59,6 +59,8 @@ FREE_TRIBES = (13, 7, 4, 10)
 BOT_DIFFICULTY = {'easy': 0, 'normal': 1, 'hard': 2, 'crazy': 3}
 
 STEP_BOT_OWN = -2  # step action: play the built-in AI's own command for the current player
+# replay_step labels that are not legal-list rows (env::Match::replayStep).
+REPLAY_NOT_IN_LEGAL, REPLAY_NO_DECISION, REPLAY_OUT_OF_TURN = -1, -2, -3
 
 
 @dataclasses.dataclass
@@ -198,6 +200,23 @@ class Env:
     def free(self, slot):
         self.request(9, struct.pack('<I', slot))
 
+    def replay(self, slot, spec, start, final):
+        """Loads a recorded game: `start` and `final` are GameState blobs as the game's server sends
+        them (i32 version, then the state). Returns (commands left to play, Status)."""
+        body = struct.pack('<I', slot) + spec.pack() + struct.pack('<I', len(start)) + start + struct.pack('<I', len(final)) + final
+        buf = self.request(11, body)
+        (left,) = struct.unpack_from('<I', buf)
+        return left, self._status(buf, 4)[0]
+
+    def replay_step(self, slot):
+        """Plays the next recorded command. Returns (player, label, recorded command row, ok,
+        commands left, Status); label is its row in the legal list before it ran, or REPLAY_*."""
+        buf = self.request(12, struct.pack('<I', slot))
+        player, label = struct.unpack_from('<Bi', buf)
+        cmd = np.frombuffer(buf, dtype=np.int16, count=4, offset=5).copy()
+        ok, left = struct.unpack_from('<BI', buf, 13)
+        return player, label, cmd, bool(ok), left, self._status(buf, 18)[0]
+
     def owners(self, slot):
         """The true owner and capitalOf player id of every tile, [h, w] each. Not an observation:
         for training targets and checks only."""
@@ -224,12 +243,13 @@ def adb(*args, **kw):
 
 
 @contextlib.contextmanager
-def launch(port=8200, connect_timeout=60):
+def launch(port=8200, connect_timeout=60, binary='polyhost'):
     """Starts `polyhost env <port>` on the emulator, forwards the port, and yields a connected Env.
-    Build and push polyhost first (./polyhost/run.sh push; ./polyhost/run.sh symbols /dev/null builds it)."""
+    Build and push polyhost first (./polyhost/run.sh push; ./polyhost/run.sh symbols /dev/null builds it).
+    `binary` names another build in the device directory, so a test build can run beside a live one."""
     adb('forward', f'tcp:{port}', f'tcp:{port}')
     log = f'{DEVICE_DIR}/env{port}.log'
-    proc = subprocess.Popen([ADB, 'shell', f'cd {DEVICE_DIR} && exec ./polyhost env {port} > {log} 2>&1'])
+    proc = subprocess.Popen([ADB, 'shell', f'cd {DEVICE_DIR} && exec ./{binary} env {port} > {log} 2>&1'])
     env = None
     try:
         deadline = time.time() + connect_timeout
@@ -244,5 +264,5 @@ def launch(port=8200, connect_timeout=60):
     finally:
         if env:
             env.close()
-        subprocess.run([ADB, 'shell', f'pkill -f "polyhost env {port}"'], capture_output=True)
+        subprocess.run([ADB, 'shell', f'pkill -f "{binary} env {port}"'], capture_output=True)
         proc.wait(timeout=10)

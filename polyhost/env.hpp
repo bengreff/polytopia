@@ -359,10 +359,10 @@ public:
 
     std::string save() { StateIO io; return io.save(state()); }
 
-    void load(const Spec& s, const std::string& bytes) {
+    void load(const Spec& s, const std::string& bytes, int version = 123) {
         spec = s;
         StateIO io;
-        gs = Pin(io.load(bytes, 123));
+        gs = Pin(io.load(bytes, version));
         am = Pin(make(g.actionManager, 1, {state()}));
         Object* m = at<Object*>(state(), api.gsMap);
         width = at<uint16_t>(m, api.mapWidth);
@@ -561,6 +561,53 @@ public:
         if (!run(legalCmds[i].get())) return false;
         playBots();
         return true;
+    }
+
+    // A recorded game, e.g. a replay downloaded from the game's server. Both states are blobs as
+    // the server sends them and SerializationHelpers.FromByteArray reads them: an int32 version,
+    // then GameState.Deserialize at that version. The start state is loaded, then the final
+    // state's command stack is played one command at a time through ActionManager.
+    Pin replayStack;
+    int replayAt = 0, replayCount = 0;
+
+    static int blobVersion(const std::string& blob) {
+        if (blob.size() < 4) die("replay blob too short");
+        int32_t v;
+        std::memcpy(&v, blob.data(), 4);
+        return v;
+    }
+
+    void loadReplay(const Spec& s, const std::string& start, const std::string& final) {
+        load(s, start.substr(4), blobVersion(start));
+        StateIO io;
+        Object* last = io.load(final.substr(4), blobVersion(final));
+        replayStack = Pin(get<Object*>(last, "<CommandStack>k__BackingField"));
+        replayCount = g.count(replayStack.get());
+        replayAt = g.count(get<Object*>(state(), "<CommandStack>k__BackingField"));
+    }
+
+    static constexpr int kNotInLegal = -1;   // the player's command is not in our legal list
+    static constexpr int kNoDecision = -2;   // played by someone outside the seats, or EndMatch
+    static constexpr int kOutOfTurn = -3;    // played by a seat that is not the current player
+
+    // Plays the next recorded command. Returns its player id, and in `label` where it sits in the
+    // current player's legal list (computed before it runs) or one of the codes above.
+    bool replayStep(uint8_t* player, int32_t* label, Cmd* recorded) {
+        if (replayAt >= replayCount) { lastError = "replay finished"; return false; }
+        Object* cmd = g.item(replayStack.get(), replayAt++);
+        *player = get<uint8_t>(cmd, "<PlayerId>k__BackingField");
+        *recorded = encode(cmd);
+        bool endMatch = object_get_class(cmd) == api.cEndMatch;
+        if (seatOf(*player) < 0 || endMatch) *label = kNoDecision;
+        else if (*player != currentPlayer()) *label = kOutOfTurn;
+        else {
+            *label = kNotInLegal;
+            for (size_t i = 0; i < legal.size(); ++i)
+                if (legal[i] == *recorded) { *label = int32_t(i); break; }
+        }
+        bool ok = run(cmd);
+        computeLegal();
+        return ok;
     }
 
     // What `viewer`'s client shows: explored tiles with their live contents, minus invisible

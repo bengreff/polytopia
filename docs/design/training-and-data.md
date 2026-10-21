@@ -120,9 +120,37 @@ layers only when a metric asks for them.**
 - **Links:** `share.polytopia.io/g/<GUID>` is only a landing page; the game client downloads the
   replay from Midjiwan's servers. Ingestion goes through the client's own replay path, and
   probably needs an authenticated session.
+- **Download path (found 2026-10-21):** `POST https://polytopia-prod.net/api/game/get_game_view_model`
+  (fallback `spectate_game`), body `{"GameId": "<GUID>"}`, header `Authorization: Bearer <jwt>`.
+  - The JWT comes from a logged-in client. The game logs in through Steam, Google Play, Game
+    Center, Epic, Nintendo or Tesla, and a logged-in Mac client stores the token as a `jwtToken`
+    file under `~/Library/Application Support`.
+  - The response carries `initialGameStateData` and `currentGameStateData` (base64
+    `GameState.Serialize`, including the command stack) plus `gameSettingsJson`.
+  - Prior art: usemsedge/PolytopiaBoardRenderer `pyrender_UPDATED/replayextractor`.
+  - The host is reachable from the Mac's filtered network (401 without a token).
+  - For us: deserialize with the game's own reader (polyhost `StateIO`), then replay the command
+    stack through ActionManager and record obs, legal list and label per command, as in `gen_data.py`.
+  - **Built:**
+    - polyhost ops 11 REPLAY and 12 RSTEP (`env::Match::loadReplay`/`replayStep`);
+    - `py/fetch_replays.py` (download, ~4 s apart);
+    - `py/convert_replays.py` (championship-format filter, npz in `gen_data.py`'s layout plus the
+      game id and version, misses logged to `not_in_legal.tsv`).
+
+    Self-test on a bot game recorded locally: 571/571 labels equal the AI's own legal-list
+    choice, and the replayed final state is byte-identical to the live one after the same
+    save/load. Real downloads are untested until we have a token.
 - **Sources:**
-  - YouTube descriptions: 13 IDs from 6 videos, so **realistically hundreds of games**;
-  - Challengermode brackets (unverified; up to tens of thousands *if* game IDs are exposed);
+  - YouTube descriptions: **1,376 unique IDs so far** (Justeeni Lingueeni 871, PolyChampions 370,
+    the official channel 134; 2025–2026). Justeeni covers WC faceoffs, qualifiers and cups;
+    PolyChampions is mostly team games. ~1.2k videos are still being scanned, slowly, because
+    YouTube rate-limits fast crawls. IDs are in `data/replays/share_ids.tsv` (gitignored);
+  - Challengermode (WC qualifiers, ~13.8k players): the public GraphQL API
+    (`publicapi.challengermode.com/graphql`) exposes `Match.gameSession.lobbyInformation.gameSessionId`,
+    but data queries need a key (refresh key → `/mk1/v1/auth/access_keys`). Untested: whether a
+    non-host key can read Polytopia matches, and whether `gameSessionId` is the Polytopia game GUID.
+    The game's own `GameContext` stores `ExternalMatchId`/`ExternalTournamentId`, so the server
+    links the two;
   - Ben's own games.
 - **Collect IDs now**, since replays may expire (PolyAnalytics' did). Record the build version per
   replay; older builds may not replay on 2.17.3. Detect auto-skipped and rushed turns caused by the
