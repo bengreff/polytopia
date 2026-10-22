@@ -164,6 +164,23 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Falsifier:** vs Normal drops more than 15 points with no gain vs Crazy → human-only fine-tuning
   hurts the raw policy; next try mixed data (human + AI games) instead.
 
+- **Final result, step 20,000 (2026-10-21, 23:50):**
+
+  | | vs Normal | vs Hard | vs Crazy | Human top-1 / top-5 | Value log loss |
+  |---|---|---|---|---|---|
+  | R4 step 6k | 100.0% | 97.5% | 90.0% (85.1–93.4) | 41.8% / 71.2% | 0.944 |
+  | **R4 step 20k** | 99.5% (97.2–99.9) | 99.5% (97.2–99.9) | **94.0%** (89.8–96.5) | 43.2% / 72.9% | 0.607 |
+
+  - **Paired, 20k vs 6k:** vs Crazy only 20k won 16 games, only 6k won 8 (p = 0.15). Pooled over
+    the three bots: 21 vs 10 (p = 0.07). Likely better, but not significant at 0.05.
+  - **Seats:** 93/100 and 95/100. Mean game length vs Crazy 22.3 turns.
+  - **Held-out human validation** improved steadily: top-1 42.3% at 6k → 43.6% at 20k, policy
+    cross-entropy 2.23 → 2.14; no overfitting by the end.
+  - **Value head:** held-out log loss 0.56 at the end (0.94–1.16 mid-run), accuracy 76%. Far better
+    than R3's AI-game value (1.1–1.7): human games' outcomes are less predictable from map identity,
+    and the lr had decayed.
+  - R4 at 20k is the reference policy from here.
+
 ## R5 — policy-only RL from the human-tuned policy (pre-registered 2026-10-21, 22:05)
 
 - **Why:** R4 at 6k steps (human fine-tune) wins 200/200 vs Normal and ~75% vs Crazy (evaluation
