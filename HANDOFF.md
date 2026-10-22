@@ -53,6 +53,10 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - `python3 py/sp_strategy.py <games dirs>` (on the PC) profiles how each generation plays.
 - **Stop:** `touch ~/runs/sp/s2/STOP` (between steps). Restart with the same command; it is
   resumable. Killing the Python process also kills its game processes.
+- **Speed (18:00):**
+  - ~530 decisions/s on 28 game processes, CPU-bound; the GPU is ~25% busy.
+  - That's ~70 min per generation in the daytime, slower at night (14 processes).
+  - polyhost now checks moves once per unit: identical legal lists, 3.4× faster on R7's long games.
 - **The PC is shared:** crucible (inquiry) may only run 10pm–6am. The loop uses 28 game processes
   in the daytime and 14 at night. Change settings between steps with `~/runs/sp/s2/override.json`,
   e.g. `{"procs": 20}`.
