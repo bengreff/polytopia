@@ -190,10 +190,14 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Interim result (2026-10-21, 22:05), step 6,000** (`last.pt` at its 6k validation; step files
   exist only every 10,000 steps):
 
-  | | vs Normal | vs Crazy |
-  |---|---|---|
-  | R3 step 100k (the base) | 59.0% (52.1–65.6) | 9.0% (5.8–13.8) |
-  | **R4 step 6k** | **100.0%** (200/200, 98.1–100) | **90.0%** (180/200, 85.1–93.4) |
+  | | vs Normal | vs Hard | vs Crazy |
+  |---|---|---|---|
+  | R3 step 100k (the base) | 59.0% (52.1–65.6) | 29.0% (23.2–35.6) | 9.0% (5.8–13.8) |
+  | **R4 step 6k** | **100.0%** (200/200, 98.1–100) | **97.5%** (195/200, 94.3–98.9) | **90.0%** (180/200, 85.1–93.4) |
+
+  - **M2's thresholds** (training-and-data.md: Normal ≥ 90%, Hard ≥ 70%, Crazy ≥ 50%, all as Wilson
+    lower bounds) **are met by the raw policy**: 98.1%, 94.3% and 85.1%. Only M2's "search gain"
+    item doesn't apply yet (no search).
 
   - **vs Crazy, paired with the base on the same 200 games:** only R4 won 162, only the base won 0
     (sign test p = 3e-49). By seat: 91/100 and 89/100.

@@ -144,3 +144,6 @@ Every iteration is one pre-registered change, judged on fixed seeds.
   Hard 1/4, Crazy 1/2, self 1/4. Built `tools/play.sh` so Ben can play the network in the browser.
   Stopping R3 (now superseded) to free the GPU was refused by the permission check; it keeps
   running, and stopping it is on Ben's list.
+- 22:10 R4 at 6k vs Hard: 195/200 (97.5%). **M2's win-rate thresholds are met by the raw policy**
+  (lower bounds 98.1 / 94.3 / 85.1% vs Normal / Hard / Crazy). R6 (winners-only human fine-tune)
+  launched on the PC. R5 (RL) amended before its start: Crazy 2/3, self 1/3, temperature 0.5.
