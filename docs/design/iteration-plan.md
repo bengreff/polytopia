@@ -17,8 +17,8 @@ Each cell is 100 seeds × 2 sides, with 95% Wilson intervals in research-log.md.
 
 - **The teacher can't beat Crazy, so imitating it can't either.** The game's AI with a person's
   income wins 10% against Crazy (+3★ per turn) and 31% against Hard (+1★ per turn, same
-  brain). The R3 policy is already within a few points of it everywhere. Between two copies of the AI, income decides the game. Beating Crazy means
-  **playing better than the AI**, not like it.
+  brain). The R3 policy is already within a few points of it everywhere. Between two copies of
+  the AI, income decides the game. Beating Crazy means **playing better than the AI**, not like it.
 - **Human games:** 6,721 championship-format games accepted by the final-state check, 2.76M
   decisions; 6,055 for training and 704 held out by game-id hash.
   - The download is nearly done. The remaining Challengermode IDs are mostly from before 2026, and
@@ -80,23 +80,28 @@ Every iteration is one pre-registered change, judged on fixed seeds.
 | 4 | 22:10–23:00 | DAgger round 1: step 100k vs Normal/Hard/self, ~1,000 games (Mac) | Data for #6 |
 | 5 | ~23:00 | Evaluate R4 at 5k/10k/20k steps + human bench | Pick R5 (below) |
 | 6 | ~23:30 | **R5:** if R4 helped vs Hard/Crazy, train on **human + AI + DAgger mixed**; if R4 hurt vs Normal, mix with more AI/DAgger data; if neither moved, DAgger only | Best supervised policy |
-| 7 | 23:30–01:30 | Build policy-only RL (below), test on a small run | Plumbing |
+| 7 | done 21:45 | Build policy-only RL (below), test on a small run | Plumbing |
 | 8 | ~02:30 | R3 finishes (290k). **M1 gate:** 400 games vs Normal (≥ 60%, Wilson lower bound reported) | M1 pass/fail |
 | 9 | 01:30–05:30 | **RL iterations** from the best supervised policy, ~45 min each | Policy improvement past the teacher |
 | 10 | 05:40 | Wrap-up: results, HANDOFF.md, commit, morning summary | — |
 
-### Policy-only RL (item 7–9)
-- **Actors** (Mac, 6 processes): the champion plays, sampling at temperature 1, against a mix:
-  - 40% Hard, 40% Crazy, 20% itself.
-  - Recorded per agent decision: observation, legal list, chosen row, its probability, the outcome.
-  - About 400 games per iteration (~20 min).
-- **Learner** (PC): advantage-weighted policy loss, plus a KL penalty toward the supervised anchor
-  (the magnet in architecture.md), plus a value loss on these games.
-  - The advantage starts as **outcome minus the per-opponent mean outcome** (no learned baseline),
-    since V isn't trustworthy yet.
-  - A small share of each batch replays human and AI data, so the policy doesn't drift.
+### Policy-only RL (item 7–9; built: `py/dagger.py --temperature 1` + `py/train_rl.py`)
+- **Actors** (Mac, 6 processes): the champion plays, sampling at temperature 1.
+  - Opponents: Normal 1/6, Hard 2/6, Crazy 2/6, itself 1/6 (`--opponents 1,2,2,3,3,self`).
+  - Recorded per agent decision: observation, legal list, played row, its log-probability, the AI's
+    label (so the same games serve DAgger), and the outcome.
+  - 400–1,000 games per iteration (~0.5 games/s on the Mac's GPU).
+- **Learner** (PC): PPO's clipped objective with A = outcome − the mean outcome against that
+  opponent, divided by its standard deviation. No learned baseline: V isn't trustworthy yet.
+  - Plus a behaviour-cloning anchor: cross-entropy on batches of the champion's own supervised
+    data, so the policy doesn't drift.
+  - Plus a value loss on these games and a small entropy bonus.
+  - lr 3e-5, 2 epochs.
 - **Evaluate and promote** per the loop. Two iterations without gain stop the RL arm for the night
   (do a loss autopsy, don't stack changes).
+- **Expectation:** modest. The only reward is the game's result, ~600 decisions share one
+  advantage, and the Mac plays ~2,000 games an hour. The value of tonight's RL is a working loop and
+  a first measured slope.
 
 ### Value-head fix (after the supervised runs, one change)
 - Validate value on 400 held-out games × 16 positions, not 40 games.
