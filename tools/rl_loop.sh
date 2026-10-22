@@ -45,6 +45,7 @@ if [ ! -f /home/greff/runs/rl/$name/$it/policy.pt ] && ! pgrep -f "[r]l/$name/$i
     setsid nohup /home/greff/polyvenv/bin/python train_rl.py /home/greff/runs/rl/$name/$it.init.pt /home/greff/polydata/rl/$name/$it \
         /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
 fi
+sleep 5  # without this, WSL can end the session before the background job has started
 EOF
     retry launch
     waited=0
