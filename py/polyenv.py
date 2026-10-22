@@ -303,7 +303,7 @@ def _launch_native(port, connect_timeout):
                                 env=dict(os.environ, POLY_ROOT=os.path.join(POLYARM, 'poly')), preexec_fn=_die_with_parent)
     else:
         log = open(os.path.join(REPO, 'build', f'env{port}.log'), 'w')
-        proc = subprocess.Popen([os.path.join(REPO, 'build', 'polyhost-mac'), 'env', str(port)], cwd=REPO,
+        proc = subprocess.Popen([os.environ.get('POLYHOST_BIN', os.path.join(REPO, 'build', 'polyhost-mac')), 'env', str(port)], cwd=REPO,
                                 stdout=log, stderr=subprocess.STDOUT)
     env = None
     try:

@@ -598,3 +598,29 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Drift away from sensible play is watched by the per-generation evaluations vs gen 0 and Crazy.
   - Also new: settings can change between steps through `<run>/override.json`, without a restart.
   - Game processes: all 28 threads 6am–10pm, half at night, when Ben's other projects run.
+
+## Faster legal lists: moves checked once per unit (2026-10-22, 17:50)
+- **Where the time went:**
+  - R7's self-play games are long (~1,000 decisions). Late in a game, building the legal list took
+    ~190 ms per decision under QEMU (~8.6 ms natively).
+  - Profile of an R4 self-play game: 75–80% of it was our `IsValid` call on every move target,
+    ~250 per list late in the game.
+- **Why that is redundant:** the decompiled `MoveCommand.IsValid` is:
+  - target-independent checks: the turn, the unit on the From tile, `UnitState.CanMove`, its unit
+    data;
+  - then `PathFinder.GetPath(From, To)` non-empty: one path search per target.
+
+  The targets come from the same unit's `GetMovementOptions`. Over ~120k unit move lists (8 bot
+  games and 2 policy self-play games) a unit's targets were always all valid or all invalid
+  (0 mixed). So the first target's full `IsValid` now stands for all of them.
+- **Checks:**
+  - `envtest 8 41 10 100`: 655 states swept, 0 mismatched; fast vs fully validated legal list,
+    0 of 6,558 states differ; 655 clones exact;
+  - two recorded self-play games replayed: all 1,638 legal lists identical row for row, same
+    winners;
+  - `parity_hosts.py`: the same hashes as before, on the Mac and on the PC.
+  - If the game ever rejects a listed command, `step()` relists that state with every command
+    checked and returns not-ok. The rules stay the game's: `ActionManager` validates every command.
+- **Speed:**
+  - late-game steps 8.65 → 1.85 ms natively (4.5×); a whole R7-length game ~3.7×;
+  - bot games: legal list 0.92 → 0.73 ms.

@@ -405,6 +405,14 @@ public:
     // we construct ourselves is checked: research, end turn, trigger answers, and moves and attacks,
     // since GetMovementOptions/GetAttackOptions also list targets for a unit that can no longer act.
     // strictValidation re-checks everything; envtest requires the two lists to be equal.
+    //
+    // Moves are checked once per unit: MoveCommand.IsValid is target-independent checks (the turn,
+    // the unit on the From tile, UnitState.CanMove, its unit data) plus PathFinder.GetPath(From, To)
+    // being non-empty. The targets come from the same unit's GetMovementOptions, and over ~120k
+    // unit move lists (bot games and policy self-play) a unit's targets were always all valid or all
+    // invalid. So the first target's full IsValid stands for all of them: late in a game this was
+    // 75-80% of the legal list's cost (one path search per target). envtest's strict comparison
+    // checks it, and a rejected step relists strictly (step()).
     bool strictValidation = false;
     std::unordered_set<uint64_t> legalKeys;
 
@@ -489,11 +497,16 @@ public:
             if (u && at<uint8_t>(u, api.uOwner) == p) {
                 int moves = unbox<int>(call(api.movement, nullptr, {u, gsObj}));
                 Object* to = call(api.moveOptions, nullptr, {u, gsObj, &moves});
+                bool unitMoves = false;
                 for (int i = 0, n = listCount(to); i < n; ++i) {
                     Coord c = listAt<Coord>(to, i);
                     Object* m = object_new(api.cMove);
                     call(api.newMove, m, {&p, u, &c});
-                    add(m);
+                    if (strictValidation) add(m);
+                    else {
+                        if (i == 0) unitMoves = valid(m);
+                        if (unitMoves) add(m, false);
+                    }
                 }
                 int range = unbox<int>(call(api.range, nullptr, {u, gsObj}));
                 Object* targets = call(api.attackOptions, nullptr, {u, gsObj, &range, &no});
@@ -591,7 +604,16 @@ public:
             return true;
         }
         if (i < 0 || i >= int(legal.size())) { lastError = "no such legal command"; return false; }
-        if (!run(legalCmds[i].get())) return false;
+        if (!run(legalCmds[i].get())) {
+            // The game rejected a listed command (a move whose own path check disagreed with its
+            // unit's: never seen). The state is unchanged; list it again with every command checked.
+            std::string err = lastError;
+            strictValidation = true;
+            computeLegal();
+            strictValidation = false;
+            lastError = err;
+            return false;
+        }
         playBots();
         return true;
     }
