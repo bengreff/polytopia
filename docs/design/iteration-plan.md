@@ -170,3 +170,9 @@ Decision rules:
 - 23:35 R4 finished 20k steps: human held-out top-1 43.6% (42.3% at 6k), no overfitting. Its
   games evaluation runs on the Mac while R5's learner trains. R6 relaunched from scratch (GPU: R3,
   R5 learner, R6).
+- 23:50 **R4 at 20k: 94.0% vs Crazy** (188/200, CI 89.8–96.5), 99.5% vs Hard and Normal; paired vs
+  6k p = 0.07 over 600 games. It is the reference policy now. R5b (RL from R4 at 20k, lr 1e-4,
+  anchor 0.2) is queued after R5's iteration 2.
+- 00:13 The matchup screen (R4 at 20k vs Crazy, 4 games per tribe pair × seat) first died: port
+  8640 belongs to an old http.server of Ben's. Rerunning on 8740. Ports to avoid on this Mac: 8600,
+  8631, 8640, 8650, 8655, 8660, 8765, 8771.
