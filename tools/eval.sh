@@ -10,7 +10,7 @@ for d in "$@"; do
         *) dd=$d; extra= ;;
     esac
     POLYHOST=mac .venv/bin/python py/eval_vs_bot.py $ck $extra --seeds 100 --difficulty $dd --procs 6 --slots 6 \
-        --port ${EVAL_PORT:-8520} --out runs/evals/${tag}_d$d.tsv > runs/evals/${tag}_d$d.log 2>&1
+        --port ${EVAL_PORT:-8520} --save_games runs/games/${tag}_d$d --out runs/evals/${tag}_d$d.tsv > runs/evals/${tag}_d$d.log 2>&1
     line=$(grep 'checkpoint step' runs/evals/${tag}_d$d.log)
     echo "$(date '+%m-%d %H:%M')	$tag	d$d	$line" >> runs/evals/summary.tsv
 done

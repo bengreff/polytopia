@@ -7,12 +7,22 @@
 //   POST /new?tribe=&opponent=&mode=&difficulty=&size=&map=
 //   POST /do?i=<index into legal moves>     then the bot plays until it is your turn
 //
+//   GET  /games          recorded games (eval_vs_bot.py --save_games) under $POLY_GAMES (default runs/games)
+//   POST /watch?path=    replay one: <dir>/<path>.start + .final (the final state's command stack)
+//   POST /wstep?to=N | d=±k | turn=±1    move through it; going back replays from the start
+//   POST /wview?v=0|1|2  whole map, or one player's fog
+//
 // difficulty -1 makes the opponent our trained network instead of the game's AI: seat 2 is then an
 // outside seat, and each of its decisions is asked of py/agent_server.py on 127.0.0.1:$POLY_AGENT_PORT
 // (default 8131), with the same observation and legal list the bot interface gives Python.
 //   GET  /gamedata       the game's GameLogicData JSON, for names and stats
 
 #include <arpa/inet.h>
+#include <dirent.h>
+
+#include <chrono>
+#include <ctime>
+#include <filesystem>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -35,6 +45,142 @@ struct Session {
     uint64_t games = 0;
     bool netOpponent = false;  // seat 2 is played by py/agent_server.py
     int agentFd = -1;
+
+    // Watch mode: a recorded game replayed command by command from its start state and the final
+    // state's command stack (env::Match::loadReplay), the whole map visible or one player's view.
+    bool watching = false;
+    std::string watchPath, watchStart, watchFinal;
+    int watchBase = 0, watchAt = 0, watchTotal = 0;  // stack positions: start state's, current, end
+    std::vector<int> turnStarts;                     // stack positions where a player's turn begins
+    uint8_t viewer = 0;                              // 0 = whole map
+
+    // The person's own games are recorded for watch mode too: <gamesDir>/play_<date>/<time>.start/.final.
+    std::string playStart, playName, playOpponent;
+    int playTribes[2] = {0, 0};
+    bool playRecorded = true;
+
+    static std::string versionPrefix() {
+        Class* versions = cls("GameLogicAssembly", "", "VersionManager");
+        int32_t v = unbox<int>(call(method(versions, "get_GameVersion", 0), nullptr));
+        return std::string(reinterpret_cast<const char*>(&v), 4);
+    }
+
+    static std::string now(const char* fmt) {
+        std::time_t t = std::time(nullptr);
+        char buf[64];
+        std::strftime(buf, sizeof buf, fmt, std::localtime(&t));
+        return buf;
+    }
+
+    void recordPlay(const char* result) {
+        if (playRecorded || watching || playStart.empty()) return;
+        playRecorded = true;
+        std::string tag = "play_" + playName.substr(0, 10), name = playName.substr(11), dir = gamesDir() + "/" + tag;
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::ofstream(dir + "/" + name + ".start", std::ios::binary) << playStart;
+        std::ofstream(dir + "/" + name + ".final", std::ios::binary) << versionPrefix() + match->save();
+        Json j;
+        j.open('{').key("path").str(tag + "/" + name).key("tag").str(tag).key("time").str(playName.substr(0, 10) + " " +
+            name.substr(0, 2) + ":" + name.substr(2, 2) + ":" + name.substr(4, 2))
+            .key("tribes").open('[').num(playTribes[0]).num(playTribes[1]).close(']')
+            .key("players").open('{').key("1").str("you").key("2").str(playOpponent).close('}')
+            .key("agent").num(1).key("result").str(result).key("turns").num(match->turn()).close('}');
+        std::ofstream(dir + "/games.jsonl", std::ios::app) << j.s << "\n";
+    }
+
+    static std::string gamesDir() { const char* d = std::getenv("POLY_GAMES"); return d ? d : "runs/games"; }
+
+    static std::string readOr(const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return "";
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    }
+
+    // Every games.jsonl line under gamesDir()/*/, and the games sent for watching (sent.jsonl).
+    static std::string gamesJson() {
+        std::string out = "{\"games\":[", dir = gamesDir();
+        bool first = true;
+        auto add = [&](const std::string& file) {
+            std::stringstream ss(readOr(file));
+            for (std::string line; std::getline(ss, line);)
+                if (line.size() > 2 && line[0] == '{') { out += first ? "" : ","; out += line; first = false; }
+        };
+        if (DIR* d = opendir(dir.c_str())) {
+            while (dirent* e = readdir(d))
+                if (e->d_name[0] != '.') add(dir + "/" + e->d_name + "/games.jsonl");
+            closedir(d);
+        }
+        out += "],\"sent\":[";
+        first = true;
+        add(dir + "/sent.jsonl");
+        return out + "]}";
+    }
+
+    void reload() {
+        log.clear();
+        match = std::make_unique<env::Match>(api);
+        match->loadReplay(env::Spec(), watchStart, watchFinal);
+        watchBase = watchAt = match->replayAt;
+        watchTotal = match->replayCount;
+    }
+
+    bool watch(const std::string& path) {
+        if (path.empty() || path.find("..") != std::string::npos || path[0] == '/') { lastError = "bad path"; return false; }
+        std::string s = readOr(gamesDir() + "/" + path + ".start"), f = readOr(gamesDir() + "/" + path + ".final");
+        if (s.size() < 8 || f.size() < 8) { lastError = "no such game: " + path; return false; }
+        watchStart = s, watchFinal = f, watchPath = path;
+        watching = true, netOpponent = false, viewer = 0;
+        lastError.clear();
+        // One pass to find where each player's turn begins (after every EndTurn), then back to the start.
+        reload();
+        turnStarts = {watchBase};
+        while (watchAt < watchTotal) {
+            uint8_t p;
+            int32_t label;
+            env::Cmd c;
+            if (!match->replayStep(&p, &label, &c)) break;
+            watchAt = match->replayAt;
+            uint8_t next = match->currentPlayer();  // after EndTurn (CommandType 15); nature's turns are skipped
+            if (c.type == 15 && watchAt < watchTotal && (next == 1 || next == 2)) turnStarts.push_back(watchAt);
+        }
+        reload();
+        return true;
+    }
+
+    // Moves to stack position `to`; the commands played on the way are the log (the last 400).
+    void seek(int to) {
+        to = std::max(watchBase, std::min(to, watchTotal));
+        if (to < watchAt) reload();
+        log.clear();
+        while (watchAt < to) {
+            Object* cmd = g.item(match->replayStack.get(), match->replayAt);
+            uint8_t p;
+            int32_t label;
+            env::Cmd c;
+            if (!match->replayStep(&p, &label, &c)) { lastError = match->lastError; break; }
+            watchAt = match->replayAt;
+            if (watchAt > to - 400) {
+                Json j;
+                j.open('{').key("p").num(p).key("c");
+                Reflect::command(j, cmd);
+                j.close('}');
+                log.push_back(j.s);
+            }
+        }
+    }
+
+    void seekTurn(int dir) {
+        if (dir > 0) {
+            for (int t : turnStarts) if (t > watchAt) return seek(t);
+            return seek(watchTotal);
+        }
+        int target = watchBase;
+        for (int t : turnStarts) if (t < watchAt) target = t;
+        seek(target);
+    }
 
     const Method* explored = method(api.tile, "GetExplored", 1);
     const Method* tileUnit = method(api.tile, "get_unit", 0);
@@ -64,6 +210,8 @@ struct Session {
     // A pass-and-play match as the bot interface builds it, with the person in seat 1 and the
     // game's AI in seat 2.
     void start(int tribe, int opponent, int difficulty, int mode, int mapPreset, int mapSize) {
+        if (match && !watching && match->turn() > 0) recordPlay("unfinished");
+        watching = false;
         env::Spec spec;
         spec.seats[0] = {tribe, -1};
         netOpponent = difficulty < 0;
@@ -76,6 +224,12 @@ struct Session {
         match = std::make_unique<env::Match>(api);
         match->onBotCommand = [this](Object* cmd) { logCommand(cmd); };
         match->create(spec);
+        playStart = versionPrefix() + match->save();
+        playName = now("%Y-%m-%d_%H%M%S");
+        playTribes[0] = tribe, playTribes[1] = opponent;
+        const char* level[] = {"bot, Easy", "bot, Normal", "bot, Hard", "bot, Crazy"};
+        playOpponent = netOpponent ? "our network" : difficulty >= 0 && difficulty <= 3 ? level[difficulty] : "bot";
+        playRecorded = false;
         agentMoves();
     }
 
@@ -151,11 +305,13 @@ struct Session {
     std::vector<Object*> tiles() { return match->tiles(); }
 
     bool play(size_t i) {
+        if (watching) { lastError = "watching a recorded game; start a new game to play"; return false; }
         if (i >= match->legal.size()) { lastError = "not available"; return false; }
         log.clear();
         if (!match->step(int(i))) { lastError = match->lastError; return false; }
         lastError.clear();
         agentMoves();
+        if (match->ended()) recordPlay(match->winner() == human() ? "win" : "loss");
         return true;
     }
 
@@ -197,7 +353,13 @@ struct Session {
         j.key("turn").num(g.get<uint32_t>(g.currentTurn, state));
         j.key("currentPlayer").num(g.get<uint8_t>(g.currentPlayer, state));
         j.key("state").num(g.state(state));
-        j.key("human").num(human());
+        j.key("human").num(watching ? (viewer ? viewer : 1) : human());
+        if (watching) {
+            j.key("watch").open('{').key("path").str(watchPath).key("at").num(watchAt).key("base").num(watchBase)
+                .key("total").num(watchTotal).key("viewer").num(viewer).key("turnStarts").open('[');
+            for (int t : turnStarts) j.num(t);
+            j.close(']').close('}');
+        }
         j.key("mode").num(match->spec.mode);
         j.key("reveal").boolean(reveal);
         Object* won = nullptr;
@@ -225,11 +387,11 @@ struct Session {
         j.key("width").num(unbox<int>(call(method(object_get_class(map), "get_Width", 0), map)));
         j.key("height").num(unbox<int>(call(method(object_get_class(map), "get_Height", 0), map)));
         j.key("tiles").open('[');
-        uint8_t h = human();
+        uint8_t h = watching ? viewer : human();
         for (Object* t : tiles()) {
             const int32_t* c = reinterpret_cast<const int32_t*>(reinterpret_cast<char*>(t) + 0x10);
             j.open('{').key("x").num(c[0]).key("y").num(c[1]);
-            bool seen = reveal || !h || unbox<bool>(call(explored, t, {&h}));
+            bool seen = (reveal && !watching) || !h || unbox<bool>(call(explored, t, {&h}));
             if (!seen) { j.key("fog").boolean(true).close('}'); continue; }
             j.key("terrain").num(get<int32_t>(t, "terrain")).key("climate").num(get<int32_t>(t, "climate"))
                 .key("owner").num(get<uint8_t>(t, "owner")).key("capitalOf").num(get<uint8_t>(t, "capitalOf"))
@@ -252,7 +414,7 @@ struct Session {
         j.close(']');
 
         j.key("legal").open('[');
-        for (size_t i = 0; i < match->legal.size(); ++i) {
+        for (size_t i = 0; i < (watching ? 0 : match->legal.size()); ++i) {
             Object* cmd = match->legalCmds[i].get();
             Reflect::command(j, cmd);
             j.s.pop_back();
@@ -282,6 +444,15 @@ struct Session {
         return j.s;
     }
 };
+
+inline std::string urlDecode(const std::string& v) {
+    std::string out;
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] == '%' && i + 2 < v.size()) { out += char(std::stoi(v.substr(i + 1, 2), nullptr, 16)); i += 2; }
+        else out += v[i] == '+' ? ' ' : v[i];
+    }
+    return out;
+}
 
 struct Request {
     std::string method, path;
@@ -364,6 +535,19 @@ inline void serve(int port) {
             respond(fd, 200, "application/json", session.stateJson());
         } else if (r.path == "/reveal" && r.method == "POST") {
             session.reveal = arg("on", 0);
+            respond(fd, 200, "application/json", session.stateJson());
+        } else if (r.path == "/games") {
+            respond(fd, 200, "application/json", Session::gamesJson());
+        } else if (r.path == "/watch" && r.method == "POST") {
+            session.watch(urlDecode(r.query["path"]));
+            respond(fd, 200, "application/json", session.stateJson());
+        } else if (r.path == "/wstep" && r.method == "POST" && session.watching) {
+            if (r.query.count("to")) session.seek(arg("to", 0));
+            else if (r.query.count("turn")) session.seekTurn(arg("turn", 1));
+            else session.seek(session.watchAt + arg("d", 1));
+            respond(fd, 200, "application/json", session.stateJson());
+        } else if (r.path == "/wview" && r.method == "POST") {
+            session.viewer = uint8_t(arg("v", 0));
             respond(fd, 200, "application/json", session.stateJson());
         } else if (r.path == "/gamedata") {
             respond(fd, 200, "application/json", readFile(kRoot + "/gamedata/GameLogicData28.txt"));

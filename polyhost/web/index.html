@@ -66,6 +66,18 @@
   .btn { font: inherit; padding: 10px 18px; border-radius: 12px; border: 0; background: #2b8be0; color: #fff; cursor: pointer; margin-top: 14px; }
   .muted { color: var(--dim); font-size: 13px; }
   #log { font-size: 14px; color: var(--dim); max-height: 50vh; overflow: auto; min-width: 320px; }
+  #watchbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--card); border-radius: 18px;
+              padding: 8px 12px; display: none; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 96vw; }
+  #watchbar .wbtn { font-size: 22px; padding: 4px 8px; border-radius: 10px; cursor: pointer; }
+  #watchbar .wbtn:hover { background: #2a3550; }
+  #watchbar .wbtn.on { background: #5a3fa8; }
+  #winfo { width: 100%; text-align: center; font-size: 13px; color: var(--dim); }
+  #gamelist { min-width: min(720px, 90vw); }
+  .grow { padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 14px; display: flex; gap: 10px; }
+  .grow:hover { background: #1d2330; }
+  .grow .res { width: 52px; font-weight: 600; } .grow .res.win { color: #7fdc7f; } .grow .res.loss { color: #ff8a80; }
+  .grow .when { color: var(--dim); width: 128px; } .grow .note { color: var(--gold); }
+  .ghead { margin: 12px 0 4px; color: var(--gold); font-style: italic; }
   #toast { position: fixed; top: 132px; left: 50%; transform: translateX(-50%); background: var(--card); border-radius: 14px;
            padding: 8px 14px; font-size: 14px; color: var(--dim); max-width: 90vw; opacity: 0; transition: opacity .4s; pointer-events: none; }
 </style>
@@ -100,17 +112,32 @@
   <p class="muted">Gold border: you can research it now. Click to research. Blue: researched.</p></div></div>
 <div class="overlay" id="choiceview"><div class="panel"><h2 id="choicetitle">City upgrade</h2><div id="choices"></div></div></div>
 <div class="overlay" id="logview"><div class="panel"><h2>Bot's last turn</h2><div id="log"></div></div></div>
+<div class="overlay" id="watchview"><div class="panel"><h2>Recorded games</h2>
+  <p class="muted">Newest first. Games sent by Claude are at the top. Click one to watch it.</p>
+  <div id="gamelist"></div></div></div>
+<div id="watchbar">
+  <span class="wbtn" id="wfirst" title="Start (Home)">⏮</span><span class="wbtn" id="wprevturn" title="Previous turn (↑)">⏪</span>
+  <span class="wbtn" id="wprev" title="Previous move (←)">◀</span><span class="wbtn" id="wplay" title="Play / pause (space)">⏯</span>
+  <span class="wbtn" id="wnext" title="Next move (→)">▶</span><span class="wbtn" id="wnextturn" title="Next turn (↓)">⏩</span>
+  <span class="wbtn" id="wlast" title="End (End)">⏭</span>
+  <select id="wview" title="Whose view"><option value="0">Whole map</option><option value="1">Player 1's view</option><option value="2">Player 2's view</option></select>
+  <select id="wspeed" title="Autoplay speed"><option value="turn">Autoplay by turn</option><option value="move" selected>Autoplay by move</option></select>
+  <span class="wbtn" id="wlist" title="Other games">☰</span><span class="wbtn" id="wexit" title="Leave watch mode">✕</span>
+  <div id="winfo"></div>
+</div>
 <div class="overlay" id="menuview"><div class="panel"><h2>New game</h2>
   <div class="form">
     <label>Your tribe</label><select id="tribe"></select>
     <label>Bot tribe</label><select id="opponent"></select>
-    <label>Bot difficulty</label><select id="difficulty"><option value="0">Easy</option><option value="1" selected>Normal</option><option value="2">Hard</option><option value="3">Crazy</option><option value="-1">Our network</option></select>
-    <label>Game mode</label><select id="mode"><option value="2" selected>Domination</option><option value="1">Perfection</option><option value="4">Might</option></select>
-    <label>Map type</label><select id="map"><option value="1">Drylands</option><option value="2">Lakes</option><option value="3" selected>Continents</option><option value="6">Pangea</option><option value="4">Archipelago</option><option value="5">Water world</option></select>
-    <label>Map size</label><select id="size"><option value="11" selected>Tiny 11×11</option><option value="14">Small 14×14</option><option value="16">Normal 16×16</option><option value="18">Large 18×18</option></select>
+    <label>Bot difficulty</label><select id="difficulty"><option value="-1" selected>Our network</option><option value="0">Easy</option><option value="1">Normal</option><option value="2">Hard</option><option value="3">Crazy</option></select>
+    <label>Game mode</label><select id="mode"><option value="4" selected>Might</option><option value="2">Domination</option><option value="1">Perfection</option></select>
+    <label>Map type</label><select id="map"><option value="2" selected>Lakes</option><option value="1">Drylands</option><option value="3">Continents</option><option value="6">Pangea</option><option value="4">Archipelago</option><option value="5">Water world</option></select>
+    <label>Map size</label><select id="size"><option value="14" selected>Small 14×14</option><option value="11">Tiny 11×11</option><option value="16">Normal 16×16</option><option value="18">Large 18×18</option></select>
     <label>Fog</label><select id="reveal"><option value="0">On</option><option value="1">Reveal map</option></select>
   </div>
   <button class="btn" id="newgame">Start new game</button>
+  <button class="btn" id="watchgames" style="background:#5a3fa8">Watch recorded games</button>
+  <p class="muted">"Our network" plays only the championship format: Might, Lakes, Small 14×14 (otherwise the game's AI moves for it).</p>
   <p class="muted">Rules, map generation and the bot are the game's own compiled code (Android 2.17.3), loaded without Unity.<br>
   Drag to pan, scroll or pinch to zoom. Tap a unit, then a highlighted tile. Tap the unit again to select its tile.</p>
 </div></div>

@@ -10,7 +10,10 @@ bot is the game's AI at the given difficulty. The policy plays greedily (or samp
 import argparse
 import concurrent.futures as cf
 import contextlib
+import json
 import math
+import os
+import struct
 import time
 
 import numpy as np
@@ -95,6 +98,9 @@ def main():
     ap.add_argument('--cell_list', default=None,
                     help='with --cells: only these cells, a file of lines "agent_tribe bot_tribe agent_seat(1|2)"; '
                          'seeds from 12,000,000')
+    ap.add_argument('--save_games', default=None,
+                    help='keep every game for the web app\'s watch mode: <dir>/<seed>_s<seat>.start/.final (GameState '
+                         'blobs with the command stack) and one line per game in <dir>/games.jsonl')
     ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--teacher', action='store_true',
                     help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
@@ -132,6 +138,24 @@ def main():
     out = open(args.out, 'a') if args.out else None
     with contextlib.ExitStack() as stack:
         envs = [stack.enter_context(polyenv.launch(args.port + i)) for i in range(args.procs)]
+        blob_prefix = struct.pack('<i', envs[0].info()['game_version'])  # as the game's server sends states
+        tag = os.path.basename(os.path.normpath(args.save_games)) if args.save_games else ''
+        if args.save_games:
+            os.makedirs(args.save_games, exist_ok=True)
+
+        def save_game(d, g, final, res, turns):
+            name = f"{g['seed']}_s{g['seat'] + 1}"
+            for ext, blob in (('start', g['start']), ('final', blob_prefix + final)):
+                with open(os.path.join(d, f'{name}.{ext}'), 'wb') as f:
+                    f.write(blob)
+            agent = g['seat'] + 1
+            meta = dict(path=f'{tag}/{name}', tag=tag, time=time.strftime('%Y-%m-%d %H:%M:%S'), seed=g['seed'],
+                        tribes=list(g['tribes']), players={str(agent): f'network ({os.path.basename(args.checkpoint)})'
+                                                           if not args.teacher else "the game's AI (teacher)",
+                                                           str(3 - agent): f'bot, difficulty {args.difficulty}'},
+                        agent=agent, result=res, turns=turns)
+            with open(os.path.join(d, 'games.jsonl'), 'a') as f:
+                f.write(json.dumps(meta) + '\n')
         pool = cf.ThreadPoolExecutor(len(envs))
         live = [dict() for _ in envs]  # per env: slot -> dict(job, status, turn commands)
 
@@ -141,7 +165,8 @@ def main():
                 tribes = tuple(int(t) for t in np.random.default_rng(seed).choice(REGULAR_TRIBES, 2))
             bots = (None, args.difficulty) if seat == 0 else (args.difficulty, None)
             st = envs[e].new(slot, polyenv.Spec(tribes=tribes, bots=bots, seed=seed))
-            live[e][slot] = dict(seed=seed, seat=seat, tribes=tribes, st=st, turn=st.turn, n=0)
+            live[e][slot] = dict(seed=seed, seat=seat, tribes=tribes, st=st, turn=st.turn, n=0,
+                                 start=blob_prefix + envs[e].save(slot) if args.save_games else None)
 
         for e in range(len(envs)):
             for s in range(args.slots):
@@ -163,6 +188,8 @@ def main():
                     agent_id = g['seat'] + 1
                     res = 'win' if st.ended and st.winner == agent_id else 'loss' if st.ended else 'cap'
                     results.append((g['seed'], g['seat'], g['tribes'], res, st.turn))
+                    if args.save_games:
+                        save_game(args.save_games, g, envs[e].save(s), res, st.turn)
                     if out:
                         out.write(f"{g['seed']}\t{g['seat']}\t{g['tribes'][0]}\t{g['tribes'][1]}\t{res}\t{st.turn}\n")
                         out.flush()

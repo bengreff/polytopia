@@ -322,7 +322,8 @@ function renderHud() {
   $('endbtn').classList.toggle('off', !canEnd);
   $('endbtn').classList.toggle('pulse', canEnd && active === 0);
   let banner = '';
-  if (state.state === 4) banner = state.winner === state.human ? '🏆 Victory!' : 'Defeat. Open the menu to start a new game.';
+  if (state.watch) banner = watchBanner();
+  else if (state.state === 4) banner = state.winner === state.human ? '🏆 Victory!' : 'Defeat. Open the menu to start a new game.';
   else if (!myTurn()) banner = 'Waiting…';
   else if (choosing) banner = 'Choose your reward';
   else if (active) banner = `Your turn · ${active} unit${active > 1 ? 's' : ''} can still act · ${affordable} things you can afford`;
@@ -421,9 +422,103 @@ function toast(text) {
 }
 
 function render() {
-  draw(); renderHud(); renderCard(); renderChoices();
+  draw(); renderHud(); renderCard(); renderChoices(); renderWatch();
   if ($('techview').style.display === 'flex') renderTechTree();
 }
+
+// ---------- watch mode: replaying a recorded game ----------
+
+let games = null, autoplay = null, watchMeta = null;
+const cmdText = l => {
+  const a = l.c.args, c = l.c.cmd;
+  const what = c === 'Train' ? `trains ${title(nameOf('unitData', a.Type))}` : c === 'Build' ? `builds ${title(nameOf('improvementData', a.Type))}`
+    : c === 'Research' ? `researches ${title(nameOf('techData', a.Type))}` : c === 'EndTurn' ? 'ends the turn' : c.toLowerCase();
+  return `${tribeName(l.p) || 'Player ' + l.p} ${what}${a.To ? ' → ' + a.To : a.Target ? ' → ' + a.Target : a.Coordinates ? ' @ ' + a.Coordinates : ''}`;
+};
+function watchBanner() {
+  const ps = state.players.filter(p => p.id === 1 || p.id === 2);
+  const who = id => watchMeta?.players?.[id] ? ` (${watchMeta.players[id]})` : '';
+  const side = p => `${tribeName(p.id)}${who(p.id)} ★${p.stars} +${p.income}`;
+  if (state.state === 4) return `🏆 ${tribeName(state.winner)} won · ${ps.map(side).join('  vs  ')}`;
+  return ps.map(side).join('  vs  ');
+}
+function renderWatch() {
+  const on = !!state.watch;
+  $('watchbar').style.display = on ? 'flex' : 'none';
+  $('rightbar').style.display = on ? 'none' : 'flex';
+  $('logbtn').style.display = on ? 'none' : '';
+  if (!on) return;
+  const w = state.watch, last = state.log.length ? state.log[state.log.length - 1] : null;
+  const turnNo = w.turnStarts.filter(t => t <= w.at).length;
+  $('winfo').textContent = `${w.path} · move ${w.at - w.base}/${w.total - w.base} · player turn ${turnNo}/${w.turnStarts.length} · game turn ${state.turn}`
+    + (last ? ` · last: ${cmdText(last)}` : '');
+  $('wview').value = String(w.viewer);
+  $('wplay').classList.toggle('on', !!autoplay);
+}
+async function wstep(q) {
+  state = await api(`/wstep?${q}`, 'POST');
+  if (state.watch && state.watch.at >= state.watch.total) stopAutoplay();
+  render();
+}
+function stopAutoplay() { clearInterval(autoplay); autoplay = null; }
+function toggleAutoplay() {
+  if (autoplay) { stopAutoplay(); render(); return; }
+  const byTurn = $('wspeed').value === 'turn';
+  autoplay = setInterval(() => { if (!busy) { busy = true; wstep(byTurn ? 'turn=1' : 'd=1').finally(() => busy = false); } }, byTurn ? 1500 : 250);
+  render();
+}
+async function openWatchList() {
+  const d = await api('/games');
+  const row = (g, note) => {
+    const r = document.createElement('div'); r.className = 'grow';
+    const t = g.tribes || [], agent = g.agent || 1;
+    const name = i => title(nameOf('tribeData', t[i - 1]));
+    const res = g.result || '';
+    r.innerHTML = `<span class="res ${res}">${res}</span><span class="when">${g.time || ''}</span>`
+      + `<span>${name(1)} (${g.players?.[1] || 'player 1'}) vs ${name(2)} (${g.players?.[2] || 'player 2'}), ${g.turns ?? '?'} turns`
+      + ` <span class="muted">${g.path}</span>${note ? ` <span class="note">${note}</span>` : ''}</span>`;
+    r.onclick = () => watchGame(g);
+    return r;
+  };
+  const byTime = (a, b) => (b.time || '').localeCompare(a.time || '');
+  const kids = [];
+  if (d.sent.length) {
+    const h = document.createElement('div'); h.className = 'ghead'; h.textContent = 'Sent by Claude'; kids.push(h);
+    for (const g of d.sent.slice().sort(byTime)) kids.push(row(g, g.note));
+    const h2 = document.createElement('div'); h2.className = 'ghead'; h2.textContent = 'All recorded games'; kids.push(h2);
+  }
+  for (const g of d.games.slice().sort(byTime).slice(0, 400)) kids.push(row(g));
+  if (!kids.length) kids.push(Object.assign(document.createElement('p'), { textContent: 'No recorded games yet.' }));
+  $('gamelist').replaceChildren(...kids);
+  $('menuview').style.display = 'none';
+  $('watchview').style.display = 'flex';
+}
+async function watchGame(g) {
+  stopAutoplay(); sel = null; centeredFor = null; watchMeta = g;
+  state = await api(`/watch?path=${encodeURIComponent(g.path)}`, 'POST');
+  $('watchview').style.display = 'none';
+  const cap = state.tiles.find(t => t.capitalOf === 1);
+  if (cap) centerOn(cap.x, cap.y);
+  resize(); render();
+}
+$('watchgames').onclick = openWatchList;
+$('wlist').onclick = openWatchList;
+$('wfirst').onclick = () => wstep('to=0');
+$('wlast').onclick = () => wstep('to=1000000');
+$('wprev').onclick = () => wstep('d=-1');
+$('wnext').onclick = () => wstep('d=1');
+$('wprevturn').onclick = () => wstep('turn=-1');
+$('wnextturn').onclick = () => wstep('turn=1');
+$('wplay').onclick = toggleAutoplay;
+$('wspeed').onchange = () => { if (autoplay) { stopAutoplay(); toggleAutoplay(); } };
+$('wview').onchange = async () => { state = await api(`/wview?v=${$('wview').value}`, 'POST'); render(); };
+$('wexit').onclick = () => { stopAutoplay(); $('menuview').style.display = 'flex'; };
+addEventListener('keydown', e => {
+  if (!state?.watch || e.target.tagName === 'SELECT') return;
+  const k = { ArrowRight: 'd=1', ArrowLeft: 'd=-1', ArrowDown: 'turn=1', ArrowUp: 'turn=-1', Home: 'to=0', End: 'to=1000000' }[e.key];
+  if (k) { e.preventDefault(); wstep(k); }
+  if (e.key === ' ') { e.preventDefault(); toggleAutoplay(); }
+});
 
 // ---------- actions ----------
 
@@ -503,7 +598,7 @@ function zoomAt(px, py, s, from = view) {
 canvas.addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.clientX, e.clientY, view.s * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 addEventListener('resize', resize);
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') { sel = null; for (const o of ['techview', 'logview', 'menuview']) $(o).style.display = 'none'; render(); }
+  if (e.key === 'Escape') { sel = null; for (const o of ['techview', 'logview', 'menuview', 'watchview']) $(o).style.display = 'none'; render(); }
   if ((e.key === 'e' || e.key === 'Enter') && myTurn() && $('choiceview').style.display !== 'flex') {
     const k = state.legal.findIndex(m => m.cmd === 'EndTurn'); if (k >= 0) play(k);
   }
@@ -523,8 +618,9 @@ $('logbtn').onclick = () => {
   }));
   $('logview').style.display = 'flex';
 };
-for (const o of ['techview', 'logview', 'menuview']) $(o).addEventListener('click', e => { if (e.target === $(o)) $(o).style.display = 'none'; });
+for (const o of ['techview', 'logview', 'menuview', 'watchview']) $(o).addEventListener('click', e => { if (e.target === $(o)) $(o).style.display = 'none'; });
 $('newgame').onclick = async () => {
+  stopAutoplay();
   const q = ['tribe', 'opponent', 'mode', 'difficulty', 'size', 'map'].map(k => `${k}=${$(k).value}`).join('&');
   $('menuview').style.display = 'none'; sel = null; centeredFor = null;
   state = await api(`/new?${q}`, 'POST');
