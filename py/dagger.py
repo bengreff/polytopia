@@ -79,11 +79,15 @@ def main():
     ap.add_argument('--slots', type=int, default=6)
     ap.add_argument('--port', type=int, default=8900)
     ap.add_argument('--temperature', type=float, default=0.0)
+    ap.add_argument('--tribe_pairs', default=None,
+                    help='draw each game\'s tribes and the agent\'s seat from this file of lines "agent_tribe '
+                         'opponent_tribe agent_seat(1|2)" (e.g. weak matchups) instead of at random')
     ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--device', default='mps' if eval_vs_bot.torch.backends.mps.is_available() else 'cpu')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     opponents = [-1 if o == 'self' else int(o) for o in args.opponents.split(',')]
+    pairs = [tuple(int(x) for x in l.split()) for l in open(args.tribe_pairs) if l.strip()] if args.tribe_pairs else None
     if args.remote:
         net = remote.RemoteNet(args.checkpoint)
         step = net.step
@@ -105,6 +109,10 @@ def main():
             opp = opponents[seed % len(opponents)]
             seat = (seed // len(opponents)) % 2
             tribes = tuple(int(t) for t in np.random.default_rng(seed).choice(eval_vs_bot.REGULAR_TRIBES, 2))
+            if pairs:
+                ta, tb, s1 = pairs[(seed // len(opponents)) % len(pairs)]
+                seat = s1 - 1
+                tribes = (ta, tb) if seat == 0 else (tb, ta)
             if opp < 0:
                 bots, agent_seats = (None, None), (1, 2)
             else:

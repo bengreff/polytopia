@@ -323,3 +323,23 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - R5b restarts automatically when R6 writes its 20k checkpoint. Its 600 iteration-1 games are
     kept, and the loop skips games already played.
   - **Rule from now on:** with R3 running, only one more training process on the GPU.
+
+## R5c — RL aimed at the weak matchups (pre-registered 2026-10-22, 02:20)
+
+- **Why:** the full M4 gate failed on 3 cells, and 19 cells won ≤ 15/20
+  (`runs/evals/r4_20k_gate_weak15.txt`). Oumaji on our side, and Vengir, Xin-xi and Aimo on the
+  bot's, recur.
+- **Hypothesis:** RL on games drawn only from those 19 tribe-pair × seat cells raises the win rate
+  vs Crazy in exactly those cells.
+- **Change from R5b:** each game's tribes and our seat come from the 19 cells (`dagger.py
+  --tribe_pairs`).
+  - Same as R5b otherwise: start R4 step 20k; opponents Crazy 2/3, self 1/3 (on the same tribe
+    pairs); temperature 0.5; lr 1e-4; anchor 0.2; 600 games per iteration.
+  - Starts when R5b ends (after its 3rd iteration if it shows no gain); as many iterations as fit
+    before 05:30.
+- **Evaluation:** the 19 cells × 20 games on fresh seeds (`--cell_list`, seeds from 12,000,000),
+  paired with R4 at 20k on the same seeds; plus the standard 200 games vs Crazy (no regression).
+- **Expected:** a paired gain on the 19 cells (R4 at 20k scored 70.5% there on the gate's seeds,
+  and somewhat more is expected on fresh seeds, since the cells were chosen for low scores).
+- **Falsifier:** no paired gain on the 19 cells after 2 iterations (p > 0.2), or the standard Crazy
+  evaluation drops below 180/200.
