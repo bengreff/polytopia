@@ -52,11 +52,21 @@ the time.** Every cell below is 200 games, sides swapped, on fixed seeds; see re
       1) and Xin-xi vs Vengir (seat 2): 65–70% over 40 games each, counting a re-test on fresh
       seeds.
     - The last M4 step is Ben's best-of-5.
-- **Tried tonight, no gain:**
-  - **R5 / R5b, policy-only PPO:** the greedy policy stayed flat after 1–2 iterations. The sampled
-    policy (temperature 0.5) did improve, from 84% to 91% vs Crazy in its own games.
+- **Tried tonight, no gain** (each pre-registered, with its falsifier, in research-log.md):
+  - **R5 / R5b, policy-only PPO** from R4: the greedy policy stayed flat after 1–2 iterations.
+    The sampled policy (temperature 0.5) did improve, from 84% to 91% vs Crazy in its own games.
+  - **R5c, PPO on the 19 weakest matchup cells:** flat after 2 iterations (316/380 against R4's
+    328/380 on those cells).
   - **R6, imitating only the winning side of human games:** identical to R4 (586/600 each).
-- **Running at handoff:** filled in at the end of the night (below).
+  - **R7, 20k more steps on the complete human set (7,732 games):** better imitation (top-1
+    43.7%), the same play (Crazy 191 vs 188; weak cells 323 vs 328; pooled p = 0.91).
+- **Running at handoff (05:35):**
+  - Only **R3** on the PC (`/home/greff/runs/r3_m1`, AI cloning, step ~248k of 290k, ends
+    ~07:00). It is superseded; its result only completes the record.
+  - Nothing of mine is running. The Mac's queue runner was told to stop (`runs/queue/stop`); delete
+    that file before restarting `tools/queue.sh`.
+  - `polyhost-mac env 8600` (pid 8009) is a stale process from before tonight, not mine. Left
+    alone.
 
 ## What exists (new tonight; the engine is described in README.md)
 
@@ -152,12 +162,15 @@ the time.** Every cell below is 200 games, sides swapped, on fixed seeds; see re
 1. **Ben:**
    - plays R4 at 20k (`tools/play.sh`), best-of-5 for M4;
    - decides on the asks below.
-2. **The weak matchups** (Oumaji vs Vengir / Xin-xi, Xin-xi vs Vengir): aim training at them, using
-   R5c (RL on the 19 weakest cells, queued after R7) and/or more weight on human games with those
-   tribes, then re-run the failing cells.
-3. **More human data and longer training** is the lever with evidence. R7 (20k more steps on the
-   complete set) is running; compare it with R4 at 20k on the standard seeds and the 19 weak
-   cells.
+2. **The weak matchups** (Oumaji vs Vengir / Xin-xi, Xin-xi vs Vengir) are what fails the M4 gate.
+   RL on those cells (R5c) didn't help at this scale. Next to try:
+   - more weight on human games with those tribes;
+   - a look at how the losses happen (`tools/mapascii.py` on lost games);
+   - then re-run the failing cells (`--cell_list`).
+3. **Human data has plateaued** for play strength at this model size (R7). Options:
+   - a larger network (learning curve flat, GPU has headroom), or a bigger window per batch;
+   - more data, e.g. other formats as pretraining: the 14k Might Continents "Instant Tournament"
+     games are listed in training-and-data.md.
 4. **RL:** policy-only PPO at this scale hasn't improved greedy play. Before more RL:
    - get more throughput (the native Windows host, or the PC's GPU for inference once R3 is off
      it);
