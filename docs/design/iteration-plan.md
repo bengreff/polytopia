@@ -153,3 +153,7 @@ Decision rules:
 - 22:10 R4 at 6k vs Hard: 195/200 (97.5%). **M2's win-rate thresholds are met by the raw policy**
   (lower bounds 98.1 / 94.3 / 85.1% vs Normal / Hard / Crazy). R6 (winners-only human fine-tune)
   launched on the PC. R5 (RL) amended before its start: Crazy 2/3, self 1/3, temperature 0.5.
+- 22:20 R5 iteration 1 is playing: at temperature 0.5 it wins 76% vs Crazy (209/275; greedy: 90%).
+  Game processes and the network each take half the time, so `dagger.py` and `eval_vs_bot.py` now
+  overlap them over two groups of slots (identical games on the same seeds). `rl_loop.sh` now
+  retries every transfer after a 30-s ssh outage at 22:12. R4 at step 9k, R6 at 1k, R3 at 115k.
