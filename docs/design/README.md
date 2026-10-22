@@ -45,7 +45,7 @@ the decision log below records what is settled.
 | 2026-10-20 | The AI's `StayCommand` (marks a unit done) is not in the agent's list; data generation plays it via `STEP_BOT_OWN`. `EndMatch` is sent automatically once the game reaches FinalTurn | The client never offers Stay to a person; EndMatch is valid only at FinalTurn, and the AI sends it at once |
 | 2026-10-21 | **The built-in AI keeps its full view** when it plays demonstration games; only our agent is fog-limited (observation allowlist, proven by the M0 fog-leak test). Supersedes "drop imitation of moves that depend on unexplored information" | Ben: its omniscience stands in for guessing what is in the fog; our bots must never get that information |
 | 2026-10-21 | M1 teacher = the game's AI on both **person** seats of the exact championship build (handicap 1, AutoPlay off → `GetStupidity` 0). This is the "Crazy-brain, Normal-income" teacher | `PlayerState.GetStupidity` = max(0, 2 − handicap) for AutoPlay players, 0 otherwise |
-| 2026-10-21 | First-move edge, AI vs AI on the championship build: first seat won 924/1732 = 53.3% (95% CI 51.0–55.7%) | Small but real; the early 6/6 was noise |
+| 2026-10-21 | First-move edge, AI vs AI on the championship build: **first seat won 5,757/11,333 = 50.8% (95% CI 49.9–51.7%)** | At most about one point. The early 6/6 and the 53% on the first 1,732 games were sampling noise |
 | 2026-10-20 | Observation v1 = allowlist of what the viewer's client shows. Enemy unit XP, age and home city are withheld; opponent stars and techs are withheld | Fog principle (scope-and-rules.md); the client shows veteran status, not XP |
 
 ## Iteration log

@@ -47,6 +47,35 @@ Common setup unless stated:
 - **Expected:** ≥ 80% wins.
 - **Falsifier:** < 80% means the pipeline or the encoding is broken. Stop and debug; don't add
   layers.
+- **Result (2026-10-21): FAIL.**
+  - **Games:** 127/200 won vs Easy (**63.5%**, 95% Wilson CI 56.6–69.9%); seat 1 67/100, seat 2 60/100;
+    0 capped. Mean length: 35 turns for wins, 52 for losses.
+  - **Training:** 24,000 steps (6.1M samples, ~2.5 passes) in 57 min on a Modal L4. Held-out policy
+    top-1 66.5% (training 67.2%); value accuracy 74%.
+  - **Diagnosis** (`py/diag_confusion.py`, 29,545 held-out decisions), agreement with the AI by
+    command type:
+
+    | Command type | Agreement |
+    |---|---|
+    | Capture | 99% |
+    | Promote | 100% |
+    | ExamineRuins | 98% |
+    | EndTurn | 89% |
+    | Attack | 79% |
+    | Move | 67% |
+    | Train | 61% |
+    | Research | 55% |
+    | Upgrade | 41% |
+    | Build | 18% |
+
+    - The biggest disagreement is "Move → a different Move" (15% of decisions), much of which may
+      be the order of equivalent moves.
+    - The model ends its turn while the AI still acted in 1.6% of decisions.
+  - **Reading:** with R2 passing, this points to too little learning, especially of economic
+    choices, rather than broken plumbing.
+  - **Teacher reference** (`eval_vs_bot.py --teacher`, the same 200 games): the game's AI on our seat
+    beats Easy 193/200 (**96.5%**, CI 93.0–98.3%), mean 30 turns. The bar was reachable by imitation;
+    the model won 123 of the teacher's 193 wins, plus 4 the teacher lost.
 
 ## R2 — canary (pre-registered 2026-10-21)
 
@@ -56,13 +85,36 @@ Common setup unless stated:
 - **Same as R1:** budget, data and evaluation.
 - **Expected:** far below R1 (≤ 20% vs Easy).
 - **Falsifier:** within 10 points of R1 means the evaluator isn't measuring the policy.
+- **Result (2026-10-21): PASS.**
+  - **Games:** 3/200 won vs Easy (**1.5%**, 95% CI 0.5–4.3%), 62 points below R1; 1 capped.
+  - **Training:** the same budget (24,000 steps on a Modal L4); held-out top-1 5.9%.
 
 ## R3 — M1 behaviour cloning (pre-registered 2026-10-21)
 
 - **Hypothesis:** behaviour cloning on ~20,000 teacher games gives a raw policy that beats
   **Normal**.
-- **Change from R1:** the full dataset and a longer schedule. Steps are set from the measured
-  throughput, about 3 epochs.
+- **Change from R1:** the full dataset and a longer schedule.
+- **Exact config (fixed before launch, 2026-10-21):**
+  - **Hardware:** the PC's RTX 4070 Ti SUPER. Other programs (games) may share it, which changes
+    speed only.
+  - **Data:** `~/polydata/m1v2`, which is still filling to 20,000 games (11,500 done at launch,
+    complete within about 3 hours). The loader samples uniformly over the games present, so early
+    games are seen somewhat more often.
+  - **Schedule:** 290,000 steps × 256 ≈ 74M samples, about 3 passes over ~24.6M decisions.
+  - **Checks:** validation on 40 held-out games every 10,000 steps; checkpoints every 10,000
+    steps.
+  - **Learning curve:** checkpoints are also played against Easy and Normal as the emulator frees
+    up.
+- **Incident (2026-10-21):**
+  - **Crash:** the first launch died at step 2,400 (16:48). A loader worker opened a game file the
+    sync was still writing (`BadZipFile`), and it went unnoticed for two hours.
+  - **Fixes:**
+    - the loader now skips unreadable files;
+    - every file was checked: 4 of 19,960 were truncated by interrupted transfers and moved to
+      `m1v2_bad` (seeds 10243, 10306, 10551, 15152);
+    - a watcher now reports a stalled or crashed run.
+  - **Relaunch (19:05):** from scratch on the complete **19,956 games**, same config. Generation
+    stopped at 19,954 finished games (24.6M decisions); human replays come next.
 - **Evaluation:** vs Normal (difficulty 1), 200 seeds × 2 sides = 400 games.
 - **Gate (training-and-data.md M1):** win rate ≥ 60% with the 95% Wilson lower bound reported.
 - **Also reported:** held-out policy top-1, value accuracy, results by seat and by tribe.

@@ -87,8 +87,23 @@ struct Stats {
     int states = 0, swept = 0, sweepMismatch = 0, botChecked = 0, botMissing = 0, duplicates = 0;
     int clones = 0, cloneMismatch = 0, games = 0, ended = 0, commands = 0;
     int botOnly = 0;  // AI commands the client never offers a person (StayCommand)
+    int strictMismatch = 0;
     std::map<std::string, int> missingByClass, extraByClass, notOffered, botOnlyByClass;
 };
+
+// The fast legal list (generator outputs taken as validated) must equal the list with every
+// command re-checked by IsValid.
+inline void checkStrict(env::Match& m, Stats& st) {
+    std::vector<Cmd> fast = m.legal;
+    m.strictValidation = true;
+    m.computeLegal();
+    m.strictValidation = false;
+    bool same = fast.size() == m.legal.size();
+    for (size_t i = 0; same && i < fast.size(); ++i) same = fast[i] == m.legal[i];
+    if (!same && st.strictMismatch++ < 3)
+        std::printf("  fast legal list differs from the fully validated one (%zu vs %zu rows)\n", fast.size(), m.legal.size());
+    m.computeLegal();
+}
 
 // Compares the legal list with the brute-force sweep at the current state. IsValid alone is laxer
 // than the client: the game's generators add the checks the UI makes (UnitDataExtensions.CanCapture,
@@ -380,6 +395,7 @@ inline Stats run(int games, uint64_t seed, int every, int turnCap) {
                 }
             }
             int action = rng() % 10 ? (bot >= 0 ? bot : env::Match::kBotOwn) : int(rng() % m.legal.size());
+            checkStrict(m, st);
             if (st.states % every == 0) {
                 checkLegal(m, st);
                 checkClone(api, m, action >= 0 ? action : -1, st);
@@ -399,6 +415,7 @@ inline Stats run(int games, uint64_t seed, int every, int turnCap) {
     std::printf("accepted by IsValid but not offered by the game's generators (expected, see checkLegal):\n");
     for (auto& [name, n] : st.notOffered) std::printf("  %-28s %d\n", name.c_str(), n);
     std::printf("encoding: %d duplicate encodings\n", st.duplicates);
+    std::printf("fast vs fully validated legal list: %d of %d states differ\n", st.strictMismatch, st.states);
     std::printf("determinism: %d clones, %d mismatched\n", st.clones, st.cloneMismatch);
     return st;
 }

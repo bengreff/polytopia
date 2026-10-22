@@ -85,7 +85,12 @@ class Stream(torch.utils.data.IterableDataset):
         rng = random.Random(self.seed * 1000 + (info.id if info else 0))
         while True:
             files = list_games(self.data_dir, val=False, min_seed=self.min_seed)
-            games = [load_game(f) for f in rng.sample(files, min(self.window, len(files)))]
+            games = []
+            for f in rng.sample(files, min(self.window, len(files))):
+                try:
+                    games.append(load_game(f))
+                except Exception as e:  # e.g. a file still being copied: skip it, never kill the run
+                    print(f'skipping unreadable {f}: {e}', flush=True)
             picks = [(g, d) for g, game in enumerate(games) for d in range(len(game['label']))]
             rng.shuffle(picks)
             for i in range(0, len(picks) - self.batch + 1, self.batch):
@@ -153,6 +158,8 @@ def main():
     ap.add_argument('--random_labels', action='store_true', help='the R2 canary: uniformly random policy labels')
     ap.add_argument('--minutes', type=float, default=None, help='stop after this much wall time')
     ap.add_argument('--fp32', action='store_true', help='train in float32 (no bf16 autocast)')
+    ap.add_argument('--val_every', type=int, default=2000, help='validate and save last.pt every this many steps')
+    ap.add_argument('--save_every', type=int, default=10000, help='keep a stepNNNNNN.pt checkpoint every this many steps')
     args = ap.parse_args()
     global FP32
     FP32 = args.fp32
@@ -212,11 +219,11 @@ def main():
             acc_sum[:] = 0
             rec = dict(step=step, lr=round(lr, 7), samples_per_s=round(seen / (time.time() - t0)), train=m,
                        games=len(list_games(args.data_dir, False, args.min_seed)))
-            if step % 2000 == 0:
+            if step % args.val_every == 0:
                 rec['val'] = validate(net, val_games, dev)
                 torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step,
                                 config=dict(d=args.d, layers=args.layers)), ckpt_path)
-                if step % 10000 == 0:
+                if step % args.save_every == 0:
                     torch.save(dict(model=net.state_dict(), step=step, config=dict(d=args.d, layers=args.layers)),
                                os.path.join(args.run_dir, f'step{step:06d}.pt'))
             print(json.dumps(rec), flush=True)

@@ -2,6 +2,8 @@
 # Build polyhost with the Android NDK, push it and the game files to the emulator, run it.
 #   ./polyhost/run.sh push            copy the game's binary, metadata and data (once)
 #   ./polyhost/run.sh build           build and push polyhost only (py/polyenv.py launches it)
+#   ./polyhost/run.sh mac [args]      build polyhost natively for macOS (build/polyhost-mac), which loads
+#                                     the Steam build's GameAssembly.dylib; with args, run it
 #   ./polyhost/run.sh <polyhost args> build, push polyhost and its web UI, run it
 #   ./polyhost/run.sh serve           then open http://localhost:8123 (port is forwarded)
 set -e
@@ -17,6 +19,16 @@ if [ "$1" = push ]; then
     $ADB push $GAME/arm64/lib/arm64-v8a/libil2cpp.so $DEV/
     $ADB push $GAME/base/assets/bin/Data/Managed/Metadata/global-metadata.dat $DEV/Managed/Metadata/
     $ADB push game/dump/gamedata/. $DEV/gamedata/
+    exit 0
+fi
+
+if [ "$1" = mac ]; then
+    mkdir -p build game/mac
+    [ -e game/mac/gamedata ] || ln -s ../dump/gamedata game/mac/gamedata
+    [ -e game/mac/web ] || ln -s ../../polyhost/web game/mac/web
+    clang++ -std=c++20 -O2 -Wall -o build/polyhost-mac polyhost/main.cpp
+    shift
+    [ $# -gt 0 ] && exec build/polyhost-mac "$@"
     exit 0
 fi
 

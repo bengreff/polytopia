@@ -86,8 +86,10 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.0)
     ap.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--out', default=None, help='results .tsv')
+    ap.add_argument('--teacher', action='store_true',
+                    help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
     args = ap.parse_args()
-    net, step = load_policy(args.checkpoint, args.device)
+    net, step = (None, 'teacher') if args.teacher else load_policy(args.checkpoint, args.device)
     rng = np.random.default_rng(0)
     jobs = []  # (seed, agent seat)
     for k in range(args.seeds):
@@ -140,14 +142,18 @@ def main():
             flat = [(e, s) for e in range(len(envs)) for s in order[e]]
             flat_obs = [o for e in range(len(envs)) for o in obs[e]]
             statuses = [live[e][s]['st'] for e, s in flat]
-            acts = choose(net, args.device, flat_obs, statuses, args.temperature, rng)
+            if args.teacher:
+                bots = list(pool.map(lambda e: envs[e].bot(order[e]) if order[e] else [], range(len(envs))))
+                acts = [b if b >= 0 else polyenv.STEP_BOT_OWN for e in range(len(envs)) for b in bots[e]]
+            else:
+                acts = choose(net, args.device, flat_obs, statuses, args.temperature, rng)
             per_env = [[] for _ in envs]
             for (e, s), a in zip(flat, acts):
                 g = live[e][s]
                 if g['st'].turn != g['turn']:
                     g['turn'], g['n'] = g['st'].turn, 0
                 g['n'] += 1
-                if g['n'] > COMMANDS_PER_TURN_CAP:  # never seen; a safety net against a stuck policy
+                if g['n'] > COMMANDS_PER_TURN_CAP and a != polyenv.STEP_BOT_OWN:  # a safety net against a stuck policy
                     a = int(np.nonzero(g['st'].legal[:, 0] == 15)[0][0])
                 per_env[e].append((s, int(a)))
             stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))

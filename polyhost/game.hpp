@@ -11,7 +11,24 @@
 
 using namespace il2;
 
-inline const std::string kRoot = "/data/local/tmp/poly";
+// Where polyhost finds the game. On Android (the emulator): libil2cpp.so and Managed/Metadata under
+// /data/local/tmp/poly. On macOS: the Steam build's GameAssembly.dylib and il2cpp_data, the same
+// game build (2.17.3.16375). POLY_ROOT holds our own files: gamedata/, web/, outputs.
+inline std::string envOr(const char* name, const std::string& fallback) {
+    const char* v = std::getenv(name);
+    return v && *v ? v : fallback;
+}
+#ifdef __APPLE__
+inline const std::string kGameApp = envOr("POLY_GAME_APP", std::string(std::getenv("HOME") ? std::getenv("HOME") : "") +
+                                     "/Library/Application Support/Steam/steamapps/common/The Battle of Polytopia/Polytopia.app");
+inline const std::string kGameLib = kGameApp + "/Contents/Frameworks/GameAssembly.dylib";
+inline const std::string kGameData = kGameApp + "/Contents/Resources/Data/il2cpp_data";
+inline const std::string kRoot = envOr("POLY_ROOT", "game/mac");
+#else
+inline const std::string kRoot = envOr("POLY_ROOT", "/data/local/tmp/poly");
+inline const std::string kGameLib = kRoot + "/libil2cpp.so";
+inline const std::string kGameData = kRoot + "/Managed";
+#endif
 
 inline std::string readFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -22,8 +39,8 @@ inline std::string readFile(const std::string& path) {
 }
 
 inline void boot() {
-    load(kRoot + "/libil2cpp.so");
-    set_data_dir((kRoot + "/Managed").c_str());
+    load(kGameLib);
+    set_data_dir(kGameData.c_str());
     if (!init("polyhost")) die("il2cpp_init failed");
 }
 

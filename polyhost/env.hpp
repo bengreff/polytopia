@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "dump.hpp"
 
@@ -151,6 +153,8 @@ struct Api {
         int a = -1, b = -1, arg = -1, argSize = 4, opponent = -1, accepted = -1;
     };
     std::unordered_map<Class*, Layout> layouts;
+    std::map<uint8_t, std::vector<Pin>> researchCache;  // see Match::researchCommand
+    std::map<uint8_t, Pin> endTurnCache;
 
     explicit Api(Game& game) : g(game) {}
 
@@ -396,17 +400,51 @@ public:
         return cmd && tryCall(api.isValid, cmd, {state()}, &r) && r && unbox<bool>(r);
     }
 
-    void add(Object* cmd) {
-        if (!valid(cmd)) return;
+    // The game's command generators already run each command's IsValid before returning it
+    // (CommandUtils.AddCommand, GetTrainableUnits), so their lists are taken as they are. Everything
+    // we construct ourselves is checked: research, end turn, trigger answers, and moves and attacks,
+    // since GetMovementOptions/GetAttackOptions also list targets for a unit that can no longer act.
+    // strictValidation re-checks everything; envtest requires the two lists to be equal.
+    bool strictValidation = false;
+    std::unordered_set<uint64_t> legalKeys;
+
+    static uint64_t key(const Cmd& c) {
+        return uint64_t(uint16_t(c.type)) << 48 | uint64_t(uint16_t(c.a)) << 32 | uint64_t(uint16_t(c.b)) << 16 | uint16_t(c.arg);
+    }
+
+    void add(Object* cmd, bool check = true) {
+        if (!cmd || ((check || strictValidation) && !valid(cmd))) return;
         Cmd c = encode(cmd);
-        for (const Cmd& e : legal)
-            if (e == c) return;  // the same command from two generators
+        if (!legalKeys.insert(key(c)).second) return;  // the same command from two generators
         legal.push_back(c);
         legalCmds.emplace_back(cmd);
     }
 
     void addAll(Object* list) {
-        for (int i = 0, n = listCount(list); i < n; ++i) add(listAt<Object*>(list, i));
+        for (int i = 0, n = listCount(list); i < n; ++i) add(listAt<Object*>(list, i), false);
+    }
+
+    // Research and end-turn commands hold only a player id and a tech type and are never changed
+    // by execution, so one object per (player, tech) serves every match in the process.
+    Object* researchCommand(uint8_t p, int tech) {
+        auto& v = api.researchCache[p];
+        if (v.empty()) v.resize(kTechSlots + 1);
+        if (!v[tech].get()) {
+            Object* r = object_new(api.cResearch);
+            call(api.newResearch, r, {&p, &tech});
+            v[tech] = Pin(r);
+        }
+        return v[tech].get();
+    }
+
+    Object* endTurnCommand(uint8_t p) {
+        Pin& e = api.endTurnCache[p];
+        if (!e.get()) {
+            Object* c = object_new(api.cEndTurn);
+            call(api.newEndTurn, c, {&p});
+            e = Pin(c);
+        }
+        return e.get();
     }
 
     std::vector<Object*> tiles() {
@@ -420,6 +458,7 @@ public:
     void computeLegal() {
         legal.clear();
         legalCmds.clear();
+        legalKeys.clear();
         if (ended()) return;
         Object* gsObj = state();
         uint8_t p = currentPlayer();
@@ -474,19 +513,13 @@ public:
             addAll(call(api.buildable, nullptr, {gsObj, me, t, &no}));
             addAll(call(api.abilities, nullptr, {gsObj, me, t, &no}));
         }
-        for (int tech = 1; tech < kTechSlots; ++tech) {
-            Object* r = object_new(api.cResearch);
-            call(api.newResearch, r, {&p, &tech});
-            add(r);
-        }
+        for (int tech = 1; tech < kTechSlots; ++tech) add(researchCommand(p, tech));
         Object* ps = players();
         for (int i = 0, n = listCount(ps); i < n; ++i) {
             uint8_t opp = at<uint8_t>(listAt<Object*>(ps, i), api.pId);
             if (opp != p && opp != 255) addAll(call(api.diplomacy, nullptr, {gsObj, me, &opp, &no}));
         }
-        Object* e = object_new(api.cEndTurn);
-        call(api.newEndTurn, e, {&p});
-        add(e);
+        add(endTurnCommand(p));
     }
 
     // The built-in AI's command for the current player, as the game drives bots.

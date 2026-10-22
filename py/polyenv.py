@@ -242,11 +242,23 @@ def adb(*args, **kw):
     return subprocess.run([ADB, *args], check=True, capture_output=True, text=True, **kw).stdout
 
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# POLYHOST=mac runs polyhost natively on macOS against the Steam build's GameAssembly.dylib (the
+# same game build as the Android oracle, verified against the real app); otherwise it runs in the
+# Android emulator through adb.
+NATIVE = os.environ.get('POLYHOST', 'emulator') == 'mac'
+
+
 @contextlib.contextmanager
 def launch(port=8200, connect_timeout=60, binary='polyhost'):
-    """Starts `polyhost env <port>` on the emulator, forwards the port, and yields a connected Env.
-    Build and push polyhost first (./polyhost/run.sh push; ./polyhost/run.sh symbols /dev/null builds it).
-    `binary` names another build in the device directory, so a test build can run beside a live one."""
+    """Starts `polyhost env <port>` and yields a connected Env: natively on macOS with POLYHOST=mac
+    (build/polyhost-mac, built by ./polyhost/run.sh mac), else on the emulator with the port
+    forwarded (./polyhost/run.sh build pushes it). On the emulator, `binary` names another build in
+    the device directory, so a test build can run beside a live one."""
+    if NATIVE:
+        with _launch_native(port, connect_timeout) as env:
+            yield env
+        return
     adb('forward', f'tcp:{port}', f'tcp:{port}')
     log = f'{DEVICE_DIR}/env{port}.log'
     proc = subprocess.Popen([ADB, 'shell', f'cd {DEVICE_DIR} && exec ./{binary} env {port} > {log} 2>&1'])
@@ -265,4 +277,27 @@ def launch(port=8200, connect_timeout=60, binary='polyhost'):
         if env:
             env.close()
         subprocess.run([ADB, 'shell', f'pkill -f "{binary} env {port}"'], capture_output=True)
+        proc.wait(timeout=10)
+
+
+@contextlib.contextmanager
+def _launch_native(port, connect_timeout):
+    log = open(os.path.join(REPO, 'build', f'env{port}.log'), 'w')
+    proc = subprocess.Popen([os.path.join(REPO, 'build', 'polyhost-mac'), 'env', str(port)], cwd=REPO,
+                            stdout=log, stderr=subprocess.STDOUT)
+    env = None
+    try:
+        deadline = time.time() + connect_timeout
+        while env is None:
+            try:
+                env = Env(port=port)
+            except (ConnectionError, OSError, EnvError):
+                if time.time() > deadline or proc.poll() is not None:
+                    raise EnvError(f'polyhost-mac env did not start; see {log.name}')
+                time.sleep(0.2)
+        yield env
+    finally:
+        if env:
+            env.close()
+        proc.terminate()
         proc.wait(timeout=10)

@@ -431,7 +431,7 @@ int main(int argc, char** argv) {
     } else if (cmd == "envtest") {
         envtest::Stats st = envtest::run(argc > 2 ? std::atoi(argv[2]) : 2, argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 1,
                                          argc > 4 ? std::atoi(argv[4]) : 25, argc > 5 ? std::atoi(argv[5]) : 60);
-        return st.sweepMismatch || st.botMissing || st.duplicates || st.cloneMismatch ? 1 : 0;
+        return st.sweepMismatch || st.botMissing || st.duplicates || st.cloneMismatch || st.strictMismatch ? 1 : 0;
     } else if (cmd == "envbench") envBench(argc > 2 ? std::atoi(argv[2]) : 4);
     else if (cmd == "fogtest")
         return envtest::fogTest(argc > 2 ? std::atoi(argv[2]) : 4, argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 1,
