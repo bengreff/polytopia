@@ -203,7 +203,8 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     (sign test p = 3e-49). By seat: 91/100 and 89/100.
   - **Games are short:** 19 turns on average vs Normal and 24 vs Crazy, against 40 and 29 for the
     base. The policy wins by early capital capture, as the human players do.
-  - **Human held-out agreement:** top-1 41% at step 4k (base 19%).
+  - **Human held-out agreement** (`human_bench.py`, 150 games): top-1 41.8%, top-5 71.2%, policy
+    cross-entropy 2.23 (base: 19.0%, 35.9%, 13.6). Value accuracy 74.0% (base 68.4%).
   - **Pre-registered expectations:** all exceeded. Against Crazy the policy is far past the
     teacher's 10%. The falsifier did not fire.
   - **Reading:** imitating humans works, by a wide margin, and the M2 condition "vs Crazy, Wilson
