@@ -304,7 +304,8 @@ def main():
                 for (s, o), a, lp, v in zip(items, rows, logp, value):
                     g = live[s]
                     st = g['st']
-                    if not match and st.current in g['record']:
+                    g['recorded'] = not match and st.current in g['record']
+                    if g['recorded']:
                         g['rec'].add(o, st.legal, int(a), st.current)
                         g['rec'].played.append(int(a))
                         g['rec'].logp.append(float(lp))
@@ -321,7 +322,17 @@ def main():
             counters['decisions'] += len(slots_now)
             for s, (ok, st) in zip(slots_now, stepped):
                 if not ok:
-                    raise polyenv.EnvError(f'env {i} slot {s}: legal command rejected')
+                    # the game rejected a listed command: polyhost relisted the unchanged state with every
+                    # command checked; forget this decision and choose again
+                    counters['rejected'] = counters.get('rejected', 0) + 1
+                    print(f'env {i} slot {s}: listed command rejected, relisted ({counters["rejected"]} so far)', flush=True)
+                    g = live[s]
+                    if g.get('recorded'):
+                        r = g['rec']
+                        for lst in (r.tiles, r.globs, r.techs, r.legal, r.labels, r.players, r.played, r.logp, r.value):
+                            lst.pop()
+                    live[s]['st'] = st
+                    continue
                 live[s]['st'] = st
                 if st.ended or st.turn >= TURN_CAP:
                     finish(env, s, live.pop(s))

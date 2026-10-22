@@ -55,14 +55,19 @@ def stopped(run):
     return os.path.exists(os.path.join(run, 'STOP'))
 
 
-def run_cmd(run, cmd, logfile):
-    """Runs a step to completion; raises if it fails."""
-    with open(logfile, 'a') as f:
-        f.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(cmd)}\n")
-        f.flush()
-        rc = subprocess.call(cmd, cwd=HERE, stdout=f, stderr=subprocess.STDOUT)
-    if rc != 0:
-        raise RuntimeError(f'step failed (exit {rc}): see {logfile}')
+def run_cmd(run, cmd, logfile, tries=3):
+    """Runs a step to completion, retrying a failed one (the steps resume where they stopped);
+    raises after `tries` failures."""
+    for k in range(tries):
+        with open(logfile, 'a') as f:
+            f.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(cmd)}\n")
+            f.flush()
+            rc = subprocess.call(cmd, cwd=HERE, stdout=f, stderr=subprocess.STDOUT)
+        if rc == 0:
+            return
+        log(run, f'step failed (exit {rc}, try {k + 1} of {tries}): see {logfile}')
+        time.sleep(30)
+    raise RuntimeError(f'step failed {tries} times: see {logfile}')
 
 
 def apply_overrides(run, args):
