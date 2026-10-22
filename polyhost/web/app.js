@@ -241,12 +241,15 @@ function draw() {
     const w = ctx.measureText(text).width + 18, ly = cy + 16;
     ctx.fillStyle = playerColor(t.owner); ctx.globalAlpha = 0.85; ctx.fillRect(cx - w / 2, ly - 11, w, 22); ctx.globalAlpha = 1;
     textOutlined(text, cx, ly, 15);
+    // Progress towards the next level is ImprovementState.xp: the city levels up once xp > level
+    // (ImprovementDataExtensions.ShouldLevelUp), then xp -= the new level. `population` is the city's
+    // total size and never resets.
     const need = imp.level + 1, segW = Math.min(16, 64 / need), bw = segW * need;
     for (let i = 0; i < need; i++) {
-      ctx.fillStyle = i < imp.population ? '#3aa0ff' : 'rgba(255,255,255,.85)';
+      ctx.fillStyle = i < imp.xp ? '#3aa0ff' : 'rgba(255,255,255,.85)';
       ctx.fillRect(cx - bw / 2 + i * segW + 1, ly + 14, segW - 2, 7);
     }
-    if (imp.population < 0) { ctx.fillStyle = '#ff4b3a'; ctx.fillRect(cx - bw / 2, ly + 14, segW * Math.min(-imp.population, need), 7); }
+    if (imp.xp < 0) { ctx.fillStyle = '#ff4b3a'; ctx.fillRect(cx - bw / 2, ly + 14, segW * Math.min(-imp.xp, need), 7); }
   }
 }
 
@@ -302,7 +305,7 @@ function renderCard() {
   if (imp === 'city' && t.owner) {
     const c = t.improvement;
     head = `${c.name}${t.capitalOf ? ' (capital)' : ''}`;
-    text = `${tribeName(t.owner)} city · level ${c.level} · population ${c.population}/${c.level + 1} · ★${c.stars} per turn`;
+    text = `${tribeName(t.owner)} city · level ${c.level} · ${c.xp}/${c.level + 1} towards the next level · population ${c.population} · ★${c.stars} per turn`;
     if (t.owner === state.human) text += here.some(([m]) => m.cmd === 'Train') ? '. Train units here.' : t.unit ? '. Move the unit away to train here.' : '';
   } else if (imp === 'city') {
     head = 'Village'; text = 'Move a unit here and capture it to grow your empire.';
