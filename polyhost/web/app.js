@@ -548,7 +548,7 @@ $('wnextturn').onclick = () => wstep('turn=1');
 $('wplay').onclick = toggleAutoplay;
 $('wspeed').onchange = () => { if (autoplay) { stopAutoplay(); toggleAutoplay(); } };
 $('wview').onchange = async () => { state = await api(`/wview?v=${$('wview').value}`, 'POST'); render(); };
-$('wexit').onclick = () => { stopAutoplay(); $('menuview').style.display = 'flex'; };
+$('wexit').onclick = () => { stopAutoplay(); if (window.siteMenu) window.siteMenu(); else $('menuview').style.display = 'flex'; };
 addEventListener('keydown', e => {
   if (!state?.watch || e.target.tagName === 'SELECT') return;
   const k = { ArrowRight: 'd=1', ArrowLeft: 'd=-1', ArrowDown: 'turn=1', ArrowUp: 'turn=-1', Home: 'to=0', End: 'to=1000000' }[e.key];
@@ -559,7 +559,11 @@ addEventListener('keydown', e => {
 
 // ---------- actions ----------
 
-async function api(path, method = 'GET') { return (await fetch(path, { method })).json(); }
+// The public replay site (py/export_site.py) has no server: static.js answers these from JSON files.
+async function api(path, method = 'GET') {
+  if (window.staticApi) return window.staticApi(path, method);
+  return (await fetch(path, { method })).json();
+}
 
 async function play(i) {
   if (busy) return;
@@ -644,7 +648,7 @@ addEventListener('keydown', e => {
 $('closecard').onclick = () => { sel = null; render(); };
 $('endbtn').onclick = () => { const k = state.legal.findIndex(m => m.cmd === 'EndTurn'); if (k >= 0) play(k); };
 $('techbtn').onclick = () => { renderTechTree(); $('techview').style.display = 'flex'; };
-$('menubtn').onclick = () => { $('menuview').style.display = 'flex'; };
+$('menubtn').onclick = () => { if (window.siteMenu) window.siteMenu(); else $('menuview').style.display = 'flex'; };
 $('logbtn').onclick = () => {
   $('log').replaceChildren(...state.log.filter(l => l.p !== 255 && l.p !== state.human).map(l => {
     const d = document.createElement('div'); const a = l.c.args;
@@ -681,6 +685,7 @@ function start() {
   const playable = Object.entries(data.tribeData).filter(([, v]) => v.idx >= 2).sort((a, b) => a[1].idx - b[1].idx);
   for (const id of ['tribe', 'opponent']) $(id).replaceChildren(...playable.map(([n, v]) => new Option(title(n), v.idx)));
   $('tribe').value = 7; $('opponent').value = 13;
+  if (window.siteInit) { await window.siteInit(); return; }
   state = await api('/state');
   start();
   // #watch=<path>&speed=2.5&view=0 opens a recorded game and starts autoplay (speed in moves/s or "turn")
