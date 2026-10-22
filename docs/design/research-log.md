@@ -324,6 +324,10 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     kept, and the loop skips games already played.
   - **Rule from now on:** with R3 running, only one more training process on the GPU.
 
+### R5b results
+- **Iteration 1** (02:13; relaunched after the 00:55 GPU jam): learner KL 0.017, clip fraction
+  0.22, anchor loss 2.07. **Crazy 187/200** (R4 at 20k: 188/200).
+
 ## R5c — RL aimed at the weak matchups (pre-registered 2026-10-22, 02:20)
 
 - **Why:** the full M4 gate failed on 3 cells, and 19 cells won ≤ 15/20
