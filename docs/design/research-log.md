@@ -196,9 +196,21 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     - 19/20: the other four.
 
     The screen's low cells were noise.
-  - **M4 gate status:** the pooled condition is met (lower bound 93.4%). No cell is confirmed below
-    70%, but the gate as written needs ≥ 20 games in every cell (5,760 games), and 279 cells have
-    only the screen's 4. Ben's best-of-5 is the remaining step.
+  - **Full M4 gate** (2026-10-22, 02:10; `--cells 20`: 20 games per cell, 5,760 games vs Crazy,
+    seeds from 11,000,000):
+    - **Pooled: 5,325/5,760 = 92.4%** (Wilson 91.7–93.1): **pass** (≥ 90%). By seat 2,680/2,880
+      and 2,645/2,880. Mean length 22.7 turns.
+    - **Cells: 3 of 288 below 70% → the gate as written fails, narrowly.**
+      - Oumaji vs Vengir, seat 1: 11/20
+      - Oumaji vs Xin-xi, seat 1: 11/20
+      - Xin-xi vs Vengir, seat 2: 12/20 (18/20 in the earlier re-test on other seeds)
+    - **Distribution of cells by wins out of 20:** 91 at 20, 88 at 19, 49 at 18, 27 at 17, 14 at
+      16, 10 at 15, 6 at 14, 1 at 12, 2 at 11. At a uniform 92%, a cell at ≤ 13/20 has
+      probability ~1e-4, so these are real weak matchups, not noise.
+    - **By tribe:** our weakest tribe is Oumaji (86.0%); the bot's hardest are Vengir (84.6%),
+      Xin-xi (86.0%) and Aimo (87.3%).
+    - **Next:** aim training at the weak matchups (RL with tribe pairs drawn from the low cells; more
+      weight on human games with those tribes), then re-run the failing cells.
 
 ## R5 — policy-only RL from the human-tuned policy (pre-registered 2026-10-21, 22:05)
 
