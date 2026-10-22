@@ -419,3 +419,18 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Paired, pooled over the 580 games: only R7 won 32, only R4 won 45 (p = 0.17). Not better so
     far.
   - The learning rate is mid-schedule; the 20k checkpoint decides.
+- **Final, step 20k (04:30):**
+
+  | | Normal | Hard | Crazy | 19 weak cells | Human top-1 / CE | Value |
+  |---|---|---|---|---|---|---|
+  | R4 step 20k | 199/200 | 199/200 | 188/200 | 328/380 | 43.2% / 2.146 | 75.7%, 0.607 |
+  | R7 step 20k | 199/200 | 194/200 | 191/200 | 323/380 | 43.7% / 2.109 | 77.2%, 0.641 |
+
+  - **Paired with R4 at 20k:**
+    - Crazy: 10 vs 7 games won by only one side (p = 0.63)
+    - weak cells: 31 vs 36 (p = 0.63)
+    - Crazy + weak cells pooled: 514 vs 516 (p = 0.91)
+    - Hard + Normal: 393 vs 398 (p = 0.13)
+  - **The falsifier fired:** more training on the same human data, even the complete set, keeps
+    improving imitation but no longer improves play against the bots. R4 at 20k stays the
+    reference.

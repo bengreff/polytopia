@@ -202,3 +202,6 @@ Decision rules:
 - 02:40 Browser check of `tools/play.sh runs/r4_human_ft/step020000.pt`: the UI renders a game
   against the network (headless Chrome screenshot at turn 12, its warrior already next to our
   capital). Ready for Ben.
+- 04:32 **R7 at 20k = R4 at 20k** in play (Crazy 191 vs 188, weak cells 323 vs 380 vs 328, pooled
+  p = 0.91), better at imitation (top-1 43.7% vs 43.2%). The falsifier fired: the human data has
+  plateaued for play strength. R5c (RL on the weak cells) iteration 1 is learning (KL 0.017).
