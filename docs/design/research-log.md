@@ -556,3 +556,36 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     above), so the difference is the network's arithmetic: CUDA on the PC, MPS on the Mac. Tiny
     differences flip near-tied greedy moves.
   - Evaluations are compared within a host: every S1 evaluation runs on the PC.
+
+## Human data, status (2026-10-22, 17:10)
+- **Championship-format human games: 7,732** (3.17M decisions) in `data/human1`, i.e.
+  `human_full` on the PC. This is everything still available:
+  - all 27,548 Might/Lakes/Small game ids from the Challengermode harvest were tried: 7,822
+    downloaded, 19,726 refused by the game's server (1005 "Can't load game"; mostly pre-2026, so
+    expired);
+  - the YouTube share links (1,525) are already in.
+- **Training to a plateau (Ben: "trained on as many of those for as long as possible until gains
+  plateau"):** R7 (R4 + 20k steps on all 7,732) has reached it for this network. Held-out policy loss:
+
+  | Step | Policy loss | Top-1 |
+  |---|---|---|
+  | 14k | 2.1407 | 43.6% |
+  | 16k | 2.1352 | 43.6% |
+  | 18k | 2.1324 | 43.7% |
+  | 20k | 2.1325 | 43.8% |
+
+  - Its value head kept improving: log loss 0.83 → 0.46, accuracy 78.5% (R4 at 20k: 0.56, 75.9%).
+  - Play vs Crazy: the same as R4 (191 vs 188/200).
+- **Beyond this, more human data means other formats.** The 14,221 Polytopia Official "Instant
+  Tournaments" are Might **Continents** Small, ~40k games; not downloaded.
+
+## S2 — self-play generations from R7 (pre-registered 2026-10-22, 17:10)
+- **Why:** gen 0 should be the network trained on every human game until its gains stopped. That is
+  R7, not R4, which saw 6,741 of the games. R7's value head is also much better (0.46 vs 0.56 log
+  loss), and S1 uses that head as its baseline.
+- **Change from S1:** gen 0 = R7 step 20k (`/home/greff/runs/r7_human_full/step020000.pt`). Nothing
+  else changes: games, pool, learner, BC anchor on all 7,732 human games every step, evaluations
+  and seeds.
+- **S1 stops** after its gen 1 evaluation against Crazy. Its results stay on record.
+- **Expected and falsifier:** as S1's, with gen 0 = R7. R7's gen-0 Crazy evaluation on the PC is the
+  baseline (Mac: 191/200).
