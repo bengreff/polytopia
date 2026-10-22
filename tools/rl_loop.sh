@@ -7,7 +7,8 @@
 #       [eval difficulties, e.g. "2 3"] [first iteration, default 1]
 #
 # Env OPPONENTS (default 1,2,2,3,3,self) sets the opponent mix, as py/dagger.py --opponents; TEMP
-# (default 1) the sampling temperature, used by both the actors and the learner.
+# (default 1) the sampling temperature, used by both the actors and the learner; LR (default 3e-5)
+# and BCW (default 0.5) the learner's learning rate and behaviour-cloning anchor weight.
 # Files: Mac data/rl/<name>/iNN (games), runs/rl/<name>/iNN.pt (policies), runs/evals/<name>_iNN_d*.
 # PC: ~/polydata/rl/<name>/iNN, ~/runs/rl/<name>/iNN (train_rl output). Code: ~/poly/py_rl.
 set -e
@@ -43,7 +44,7 @@ cd /home/greff/poly/py_rl
 if [ ! -f /home/greff/runs/rl/$name/$it/policy.pt ] && ! pgrep -f "[r]l/$name/$it --bc" > /dev/null; then
     rm -rf /home/greff/runs/rl/$name/$it
     setsid nohup /home/greff/polyvenv/bin/python train_rl.py /home/greff/runs/rl/$name/$it.init.pt /home/greff/polydata/rl/$name/$it \
-        /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
+        /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} --lr ${LR:-3e-5} --bc_weight ${BCW:-0.5} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
 fi
 sleep 5  # without this, WSL can end the session before the background job has started
 EOF

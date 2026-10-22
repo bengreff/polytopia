@@ -237,3 +237,16 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     3–4 minutes.
   - **Fix:** the inference server and R6 were stopped. The rule from now on: at most three
     training processes on the GPU at once.
+
+### R5 results
+- **Iteration 1** (23:14): 600 games played (Crazy 314/400 at temperature 0.5); learner 2,307 steps,
+  final KL to the old policy 0.011, clip fraction 0.14–0.21, BC anchor loss steady at 2.19.
+
+  | | vs Hard | vs Crazy |
+  |---|---|---|
+  | R4 step 6k (start) | 195/200 | 180/200 |
+  | R5 i01 | 196/200 | 180/200 |
+
+  - Paired on Crazy: only i01 won 10, only R4 won 10 (p = 1).
+  - **No measurable change.** The step is small (lr 3e-5 with cosine decay, anchor weight 0.5), so
+    this is expected after one iteration.
