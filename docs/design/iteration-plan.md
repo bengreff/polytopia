@@ -11,7 +11,7 @@ the bottom is updated as results come in.
 | Teacher (the game's AI, person seat) | 96.5% | 65.0% | 31.0% | **10.0%** |
 | R3 step 50k (BC on 20k AI games) | 92.5% | 54.0% | — | — |
 | R3 step 90k | 89.5% | **57.0%** (50.1–63.7) | 25.0% | 10.5% |
-| R3 step 100k | — | 59.0% | *running* | 9.0% |
+| R3 step 100k | — | 59.0% | 29.0% | 9.0% |
 
 Each cell is 100 seeds × 2 sides, with 95% Wilson intervals in research-log.md.
 
@@ -125,3 +125,6 @@ Every iteration is one pre-registered change, judged on fixed seeds.
   records sampled moves and their probabilities for RL), `py/train_rl.py` (PPO learner, tested on
   4 games), and remote GPU inference (correct, but 150–170 ms per batch while the GPU trains, so
   unused for now). DAgger/RL data from step 100k queued on the Mac (1,000 games).
+- 21:50 R3 step 100k (R4's base) evaluated: Normal 59.0%, Hard 29.0%, Crazy 9.0%; human top-1
+  19.0%. Added `tools/compare_evals.py` (paired sign test) and `train_bc --value_val_games`. R4 at
+  step 5k is being evaluated on the same seeds.

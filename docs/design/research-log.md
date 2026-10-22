@@ -131,13 +131,16 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 | R3 step 10k | 53.0% | 22.0% | — | — |
 | R3 step 50k | 92.5% (88.0–95.4) | 54.0% (47.1–60.8) | — | — |
 | R3 step 90k | 89.5% (84.5–93.0) | 57.0% (50.1–63.7) | 25.0% (19.5–31.4) | 10.5% (7.0–15.5) |
-| R3 step 100k | — | 59.0% (52.1–65.6) | *running* | 9.0% (5.8–13.8) |
+| R3 step 100k | — | 59.0% (52.1–65.6) | 29.0% (23.2–35.6) | 9.0% (5.8–13.8) |
 
 - **The policy is already close to its teacher at every level.** The M1 gate (≥ 60% vs Normal) sits
   just under the teacher's own 65%.
 - **The teacher can't beat Hard or Crazy:** the same brain with +1★ per turn (Hard) or +3★ (Crazy)
   wins most AI-vs-AI games. Cloning the AI therefore can't reach the M2 target, whatever the
   data volume.
+- **Human-move benchmark** (`py/human_bench.py`, 150 held-out human games, 62,069 decisions), step
+  100k: top-1 19.0%, top-5 35.9%, policy cross-entropy 13.6; value accuracy 68.4% (early third of
+  each game 56.6%, middle 66.8%, late 81.9%).
 - **Value head (R3 log):** training value loss 0.02–0.07, held-out 1.08–1.67, accuracy 72–77%.
   It memorizes each game's outcome; see iteration-plan.md.
 
