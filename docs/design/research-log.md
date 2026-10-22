@@ -624,3 +624,34 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Speed:**
   - late-game steps 8.65 → 1.85 ms natively (4.5×); a whole R7-length game ~3.7×;
   - bot games: legal list 0.92 → 0.73 ms.
+
+## Bug: a person in seat 2 got the bot's tribe (found 2026-10-22, 18:30; fixed)
+- **Found** while exporting replays for the public site: in every game with a **bot in seat 1 and our
+  network in seat 2**, the game was created with the bot's tribe on both sides (40 of 40 checked;
+  all seat-1 games correct).
+- **Cause:** `env::Match::build` read the person's `PlayerData` with `settings.GetPlayer(i)`. With a
+  bot seated, the settings list the person first, so seat 2 got the bot's entry and its tribe.
+  - Fix: with a bot seated, take the one LocalUser entry.
+  - The (bot, person) combinations now get the requested tribes. Person–person and (person, bot)
+    games are byte-identical to before.
+- **Affected:**
+  - every evaluation against the built-in bots: in the seat-2 half of the games, the network played
+    a mirror match with the bot's tribe:
+    - eval_vs_bot.py: R1–R7 vs Easy/Normal/Hard/Crazy;
+    - selfplay.py --match bot:3: S1/S2 vs Crazy;
+    - the --teacher reference;
+  - **the M4 gate's seat-2 cells** measured mirror matches of the bot's tribe, not the labelled
+    matchup (e.g. "Xin-xi vs Vengir, seat 2" was Vengir vs Vengir). The pooled 92.4% is still real
+    games vs Crazy, but half of them are mirrors;
+  - DAgger/RL training games against bots with our seat 2 (R5, R5b, R5c).
+- **Not affected:**
+  - self-play: S1/S2 training games and network-vs-network evaluations;
+  - the AI-teacher data (both seats are persons);
+  - human replays;
+  - the pass-and-play setup verified against the real app;
+  - the rules themselves.
+- **To redo:**
+  - R7 vs Crazy on the standard seeds (running on the PC, 18:40);
+  - the M4 gate, before it is quoted again.
+  - Recorded seat-2 bot games in runs/games are relabelled (`mirror_bug: true`, both tribes = the
+    bot's).

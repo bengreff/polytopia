@@ -273,9 +273,21 @@ public:
         const Method* addAI = method(g.utils, "AddAIOpponent", 4);
         const Method* getPlayer = method(g.settings, "GetPlayer", 1);
         const Method* nameOf = method(api.playerData, "GetNameInternal", 0);
+        const Method* settingsPlayerCount = method(g.settings, "GetPlayerCount", 0);
         for (int i = 0; i < 2; ++i) {
             const Seat& seat = spec.seats[i];
             Object* pd = call(getPlayer, settingsObj, {&i});
+            if (seat.bot < 0 && (spec.seats[0].bot >= 0 || spec.seats[1].bot >= 0)) {
+                // With a bot seated, GetPlayer(i) isn't seat i: the settings hold the person's
+                // PlayerData first, so a person in seat 2 read the bot's (its tribe too: every match
+                // with a bot in seat 1 was a mirror until 2026-10-22). Take the person's own entry,
+                // the one LocalUser.
+                int n = unbox<int>(call(settingsPlayerCount, settingsObj));
+                for (int k = 0; k < n; ++k) {
+                    Object* c = call(getPlayer, settingsObj, {&k});
+                    if (get<int32_t>(c, "type") == 2) pd = c;  // PlayerDataType.LocalUser
+                }
+            }
             int skin = 0;
             if (seat.bot >= 0) {
                 int handicap = unbox<int>(call(g.handicapFor, nullptr, {(void*)&seat.bot}));
