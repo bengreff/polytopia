@@ -2,9 +2,12 @@
 PPO's clipped objective with the game's outcome as the only reward, plus a behaviour-cloning anchor.
 
 - **Advantage:** every decision of a player in a game gets A = z - b, where z is 1 if that player won
-  and 0 if they lost (capped games are skipped), and b is the mean z of this batch's games against the
-  same opponent (a bot difficulty, or self-play). A is then divided by its standard deviation over
-  games. No learned baseline: the value head isn't trustworthy yet (research-log, R3).
+  and 0 if they lost (capped games are skipped). With `--baseline opponent` (the default), b is the
+  mean z of this batch's games against the same opponent (a bot difficulty, or self-play), and A is
+  divided by its standard deviation over games. With `--baseline value`, b is the acting network's
+  own value estimate before the move (`v_old`, recorded by py/selfplay.py), and A is centred and
+  divided by its standard deviation over decisions: a baseline that depends only on the position
+  adds no bias.
 - **Policy loss:** -min(r A, clip(r, 1 - eps, 1 + eps) A) with r = pi(played) / pi_old(played),
   pi_old from the recorded `logp` (the sampling policy). pi is softmax(logits / --temperature), the
   same temperature the actors sampled at.
@@ -59,8 +62,9 @@ class RLStream(torch.utils.data.IterableDataset):
     """Epochs over the RL games: each worker takes its share of the files, loads them a window at a
     time, shuffles the decisions and yields batches with played, logp, advantage and value target."""
 
-    def __init__(self, files, adv, batch, window, epochs, seed):
+    def __init__(self, files, adv, batch, window, epochs, seed, value_norm=None):
         self.files, self.adv, self.batch, self.window, self.epochs, self.seed = files, adv, batch, window, epochs, seed
+        self.value_norm = value_norm  # --baseline value: A = (z - v_old - mean) / sd
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -76,6 +80,9 @@ class RLStream(torch.utils.data.IterableDataset):
                     z = np.load(f)
                     player = z['player'].astype(np.int64)
                     a = np.array([self.adv.get((f, int(p)), (np.nan, np.nan)) for p in player], np.float32).reshape(-1, 2)
+                    if self.value_norm:
+                        mean, sd = self.value_norm
+                        a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (a[:, 1] - z['v_old'] - mean) / sd)
                     games.append(g)
                     extra.append(dict(played=z['played'].astype(np.int64), logp=z['logp'].astype(np.float32),
                                       adv=a[:, 0], won=a[:, 1]))
@@ -111,6 +118,8 @@ def main():
     ap.add_argument('--window', type=int, default=16)
     ap.add_argument('--workers', type=int, default=6)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--baseline', choices=['opponent', 'value'], default='opponent',
+                    help='opponent: per-opponent mean outcome; value: the acting network\'s v_old (py/selfplay.py games)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -125,11 +134,23 @@ def main():
     files = [os.path.join(d, f) for d in args.rl_dirs.split(',') for f in os.listdir(d)
              if f.endswith('.npz') and not f.endswith('.tmp.npz')]
     adv, base, counts = game_targets(files)
+    value_norm = None
+    if args.baseline == 'value':
+        res = []
+        for f in files:
+            z = np.load(f)
+            for p, v in zip(z['player'], z['v_old']):
+                if (f, int(p)) in adv:
+                    res.append(adv[(f, int(p))][1] - float(v))
+        value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
+        print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
+              f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w in adv.values()]):.3f} per game)',
+              flush=True)
     decisions = sum(len(np.load(f)['played']) for f in files)
     print(f'{len(files)} RL games, {decisions} decisions; baseline (win rate) by opponent: '
           + ', '.join(f"{'self' if o < 0 else o}: {base[o]:.3f} over {counts[o]}" for o in sorted(base)), flush=True)
     steps_total = max(1, args.epochs * decisions // args.batch)
-    rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed),
+    rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed, value_norm),
                                      batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda', prefetch_factor=4)
     bc_iter = None
     if args.bc:

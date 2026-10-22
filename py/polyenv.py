@@ -244,9 +244,13 @@ def adb(*args, **kw):
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # POLYHOST=mac runs polyhost natively on macOS against the Steam build's GameAssembly.dylib (the
-# same game build as the Android oracle, verified against the real app); otherwise it runs in the
-# Android emulator through adb.
+# same game build as the Android oracle, verified against the real app). POLYHOST=qemu runs the
+# Android build (the oracle's own libil2cpp.so) under QEMU user-mode emulation on an x86-64 Linux
+# host, e.g. the PC's WSL; POLYARM is its directory (tools/setup_pc_games.sh). Otherwise polyhost runs
+# in the Android emulator through adb.
 NATIVE = os.environ.get('POLYHOST', 'emulator') == 'mac'
+QEMU = os.environ.get('POLYHOST', 'emulator') == 'qemu'
+POLYARM = os.environ.get('POLYARM', os.path.expanduser('~/polyarm'))
 
 
 @contextlib.contextmanager
@@ -255,7 +259,7 @@ def launch(port=8200, connect_timeout=60, binary='polyhost'):
     (build/polyhost-mac, built by ./polyhost/run.sh mac), else on the emulator with the port
     forwarded (./polyhost/run.sh build pushes it). On the emulator, `binary` names another build in
     the device directory, so a test build can run beside a live one."""
-    if NATIVE:
+    if NATIVE or QEMU:
         with _launch_native(port, connect_timeout) as env:
             yield env
         return
@@ -280,11 +284,27 @@ def launch(port=8200, connect_timeout=60, binary='polyhost'):
         proc.wait(timeout=10)
 
 
+def _die_with_parent():
+    """Linux: the game process gets SIGKILL when the thread that started it dies, so a killed run
+    leaves no orphans holding its ports."""
+    import ctypes
+    import signal
+    ctypes.CDLL('libc.so.6', use_errno=True).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
+
+
 @contextlib.contextmanager
 def _launch_native(port, connect_timeout):
-    log = open(os.path.join(REPO, 'build', f'env{port}.log'), 'w')
-    proc = subprocess.Popen([os.path.join(REPO, 'build', 'polyhost-mac'), 'env', str(port)], cwd=REPO,
-                            stdout=log, stderr=subprocess.STDOUT)
+    if QEMU:  # Cortex-A72 (ARMv8.0): QEMU's default CPU emulates pointer authentication slowly, ~25% slower
+        os.makedirs(os.path.join(POLYARM, 'logs'), exist_ok=True)
+        log = open(os.path.join(POLYARM, 'logs', f'env{port}.log'), 'w')
+        cmd = [os.path.join(POLYARM, 'qemu-aarch64'), '-cpu', 'cortex-a72', '-L', os.path.join(POLYARM, 'root'),
+               os.path.join(POLYARM, 'poly', 'polyhost'), 'env', str(port)]
+        proc = subprocess.Popen(cmd, cwd=os.path.join(POLYARM, 'poly'), stdout=log, stderr=subprocess.STDOUT,
+                                env=dict(os.environ, POLY_ROOT=os.path.join(POLYARM, 'poly')), preexec_fn=_die_with_parent)
+    else:
+        log = open(os.path.join(REPO, 'build', f'env{port}.log'), 'w')
+        proc = subprocess.Popen([os.path.join(REPO, 'build', 'polyhost-mac'), 'env', str(port)], cwd=REPO,
+                                stdout=log, stderr=subprocess.STDOUT)
     env = None
     try:
         deadline = time.time() + connect_timeout
@@ -293,7 +313,7 @@ def _launch_native(port, connect_timeout):
                 env = Env(port=port)
             except (ConnectionError, OSError, EnvError):
                 if time.time() > deadline or proc.poll() is not None:
-                    raise EnvError(f'polyhost-mac env did not start; see {log.name}')
+                    raise EnvError(f'polyhost env did not start; see {log.name}')
                 time.sleep(0.2)
         yield env
     finally:

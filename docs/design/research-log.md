@@ -475,3 +475,75 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   again, so the evaluation is deterministic.
 - **The 3 failing M4 cells, 10 fresh games each** (seeds from 12,000,000, `runs/evals/m4_failing3.txt`):
   24/30 = 80%.
+
+## Games on the PC without Steam (2026-10-22, morning)
+- **How:** the Android build's own `libil2cpp.so` (the binary verified against the real app) runs on
+  the PC under **QEMU user-mode emulation** (`qemu-aarch64` 10.0.13, static, from Debian), with the
+  Android 14 runtime (linker, libc, libm, libdl, liblog, libc++) taken from the PolyRef emulator.
+  `polyhost` is built for Android as before. `POLYHOST=qemu` in `py/polyenv.py` launches it;
+  `tools/setup_pc_games.sh` builds the kit and copies it to `~/polyarm` on the PC. No Steam, no
+  game install, no internet (WSL on the PC has none: its eero profile is paused).
+- **Exact:** 12 seeded games (6 against Crazy), with a fixed pseudo-random policy
+  (`py/parity_hosts.py`), run on the PC under QEMU and on the Mac's native Steam build:
+  - every legal list, every observation and the final state bytes are identical;
+  - the 4 `envbench` bot games also match (same winners and turns);
+  - QEMU's floating point is software IEEE, so this is the same arithmetic as an ARM CPU.
+- **Speed:** ~22× slower per thread than native. `envbench`, one thread: legal list 21 ms per
+  decision (Mac 0.9), built-in AI 23 ms (Mac 1.1).
+  - QEMU's default CPU (`max`) is 25% slower than `-cpu cortex-a72`, because it emulates pointer
+    authentication in software. The game needs only ARMv8.0.
+  - Garbage collection isn't the cost: with `GC_DONT_GC=1` it's 6% faster.
+  - **Self-play on the PC** (`py/selfplay.py`, R4 against itself, 28 game processes × 6 slots, GPU
+    inference): 651 decisions/s with all threads busy, while another project's runs took ~16
+    threads. R4's self-play games are short: 360 decisions and 17.5 turns on average, so ~1.8
+    games/s.
+- **Faster later:** a native x86-64 build would be ~20× faster per thread: the Windows Steam build
+  (needs Ben's Steam login on the PC), or an x86-64 Android build. Ours is APKMirror's arm64 +
+  armv7 variant. Whether an x86-64 one exists is unchecked: APKMirror and APKPure refused scripted
+  requests.
+
+## S1 — self-play generations from R4 (pre-registered 2026-10-22, 11:00)
+
+- **Why:** Ben asked for self-play on the PC with saved generations, each measured against the last,
+  and regular checks against Crazy. Against Crazy, R4 already wins 94%, so games against it carry
+  little signal. Self-play keeps the opponent at the policy's own level: about half the games won,
+  the most informative outcome.
+- **Hypothesis:** PPO generations on self-play games improve the greedy policy. Each generation
+  beats the previous one, and the gain accumulates against generation 0 (R4 at 20k).
+- **Setup (`py/sp_loop.py`, all on the PC):**
+  - Generation 0 = R4 step 20k.
+  - Generation g plays `--games` training games with gen g−1 at temperature 0.5.
+    - Half are against itself (both seats recorded).
+    - Half are against an earlier generation, drawn uniformly from gen 0 and the last 7 others
+      (only the learner's seat recorded). Generation 1 plays only itself.
+    - Seeds: 50,000,000 + 100,000·g.
+  - One PPO step on those games gives gen g (`py/train_rl.py`): clip 0.2, lr 1e-4 with cosine
+    decay, 2 epochs, entropy 0.003, value weight 0.25, BC anchor 0.2 on `human_full`, temperature
+    0.5. As R5b, except:
+    - **More games per step:** 1,500 against R5b's 600.
+    - **Mostly self-play:** R5b had 2/3 of its games against Crazy.
+    - **The value head as the baseline** (`--baseline value`, new): A = z − v_old(s), centred and
+      scaled. `v_old` is the acting network's own estimate before each move, recorded by
+      `py/selfplay.py`. Last night's RL summary asked for a learned baseline, and the value head's
+      held-out log loss on human games is ~0.6. A baseline that depends only on the position adds
+      no bias.
+  - **Evaluations,** greedy, each seed played twice with the seats swapped, run on the CPU while the
+    next generation learns:
+    - vs gen g−1: 200 games, seeds from 13,000,000;
+    - vs Crazy: 200 games on the standard seeds from 10,000,000, so directly comparable with R4's
+      188/200 (`selfplay.py --match bot:3` reproduces `eval_vs_bot.py` game for game);
+    - vs gen 0: 200 games, seeds from 14,000,000.
+  - Results go to `runs/sp/s1/summary.tsv` on the PC (`tools/sp_sync.sh s1` copies them to the
+    Mac). Evaluation games are saved for the web app's watch mode.
+  - The number of game processes follows the PC's free threads (load average), between 8 and 28,
+    because the PC is shared with other projects.
+- **Launched** 2026-10-22 12:29 on the PC. Its first step re-measures gen 0 against Crazy with the
+  PC's own pipeline.
+- **Expected:**
+  - Each generation scores above 50% against the previous one.
+  - By generation 6, ≥ 60% against gen 0.
+  - Crazy at or above 188/200.
+- **Falsifier:** after 6 generations, gen 6 vs gen 0 has a Wilson lower bound ≤ 50%, or Crazy is
+  below 180/200 for two generations in a row.
+  - Then: stop, read the learner's logs (KL, clip fraction, value baseline error), and change one
+    thing.

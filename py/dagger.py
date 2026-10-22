@@ -40,13 +40,14 @@ class Recorder(gen_data.Recorder):
         self.played, self.logp = [], []
 
 
-def save(out_dir, rec, st, owner, capital, opponent, agent_seats):
+def save(out_dir, rec, st, owner, capital, opponent, agent_seats, source='dagger', extra=None):
     gen_data.save_game(out_dir, rec, st, owner, capital)
     path = os.path.join(out_dir, f'g{rec.seed:08d}.npz')
     z = dict(np.load(path))
     z.update(opponent=np.int8(opponent), agent_seats=np.asarray(agent_seats, np.uint8),
              played=np.asarray(rec.played, np.int16), logp=np.asarray(rec.logp, np.float32),
-             source=np.str_('dagger'))
+             source=np.str_(source))
+    z.update(extra or {})
     np.savez_compressed(path + '.tmp.npz', **z)
     os.replace(path + '.tmp.npz', path)
 
