@@ -180,3 +180,6 @@ Decision rules:
   games, lower bound 93.4%). The 9 cells under 70% re-tested at 20 games: 91.1%, all ≥ 85%. No weak
   matchup confirmed. R5 ended flat (Crazy 182/200 vs 180 at its start). R5b iteration 1 is learning;
   R6 at 8k steps.
+- 00:55 GPU jam #2 (R3 + R6 + R5b learner, 15.5 GB): R5b stopped and queued to restart after R6
+  finishes (~02:15). With R3 running, only one more GPU job at a time. The full M4 gate (20 games ×
+  288 cells vs Crazy, 5,760 games) runs on the Mac: 1,005/1,080 (93.1%) so far.

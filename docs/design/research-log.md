@@ -305,3 +305,9 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Expected:** a paired gain vs Crazy by iteration 3; KL per iteration 0.03–0.1.
 - **Falsifier:** no paired gain after 3 iterations (point estimate not above 188/200), or a drop
   below 180/200 → RL at this scale doesn't help; record and stop.
+- **Incident (2026-10-22, 00:55):** the GPU jammed again with R3, R6 and R5b's learner (15.5 GB
+  in use). All three stalled for ~20 minutes: R6 at step 8,000, the learner at step 0.
+  - The learner and its loop were stopped; R6 and R3 recovered at once (9.8 GB).
+  - R5b restarts automatically when R6 writes its 20k checkpoint. Its 600 iteration-1 games are
+    kept, and the loop skips games already played.
+  - **Rule from now on:** with R3 running, only one more training process on the GPU.
