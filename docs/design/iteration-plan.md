@@ -4,7 +4,14 @@ A working plan for improving the network in measured steps, starting the night t
 download finished. Runs are pre-registered in [research-log.md](research-log.md). The status log at
 the bottom is updated as results come in.
 
-## Where we are (21:30)
+## Headline (22:05)
+
+**Fine-tuning on human games (R4) took the raw policy from 9% to 90% against Crazy** (200 games,
+95% CI 85.1–93.4), and from 59% to 100% against Normal, after only 6,000 steps. It wins by early
+capital capture, as people do. The rest of this plan is now about pushing that past the M4 gate
+(Crazy ≥ 90% lower bound, no matchup cell below 70%) and checking it with Ben.
+
+## Where we were (21:30)
 
 | Player on our seat | vs Easy | vs Normal | vs Hard | vs Crazy |
 |---|---|---|---|---|
@@ -132,3 +139,8 @@ Every iteration is one pre-registered change, judged on fixed seeds.
   around turn 19 instead of 40: it wins by early capital capture, as humans do. Hard and Crazy
   evaluations next. Lesson logged: `pkill -f` must use a `[t]` pattern, or it stops its own shell
   (R3/R4 were paused ~2.5 min by mistake).
+- 22:05 **R4 at 6k: 200/200 vs Normal, 180/200 (90.0%) vs Crazy.** DAgger dropped (AI labels would
+  pull toward the 10% teacher). RL (R5) from R4 at 6k queued on the Mac, with opponents
+  Hard 1/4, Crazy 1/2, self 1/4. Built `tools/play.sh` so Ben can play the network in the browser.
+  Stopping R3 (now superseded) to free the GPU was refused by the permission check; it keeps
+  running, and stopping it is on Ben's list.

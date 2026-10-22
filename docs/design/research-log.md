@@ -183,3 +183,23 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Falsifier:** no gain vs Crazy after 4 iterations (paired sign test p > 0.2 and point estimate
   not higher), or a drop of more than 5 points → stop, look at the learner's logs (ratio, KL,
   clip fraction, entropy), don't stack changes.
+- **Interim result (2026-10-21, 22:05), step 6,000** (`last.pt` at its 6k validation; step files
+  exist only every 10,000 steps):
+
+  | | vs Normal | vs Crazy |
+  |---|---|---|
+  | R3 step 100k (the base) | 59.0% (52.1–65.6) | 9.0% (5.8–13.8) |
+  | **R4 step 6k** | **100.0%** (200/200, 98.1–100) | **90.0%** (180/200, 85.1–93.4) |
+
+  - **vs Crazy, paired with the base on the same 200 games:** only R4 won 162, only the base won 0
+    (sign test p = 3e-49). By seat: 91/100 and 89/100.
+  - **Games are short:** 19 turns on average vs Normal and 24 vs Crazy, against 40 and 29 for the
+    base. The policy wins by early capital capture, as the human players do.
+  - **Human held-out agreement:** top-1 41% at step 4k (base 19%).
+  - **Pre-registered expectations:** all exceeded. Against Crazy the policy is far past the
+    teacher's 10%. The falsifier did not fire.
+  - **Reading:** imitating humans works, by a wide margin, and the M2 condition "vs Crazy, Wilson
+    lower bound ≥ 50%" is met by the raw policy with no search. The checks behind the number:
+    - same evaluation code and seeds as the base's 59%;
+    - seats balanced;
+    - every game won by the game's own `TryGetWinner`.
