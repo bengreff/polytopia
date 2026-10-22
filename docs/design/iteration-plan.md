@@ -183,3 +183,7 @@ Decision rules:
 - 00:55 GPU jam #2 (R3 + R6 + R5b learner, 15.5 GB): R5b stopped and queued to restart after R6
   finishes (~02:15). With R3 running, only one more GPU job at a time. The full M4 gate (20 games ×
   288 cells vs Crazy, 5,760 games) runs on the Mac: 1,005/1,080 (93.1%) so far.
+- 01:52 R6 finished 20k steps (human top-1 43.2%, CE 2.17; value check 400 games × 16 positions:
+  log loss 0.47, accuracy 79.9%). R6's 6k `last.pt` was overwritten before it was copied, so R6
+  is compared at 10k and 20k. Its evaluation starts once the full M4 gate finishes (4,700/5,760,
+  92.3%). R5b restarted itself and is learning iteration 1.
