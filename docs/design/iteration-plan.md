@@ -128,3 +128,7 @@ Every iteration is one pre-registered change, judged on fixed seeds.
 - 21:50 R3 step 100k (R4's base) evaluated: Normal 59.0%, Hard 29.0%, Crazy 9.0%; human top-1
   19.0%. Added `tools/compare_evals.py` (paired sign test) and `train_bc --value_val_games`. R4 at
   step 5k is being evaluated on the same seeds.
+- 22:00 **R4 at step 6k (human fine-tune): 193/193 so far vs Normal** (base: 59%). Games end
+  around turn 19 instead of 40: it wins by early capital capture, as humans do. Hard and Crazy
+  evaluations next. Lesson logged: `pkill -f` must use a `[t]` pattern, or it stops its own shell
+  (R3/R4 were paused ~2.5 min by mistake).
