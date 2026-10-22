@@ -1,210 +1,180 @@
-# Handoff: Polytopia engine on the real game code (2026-10-20, second session)
+# Handoff: Polytopia AI (2026-10-22, after night 1)
 
-Paste this file as the prompt for the next session.
+Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
+`README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
+`research-log.md` (every run: pre-registration, config, result).
 
 ## Goal and standing decisions (from Ben)
 
-- **Goal:** a superhuman Polytopia AI. That needs a training bench running the exact current
-  rules at maximum speed, thousands of games in parallel.
-- **Exact rules only.** Never write rules from memory or from wikis. We run the shipped game's
-  own compiled code (`GameLogicAssembly`) and verify against the real app.
-- **The real app is the reference.** Our engine is diffed automatically against the real
-  Android app running in a rootable emulator under Frida. Ben does not want to playtest.
-- **The browser UI is paused** until the engine is proven. After that, polish it once and Ben
-  plays.
-- **Scope is the World Championship format and nothing else** ("That is the entire scope").
-  - 1v1 Might, best of 3, on a Lakes map, Small (14×14), fog on.
-  - Either seat can be any of the 12 regular tribes.
-  - The game version is pinned (2.17.3 = game version 123, logic data 28).
-  - See memory `championship-scope` and the other agent's design docs in `docs/design/`
-    (`README.md` is the decision log; then `scope-and-rules.md`, `architecture.md`,
-    `training-and-data.md`). Read them first.
-  - The app only has the 4 free tribes (Xin-xi 13, Imperius 7, Bardur 4, Oumaji 10). Verify
-    with those. **Do not patch purchase checks.** The paid tribes run on the same real code.
-- **Hardware is local only.**
-  - Training runs on the PC `ssh backhouse`: Windows 11, i7-14700K 20C/28T, 64 GB, RTX 4070
-    Ti SUPER 16 GB, WSL2 Ubuntu 22.04. Its default shell is cmd; use
-    `powershell -EncodedCommand` for scripts.
-  - Ben owns Polytopia on Steam (app 874390). It isn't installed on the PC yet, and the PC's
-    network may not have the Mac's filter.
-  - No cloud, and no play on official servers.
-- **Repo:** Ben wants it public on GitHub as `bengreff/polytopia`, with commits straight to
-  `main`. Not created yet; see "What exists".
-- **Working style:** quick, direct work, no subagent swarms. Ask Ben when a decision is his.
-  Never time out on a question; wait for the answer.
-- **Network:** this Mac's network runs a FortiGate filter that blocks the "Games" category
-  (Steam, App Store purchases, APK sites). GitHub, Google's download servers and PyPI work.
-  Don't suggest a VPN.
+- **Goal:** a superhuman Polytopia AI for the World Championship format only: 1v1 Might, Lakes,
+  Small 14×14, fog on, either seat any of the 12 regular tribes, game version 2.17.3 (123 / logic
+  data 28). Plus a research write-up, so every run is pre-registered and logged.
+- **Exact rules only:** the shipped game's own compiled code (`GameLogicAssembly`) runs the
+  games; nothing is re-implemented. The real app is the reference.
+- **Fog:** our agent sees only what its client would show (observation allowlist, fog-leak test).
+  The game's built-in AI keeps its full view.
+- **No hand-written evaluator.** Local hardware and local play only (no paid cloud, no official
+  servers).
+- **Working style:**
+  - Quick, direct work; no subagent swarms.
+  - Ask Ben when a decision is his, and wait for the answer.
+  - Docs over long chat reports.
+  - Commit to `main`.
+- **Hardware:**
+  - **Mac** (M2 Pro, 10 cores): runs all games, using the native `build/polyhost-mac` on Ben's
+    Steam `GameAssembly.dylib`.
+  - **PC `ssh backhouse`** (Windows 11 + WSL2 Ubuntu-22.04, RTX 4070 Ti SUPER 16 GB, 20 cores):
+    training only. Polytopia isn't installed there, so it can't play games.
 
-## What exists
+## Where things stand (morning of 2026-10-22)
 
-- **Repo `~/polytopia`:**
-  - Everything is committed to `main` locally (`ef8e537` and later). The history holds no game
-    files (checked).
-  - **Not pushed:** the permission check blocked `gh repo create bengreff/polytopia --public
-    --source . --remote origin --push` again. Ben can run it himself (`! gh repo create ...`) or
-    allow it.
-  - `game/` stays ignored.
-- **`game/`** is in .gitignore and contains Midjiwan's files. Never commit or publish it.
-  - `game/android/`: APKMirror bundle of **2.17.3.16375**, signed by Midjiwan. Game version
-    123, logic data version 28.
-  - `game/dump/`: `symbols.tsv` (115,724 method offsets), Cpp2IL `diffable-cs` type dump,
-    `gamedata/GameLogicData1-28` and `AvatarData` JSON, and decompiled snippets.
-  - `game/tools/`: NDK r30, Cpp2IL, Frida server 17.24.3.
-  - `game/ghidra/`: Ghidra project with GameLogicAssembly functions defined.
-  - `game/traces/`: real-app recordings. `play1` is Ben's 3 games; `play2`, `mapgen1`,
-    `boundary1.bin` and `auto1` came later.
-  - `game/.venv/`: Python with frida, UnityPy, androguard and websocket-client.
-- **The bot interface (new this session):**
-  - **What it is:** `polyhost/env.hpp` (`env::Match`), `polyhost/wire.hpp` (binary protocol,
-    `polyhost env <port>`), `py/polyenv.py` (numpy client), `py/smoke.py`.
-  - **Setup:** a match is built as the real app builds a pass-and-play game
-    (`ClientBase.CreateSession`, GameType 2). Settings and seats were recorded from the real app's
-    menus (`game/traces/hotseat1`), and `hotseatcheck` rebuilds that game byte-identical.
-  - **Seats:** outside-driven (person/agent, handicap 1) or the game's AI at a difficulty. The
-    nature player (id 255) takes turns too, and the AI plays them.
-  - **Legal list:** the game's generators plus `IsValid`.
-  - **End of game:** once the win is met the game sits in FinalTurn until an `EndMatchCommand`.
-    The interface sends it automatically after any pending reward choice is answered.
-  - **Bot-only command:** `STEP_BOT_OWN` plays the AI's own command, including its bot-only
-    `StayCommand`.
-  - **Checks:** `envtest` covers legality, bot coverage, encoding and determinism; `envbench`
-    gives timings. See README "Interface checks" and "Measured".
-  - `bench` and `serve` now run on `env::Match`. The unfaithful legacy `newMatch`/`Setup` is
-    deleted.
-- **`polyhost/`:** C++ built with the NDK. It loads `libil2cpp.so` with no Unity and calls the
-  game code through il2cpp exports.
-  - `il2cpp.hpp`: bindings, `call`/`tryCall`, `Pin` (GC handles are pointer-sized),
-    `method(…, firstParamType)`, `methodWith(…, substring)`.
-  - `game.hpp`: `loadGameData`, `Game` handles, `botCommand` (TryGetTriggerCommand, then
-    AI.GetMove), plus the verified builders:
-    - `SeedSource`: splitmix64 that can replay recorded seeds.
-    - `generateMap`: MapGenerator.Generate step for step.
-    - `createLocalGame`: GameStateUtils.CreateLocalGame step for step, with seeds supplied.
-    - `localPlayer`: as ClientBase.CreateSession builds the human seat.
-    - `menuSettings`/`MenuChoice`.
-  - `dump.hpp`: full JSON `Dumper` and `StateIO` (GameState save/load through the game's
-    BinaryWriter/Reader).
-  - `serve.hpp` + `web/`: HTTP server and browser UI (paused).
-  - `main.cpp` commands: `bench`, `serve`, `state`, `symbols`, `handicaps`, `dump`, `regen`,
-    `fresh`, `replay` (env `POLY_CHECK_AI=1` checks bot choices), `scores`, `newplayer`. Env
-    `POLY_WAIT=N` pauses after boot so Frida can attach.
-  - `run.sh`: `./polyhost/run.sh push` once, then `./polyhost/run.sh <cmd args>` builds,
-    pushes and runs it on the emulator.
-- **`tools/ghidra/decompile.sh 'Class$$Method/argc' | 0xRVA`:** headless decompile with
-  callee names. Big functions spill into neighbouring code; the time and payload limits are
-  already raised.
-- **`tools/frida/`:**
-  - `agent.js`: generic il2cpp hooks with argument decoding, call chains and GameState
-    snapshots (`snapshots: [{arg|ret|field}]`), plus the autoplay driver.
-  - `trace.py hooks.json outdir [--attach] [--program polyhost] [--autoplay games.json]`.
-  - `boundary.js`/`boundary.py`/`boundary_report.py`: record every client→rules call. It uses
-    a CModule; keep it referenced, and read the caller from `cpu_context->lr`.
-  - `emu.sh` (screenshot/tap) and the hook lists `hooks-play.json`, `hooks-play2.json`,
-    `hooks-mapgen.json`, `hooks-score.json`.
-- **`tools/statediff.py`, `tools/statecompare.py`, `tools/mapascii.py`:** state diffs.
-  `statecompare` compares game content and ignores dictionary layout, default diplomacy
-  relations, aiState/opinions and caches.
-- **Emulators:**
-  - `PolyRef` (Android 14 google_apis arm64, rootable) is the reference and runs polyhost.
-    Start it with
-    `emulator -avd PolyRef -no-window -no-snapshot -cores 6 -memory 4096 -gpu swiftshader_indirect`,
-    then `adb root`, `adb shell setenforce 0`, and
-    `adb shell "(nohup /data/local/tmp/frida-server >/data/local/tmp/frida.log 2>&1 &)"`.
-    Never `pkill -f frida-server` in the same shell command that restarts it; it matches its
-    own command line.
-  - The old `Medium_Phone_API_36` AVD has been deleted, with Ben's OK.
-  - The real app is installed on PolyRef.
-  - The Mac is low on memory (swap nearly full) and disk (about 11 GB free after the cleanup).
-    Android freezes ("system not responding") when starved.
+**Fine-tuning on human championship replays made the raw policy (no search) beat Crazy about 92% of
+the time.** Every cell below is 200 games, sides swapped, on fixed seeds; see research-log.md.
 
-## Verified against the real app
+| Policy on our seat | Easy | Normal | Hard | Crazy |
+|---|---|---|---|---|
+| The game's own AI (the teacher) | 96.5% | 65.0% | 31.0% | 10.0% |
+| R3 step 100k: behaviour cloning of the AI, 20k games | — | 59.0% | 29.0% | 9.0% |
+| R4 step 6k: R3 at 100k + human fine-tune | — | 100% | 97.5% | 90.0% |
+| **R4 step 20k: the reference policy** | — | 99.5% | 99.5% | **94.0%** |
 
-- **Pass-and-play Might, Lakes, Small (this session):** the real app's menus offer Might under
-  Multiplayer → New Game → Pass & Play. Both players are local profiles, and tribes are picked
-  after Start Game.
-  - Recorded settings:
-    - GameType 2;
-    - base and rules mode 4, `GameRules.LoadPreset(4)` (WinByCapital, WinByExtermination, no
-      limits);
-    - mapPreset 2, MapSize 14;
-    - OpponentCount 0, Difficulty 0;
-    - unlockedTribes [0,1,4,7,10,13].
-  - Each seat is a `PlayerData` (LocalUser, state 2, knownTribe, **climate 0**).
-  - `CreateSession` builds each person as `new PlayerState`:
-    - Id i+1, AccountId = profile id, AutoPlay off, name from the profile;
-    - `_climate` = PlayerData.climate, the tribe, hasChosenTribe;
-    - handicap default 1.
-  - Then SetPlayerColors, AddNaturePlayer, `MapGenerator.Generate`, starting stars and units,
-    and `StartMatchCommand(1)`.
-  - `hotseatcheck` is byte-identical given the recorded seeds.
+- **R4 step 20k** (`runs/r4_human_ft/step020000.pt` on the Mac; `/home/greff/runs/r4_human_ft/` on
+  the PC) is the best checkpoint.
+  - Wins by early capital capture (~22 turns), as people do.
+  - Picks the human's move 43% of the time (top-5 73%) on held-out human games.
+- **Milestones:**
+  - **M1 gate (≥ 60% vs Normal):** passed (99.5%).
+  - **M2 thresholds** (Normal ≥ 90%, Hard ≥ 70%, Crazy ≥ 50%, all as lower bounds): passed by the
+    raw policy, with no search.
+  - **M4 gate:** full run on R4 at 20k, 20 games in each of 288 tribe-pair × seat cells vs Crazy.
+    - Pooled: **92.4% (lower bound 91.7%): pass.**
+    - **3 cells below 70%: fail, narrowly.** Oumaji vs Vengir (seat 1), Oumaji vs Xin-xi (seat
+      1) and Xin-xi vs Vengir (seat 2): 65–70% over 40 games each, counting a re-test on fresh
+      seeds.
+    - The last M4 step is Ben's best-of-5.
+- **Tried tonight, no gain:**
+  - **R5 / R5b, policy-only PPO:** the greedy policy stayed flat after 1–2 iterations. The sampled
+    policy (temperature 0.5) did improve, from 84% to 91% vs Crazy in its own games.
+  - **R6, imitating only the winning side of human games:** identical to R4 (586/600 each).
+- **Running at handoff:** filled in at the end of the night (below).
 
-- **Game creation and map generation:** byte-identical for 5 recorded real games, given the
-  recorded seeds. `fresh` from menu choices is byte-identical for Ben's Domination game.
-- **Rules:** replaying Ben's Domination game (313 commands) through ActionManager matches the
-  real snapshot content after every command, and his second game (2 commands) also matches.
-- **Bots:** 212 of 212 bot moves are identical to our `botCommand`.
-- **What the client does, from the decompile and the boundary trace:**
-  - The human seat is `new PlayerState` with handicap defaulting to 1 (the +1 capital star),
-    Id 1, an empty AccountId with hasValue set, AutoPlay off, and tribe, skin, climate and
-    hasChosenTribe from GameManager statics. The name "Anonymous" is set after
-    CreateLocalGame.
-  - Bots come from `AddAIOpponent(GetRandomPickableTribe, HandicapFromDifficulty)`. The
-    handicap table is Easy 0, Normal 1, Hard 2, Crazy 4. The tribe pick uses a process-global
-    System.Random and only unlocked tribes.
-  - Seed, VillageNameSeed and Generate's attempt seeds all come from
-    `RandomNumberGenerator.GetInt32`. Generate makes up to `equalityIterations` (50) attempts
-    and keeps the lowest `GetInequality`. An attempt counts if its inequality is at least
-    -999; invalid attempts get up to 15 retries. It stops early below `equalityLimit`,
-    regenerates the best seed if it wasn't the last, then sets every score from
-    `PlayerExtensions.GetScore`.
-  - The game ends when no AutoPlay=false player is alive.
-  - The UI (HasEmbassyWith and similar) lazily creates default diplomacy relations, and the
-    advisor runs AI.GetMove for the human seat. These are UI side effects only.
-- **Two corrections to earlier findings:**
-  - The population "bug" was my UI. `population` is cumulative and `xp` is progress to the
-    next level.
-  - Map types are official (`GameSettings.mapPreset`).
+## What exists (new tonight; the engine is described in README.md)
 
-## Where it stopped
+- **Training:**
+  - **`py/train_bc.py`** (behaviour cloning):
+    - pointer policy over the game's legal list, value and ownership heads;
+    - several data sources with shares, `dirA:0.5,dirB:0.5`;
+    - `--init`, `--winners_only`;
+    - `--value_val_games N`: value checked on 16 positions from each of N held-out games.
+  - **`py/train_rl.py`:** PPO on game outcomes with a per-opponent baseline, a BC anchor,
+    `--temperature`.
+  - **`py/dagger.py`:** the policy plays and the AI labels every position it reaches.
+    - Also records the played row and its log-probability, so the same games serve RL.
+    - Options: `--opponents` mix, `--tribe_pairs`, `--temperature`.
+    - Network and game processes are pipelined.
+  - **`tools/rl_loop.sh`:** RL iterations end to end: play on the Mac, sync, learn on the PC,
+    fetch, evaluate. Env knobs: OPPONENTS, TEMP, LR, BCW, PAIRS. Every transfer is retried.
+- **Evaluation:**
+  - **`py/eval_vs_bot.py`:** fixed seeds, sides swapped, pipelined. Options:
+    - `--cells K`: the M4 layout, K games per tribe pair × seat;
+    - `--cell_list`;
+    - `--teacher`;
+    - `--remote`.
+  - **`tools/eval.sh`** (writes `runs/evals/summary.tsv`), **`tools/compare_evals.py`** (paired
+    sign test on the same seeds), **`tools/cells.py`** (per-tribe and per-cell report),
+    **`py/human_bench.py`** (agreement with held-out human moves, value accuracy by game phase).
+- **Playing it:** `tools/play.sh runs/r4_human_ft/step020000.pt`, then open http://localhost:8123
+  and pick "Our network" as the bot difficulty.
+  - polyhost's `serve` asks `py/agent_server.py` for the network seat's moves, with the same
+    observation and legal list as evaluation.
+  - Checked with a headless screenshot.
+- **Infrastructure:**
+  - **`tools/queue.sh`:** a sequential job queue on the Mac (`runs/queue/todo.txt`).
+  - **`tools/fetch_ckpt.sh`, `tools/fetch_last.sh`:** copy checkpoints from the PC.
+  - **`py/infer_server.py` + `py/remote.py`:** policy inference on the PC's GPU over an ssh tunnel.
+    It matches the local network but is only fast when the GPU isn't training: the network is
+    ~2 GFLOP per position.
+- **Data:**
+  - `data/human1`: 7,732 championship-format human games, 3.17M decisions; final, done by the other
+    session.
+    - The PC has R4's 6,741-file snapshot as `~/polydata/human1` and the full set as
+      `~/polydata/human_full`.
+  - `~/polydata/m1v2` (PC): 19,956 AI-teacher games.
+  - `data/rl/*`: RL games.
 
-**The interface is ready to start building the bot (M1).** Everything in "Next steps" 1–2 below
-is optional hardening that can run alongside.
+## Engine and reference tooling (unchanged; details in README.md and memory `oracle-findings`)
 
-## Next steps, in order
+- **`polyhost/`:** C++ that loads the game's il2cpp library with no Unity and calls its rules.
+  - `env.hpp` (`env::Match`, built as the real app builds a pass-and-play game, byte-identical),
+    `wire.hpp` (`polyhost env <port>`, client `py/polyenv.py`), `serve.hpp` + `web/`.
+  - Commands include `envtest`, `envbench`, `hotseatcheck`, `replay`, `fogtest`.
+  - `./polyhost/run.sh mac` builds `build/polyhost-mac`; `POLYHOST=mac` makes `polyenv.launch` use
+    it. Build to a new file and `mv` it into place while games run: overwriting a running binary
+    can kill them.
+- **Replays:**
+  - polyhost ops REPLAY/RSTEP.
+  - `py/fetch_replays.py` (polytopia-prod API, Ben's client JWT), `py/cm_replays.py`
+    (Challengermode), `py/convert_replays.py` (final-state check per game).
+- **`game/`** (gitignored, Midjiwan's files; never commit):
+  - the Android 2.17.3 bundle;
+  - `dump/` (symbols, gamedata, type dump);
+  - `tools/` (NDK, Cpp2IL, Frida server);
+  - `ghidra/`, `traces/`, `.venv`.
+  - `game/mac` links the Steam build's data.
+- **Reference app:** AVD `PolyRef` (Android 14 google_apis arm64, rootable; shut down tonight).
+  - Start: `emulator -avd PolyRef -no-window -no-snapshot -cores 6 -memory 4096 -gpu
+    swiftshader_indirect`, then `adb root`, `adb shell setenforce 0`, and start
+    `/data/local/tmp/frida-server`.
+  - `tools/frida/` (trace.py, boundary recorder, agent.js autoplay) and `tools/ghidra/decompile.sh`
+    are the oracle tools.
 
-1. **M1, the smallest learning loop** (docs/design/training-and-data.md):
-   - Generate bot-game data with `polyenv`: both seats as bots (`bots=(d, d)`), or one outside
-     seat stepping `STEP_BOT_OWN`, and record per decision:
-     - the observation;
-     - the legal list;
-     - `bot()` (the label; -1 for its StayCommand);
-     - the outcome.
+## Lessons from the night (gotchas)
 
-     Speed: 2.4 Crazy-vs-Crazy games/s on 6 emulator processes. The 4 free tribes run in the app;
-     all 12 run in polyhost.
-   - Model: the pointer policy over legal rows plus a value head. Install PyTorch (Mac MPS, or the
-     PC's GPU).
-   - Ben checks in after M1 (plays 2 games). The browser UI runs on `env::Match` now, so it can
-     be used for that once polished.
-2. **Interface hardening:**
-   - the perturbation fog-leak test;
-   - canonical hash and determinized-state builder (M3);
-   - a dummy-network end-to-end benchmark.
-   - **Speed:**
-     - direct method-pointer calls instead of `runtime_invoke`;
-     - a cheaper legal list: tile generators run on all 196 tiles, and research checks all 63
-       techs;
-     - threads in one process.
-   - **Real-app self-play oracle** (the previous session's step 1):
-     - `Interceptor.replace` `ClientActionManager.Pause`/`HoldExecution` with no-ops (approved by
-       Ben);
-     - make simulation mode opt-in in `agent.js`;
-     - then pass-and-play Might games played to the end and diffed with `replay`.
-   - **Open check:** Crazy vs Crazy won 6 of 6 for the first seat. Measure first-move advantage
-     over more games.
-3. **The native Windows build on `backhouse`** (needs Ben to install Polytopia from Steam there;
-   still not installed as of this session). Check that its game version is 123, then port
-   polyhost (`LoadLibrary("GameAssembly.dll")`).
-4. **Keep committing** to `main` on the public repo. Never commit `game/`, which is Midjiwan's
-   code and data.
+- **GPU memory (16 GB):**
+  - R3's process alone holds ~7 GB. Three of my jobs beside it made the driver page, and every job
+    stalled for 20+ minutes (twice).
+  - **Rule: with R3 running, only one more training job on the GPU.**
+- **Launching jobs in WSL over ssh:** `setsid nohup … &` must be followed by a `sleep`.
+  Otherwise WSL can end the session before the job starts.
+- **`pkill -f pattern` over ssh matches its own `bash -c` command line;** use `'[t]rain_bc'`.
+  A plain pattern once paused R3 and R4 for 2.5 minutes.
+- **The Tailscale link to the PC drops for 30–60 s** a few times an hour. Retry every transfer.
+- **Ports used by Ben's own servers on this Mac:** 8600, 8631, 8640, 8650, 8655, 8660, 8765,
+  8771. Ours: 8500/8520 (evaluations), 8740 (extra evaluations), 8900 (RL actors), 8123/8131
+  (play).
+- **Mac evaluation speed:** inference-bound on the M2 Pro's GPU (~80 ms per batch of 36). About
+  1.3–1.5 games/s for the short games R4 plays.
+- **Permission check:** stopping R3 (a run from an earlier session) was refused as interfering with
+  a workload. Ask Ben.
+
+## Next steps
+
+1. **Ben:**
+   - plays R4 at 20k (`tools/play.sh`), best-of-5 for M4;
+   - decides on the asks below.
+2. **The weak matchups** (Oumaji vs Vengir / Xin-xi, Xin-xi vs Vengir): aim training at them, using
+   R5c (RL on the 19 weakest cells, queued after R7) and/or more weight on human games with those
+   tribes, then re-run the failing cells.
+3. **More human data and longer training** is the lever with evidence. R7 (20k more steps on the
+   complete set) is running; compare it with R4 at 20k on the standard seeds and the 19 weak
+   cells.
+4. **RL:** policy-only PPO at this scale hasn't improved greedy play. Before more RL:
+   - get more throughput (the native Windows host, or the PC's GPU for inference once R3 is off
+     it);
+   - consider acting at a lower temperature.
+5. **Search (M2's turn sampler):** blocked on a fog-safe clone, i.e. the determinized-state
+   builder in polyhost (architecture.md, Layer 0). Simulating our own turn on the true state would
+   reveal hidden tiles, ruin rewards and invisible units.
+6. **Value head:** held-out value is far better on human games (log loss ~0.5–0.6) than on AI
+   games (1.1–1.7, memorized). Needed before search.
+
+## For Ben
+
+1. **Stop R3** (`/home/greff/runs/r3_m1`, AI cloning to 290k steps)? It is superseded by the human
+   fine-tune, holds ~7 GB and a third of the GPU, and runs until mid-morning. The permission check
+   wouldn't let me stop it.
+2. **Install Polytopia on the PC through Steam** (still not installed). A native Windows host
+   would let the PC play games next to its GPU, the biggest throughput gain available.
+3. **OK to build the determinized-state builder** (fog-safe search)?
+4. **Push the repo to GitHub** (`gh repo create bengreff/polytopia --public --source . --remote
+   origin --push`). Still blocked by the permission check; run it yourself with `!` or allow it.
