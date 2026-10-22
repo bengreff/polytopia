@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-10-22, after night 1)
+# Handoff: Polytopia AI (2026-10-22, midday: self-play running on the PC)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -23,8 +23,36 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - **Hardware:**
   - **Mac** (M2 Pro, 10 cores): runs all games, using the native `build/polyhost-mac` on Ben's
     Steam `GameAssembly.dylib`.
-  - **PC `ssh backhouse`** (Windows 11 + WSL2 Ubuntu-22.04, RTX 4070 Ti SUPER 16 GB, 20 cores):
-    training only. Polytopia isn't installed there, so it can't play games.
+  - **PC `ssh backhouse`** (Windows 11 + WSL2 Ubuntu-22.04, RTX 4070 Ti SUPER 16 GB, 28 threads):
+    training, and since 2026-10-22 **games too**. The Android build's own `libil2cpp.so` runs under
+    QEMU user-mode emulation (`POLYHOST=qemu`, kit in `~/polyarm`, built by
+    `tools/setup_pc_games.sh`). No Steam is needed. It's bit-identical to the Mac (`py/parity_hosts.py`)
+    and ~22× slower per thread.
+  - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
+
+## Now (2026-10-22, 12:45): S1 self-play generations running on the PC
+
+- **What:** `py/sp_loop.py` on the PC (pid 84851, started 12:29), files in `/home/greff/runs/sp/s1/`.
+  Pre-registered as S1 in research-log.md.
+  - **Each generation:** 1,500 training games with the previous generation at temperature 0.5. Half
+    are against itself, half against earlier generations.
+  - **Learning:** one PPO step with the value head as baseline (`train_rl.py --baseline value`) →
+    `genNNN.pt`.
+  - **Evaluation of every generation,** greedy, 200 games each: vs the previous generation, vs Crazy
+    (standard seeds) and vs gen 0. They run while the next generation learns.
+- **First result:** gen 0 (R4 at 20k) vs Crazy on the PC = 188/200, the same as on the Mac.
+  - Gen 1's games were under way at 12:40.
+  - The first learner step on the PC hadn't been seen yet when the link dropped: check
+    `learn/g001.log`.
+- **Watch it:**
+  - `tools/sp_sync.sh s1` prints `summary.tsv` (one line per evaluation).
+  - `--games` adds the evaluation games for the web app; `--ckpt` adds the checkpoints. Both are
+    big: avoid them on the hotspot.
+  - On the PC: `tail ~/runs/sp/s1/loop.log`, `cat ~/runs/sp/s1/summary.tsv`.
+- **Stop:** `touch ~/runs/sp/s1/STOP` (between steps). Restart with the same command; the loop is
+  resumable. Killing the Python process also kills its game processes.
+- **The PC is shared:** another project's crucible runs (in the `Ubuntu` distro) used ~16 threads
+  until ~17:00. The loop sizes its game processes from the load average, between 8 and 28.
 
 ## Where things stand (morning of 2026-10-22)
 

@@ -547,3 +547,12 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   below 180/200 for two generations in a row.
   - Then: stop, read the learner's logs (KL, clip fraction, value baseline error), and change one
     thing.
+
+### S1 results
+- **Gen 0 vs Crazy on the PC** (12:40): **188/200**, the same as R4 at 20k on the Mac with the same
+  seeds.
+  - 163 of the 200 games are move-for-move identical (same result and length).
+  - The other 37 have the same result, ±1–6 turns. The rules are identical across hosts (parity
+    above), so the difference is the network's arithmetic: CUDA on the PC, MPS on the Mac. Tiny
+    differences flip near-tied greedy moves.
+  - Evaluations are compared within a host: every S1 evaluation runs on the PC.
