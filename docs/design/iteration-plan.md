@@ -77,24 +77,30 @@ Every iteration is one pre-registered change, judged on fixed seeds.
    stays and the result is logged.
 4. **Record** the result in research-log.md and the status log below; commit.
 
-## Queue for tonight (with decision rules)
+## Queue for tonight (revised 22:10, after R4)
 
 | # | When | What | Decides |
 |---|---|---|---|
-| 1 | 21:15–21:50 | Evaluate R3 step 90k vs Easy/Normal/Hard/Crazy; teacher vs Normal/Hard/Crazy | Baseline and teacher ceiling (Ben's question) |
-| 2 | 21:25–~23:00 | **R4:** R3 step 100k fine-tuned on human games, 20k steps (GPU shared with R3) | Does human data help the raw policy, especially vs Crazy? |
-| 3 | 21:50–22:10 | Evaluate R3 step 100k (R4's base) vs Normal/Hard/Crazy | R4's comparison point |
-| 4 | 22:10–23:00 | DAgger round 1: step 100k vs Normal/Hard/self, ~1,000 games (Mac) | Data for #6 |
-| 5 | ~23:00 | Evaluate R4 at 5k/10k/20k steps + human bench | Pick R5 (below) |
-| 6 | ~23:30 | **R5:** if R4 helped vs Hard/Crazy, train on **human + AI + DAgger mixed**; if R4 hurt vs Normal, mix with more AI/DAgger data; if neither moved, DAgger only | Best supervised policy |
-| 7 | done 21:45 | Build policy-only RL (below), test on a small run | Plumbing |
-| 8 | ~02:30 | R3 finishes (290k). **M1 gate:** 400 games vs Normal (≥ 60%, Wilson lower bound reported) | M1 pass/fail |
-| 9 | 01:30–05:30 | **RL iterations** from the best supervised policy, ~45 min each | Policy improvement past the teacher |
-| 10 | 05:40 | Wrap-up: results, HANDOFF.md, commit, morning summary | — |
+| 1 | done | R3 step 90k/100k and the teacher vs all four bots | Baseline and teacher ceiling |
+| 2 | done | **R4** at 6k: 100% / 97.5% / 90% vs Normal / Hard / Crazy | Human data is the lever |
+| 3 | 22:10–~23:10 | **R5:** RL from R4 at 6k, 2 iterations of 600 games (Crazy 2/3, self 1/3, T 0.5), each evaluated vs Hard and Crazy | Does RL add to human BC? |
+| 4 | ~23:00 | R4 at 20k (end of its run) vs Normal/Hard/Crazy + human bench | Is longer human training better than 6k? |
+| 5 | 22:10–~23:45 | **R6:** human fine-tune on winners' moves only (GPU) | Filtered BC vs R4 |
+| 6 | 23:10–05:00 | R5 continues (4 more iterations) from whichever of {R5, R4 at 20k, R6} is best, re-planned at each result | Policy improvement |
+| 7 | late night | **M4 gate screen:** best checkpoint vs Crazy on every tribe pair × seat (`--cells`), 4 per cell first (1,152 games), then 20 per cell if the screen is clean | Is there a weak matchup? |
+| 8 | after R3 ends (~02:30) | RL actors switch to the PC's GPU (`--remote`), several times faster | Throughput |
+| 9 | 05:40 | Wrap-up: results, HANDOFF.md, commit, morning summary | — |
+
+Decision rules:
+- A candidate replaces the champion when it beats it on the same seeds (paired sign test, p < 0.05
+  pooled over Hard + Crazy) and Normal stays ≥ 98%.
+- RL stops for the night after 2 iterations with no paired gain vs Crazy (then autopsy).
+- Supervised runs are compared at equal steps on the same evaluation.
 
 ### Policy-only RL (item 7–9; built: `py/dagger.py --temperature 1` + `py/train_rl.py`)
-- **Actors** (Mac, 6 processes): the champion plays, sampling at temperature 1.
-  - Opponents: Normal 1/6, Hard 2/6, Crazy 2/6, itself 1/6 (`--opponents 1,2,2,3,3,self`).
+- **Actors** (Mac, 6 processes): the champion plays, sampling at temperature 0.5 (R5).
+  - Opponents for R5: Crazy 2/3, itself 1/3 (`OPPONENTS=3,3,self`). Hard and Normal games are all
+    wins for R4, so they carry no signal.
   - Recorded per agent decision: observation, legal list, played row, its log-probability, the AI's
     label (so the same games serve DAgger), and the outcome.
   - 400–1,000 games per iteration (~0.5 games/s on the Mac's GPU).
