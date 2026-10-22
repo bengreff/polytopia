@@ -119,6 +119,7 @@ def main():
                 if jobs:
                     start(e, s)
         t0 = time.time()
+        timing = dict(env=0.0, net=0.0)
         while any(live):
             for e in range(len(envs)):
                 for s, g in list(live[e].items()):
@@ -140,17 +141,23 @@ def main():
                             summary = ', '.join(
                                 f"vs {'self' if o < 0 else o}: {sum(r == 'win' for oo, r in done if oo == o)}/"
                                 f"{sum(oo == o for oo, _ in done)}" for o in opponents)
-                            print(f'{len(done)} games ({summary}), {time.time() - t0:.0f} s', flush=True)
+                            print(f'{len(done)} games ({summary}), {time.time() - t0:.0f} s '
+                                  f'(game processes {timing["env"]:.0f} s, network {timing["net"]:.0f} s)', flush=True)
             order = [sorted(l) for l in live]
             if not any(order):
                 break
+            t1 = time.time()
             obs = list(pool.map(lambda e: envs[e].observe([(s, 0) for s in order[e]]) if order[e] else [], range(len(envs))))
             labels = list(pool.map(lambda e: envs[e].bot(order[e]) if order[e] else [], range(len(envs))))
+            t2 = time.time()
+            timing['env'] += t2 - t1
             flat = [(e, s) for e in range(len(envs)) for s in order[e]]
             flat_obs = [o for e in range(len(envs)) for o in obs[e]]
             flat_labels = [b for e in range(len(envs)) for b in labels[e]]
             statuses = [live[e][s]['st'] for e, s in flat]
             acts, logps = sample(net, args.device, flat_obs, statuses, args.temperature, rng)
+            t3 = time.time()
+            timing['net'] += t3 - t2
             per_env = [[] for _ in envs]
             for (e, s), o, label, a, lp in zip(flat, flat_obs, flat_labels, acts, logps):
                 g = live[e][s]
@@ -167,6 +174,7 @@ def main():
                     a = int(np.nonzero(st.legal[:, 0] == 15)[0][0])
                 per_env[e].append((s, int(a)))
             stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))
+            timing['env'] += time.time() - t3
             for e in range(len(envs)):
                 for (s, _), (ok, st) in zip(per_env[e], stepped[e]):
                     if not ok:
