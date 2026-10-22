@@ -374,3 +374,22 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   and somewhat more is expected on fresh seeds, since the cells were chosen for low scores).
 - **Falsifier:** no paired gain on the 19 cells after 2 iterations (p > 0.2), or the standard Crazy
   evaluation drops below 180/200.
+
+## R7 — more human training on the complete human set (pre-registered 2026-10-22, 02:40)
+
+- **Why:** human imitation is the only lever that has moved the bots' results tonight. R4 gained
+  from 6k to 20k steps (Crazy 180 → 188, p = 0.15) with held-out cross-entropy still falling, while
+  R5, R5b and R6 were flat.
+- **Hypothesis:** 20,000 more steps from R4 at 20k, on the complete human set, raise the win rate vs
+  Crazy and in the weak cells.
+  - The complete set is `human_full`: 7,732 files, against R4's 6,741-file snapshot.
+- **Change:** init R4 step 20k; data `human_full`; 20,000 steps; lr 5e-5 (warmup 1,000, cosine);
+  everything else as R4. Validation on human_full's own held-out split; the hash split is the same
+  rule, so R4's held-out games stay held out.
+- **Starts:** when R5b stops (after its 2nd iteration if it shows no gain; the GPU takes one job
+  beside R3).
+- **Evaluation:** vs Crazy, Hard and Normal (200 games each, fixed seeds) and the 19 weak cells
+  (380 games, seeds from 12,000,000), all paired with R4 at 20k; plus `human_bench.py`.
+- **Expected:** vs Crazy ≥ R4's 188/200; a paired gain on the weak cells.
+- **Falsifier:** pooled over Crazy + the weak cells, no paired gain (p > 0.2 and the point estimate
+  not higher) → more of the same data has stopped paying.
