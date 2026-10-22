@@ -216,6 +216,40 @@ def validate(net, val_games, dev, batch=256):
     return dict(zip(['policy', 'value', 'owner', 'top1', 'value_acc'], (sums / count).round(4).tolist()))
 
 
+def value_positions(data_dir, games, per_game, seed=0):
+    """Held-out positions for the value check: per_game random decisions from each of the first
+    `games` validation games that have a value target (tiles, globals, techs, value only)."""
+    rng = np.random.default_rng(seed)
+    parts = dict(tiles=[], globals=[], techs=[], value=[])
+    n = 0
+    for f in list_games(data_dir, val=True):
+        if n >= games:
+            break
+        g = load_game(f)
+        if g is None or g['value'][0] < 0:
+            continue
+        idx = rng.choice(len(g['value']), min(per_game, len(g['value'])), replace=False)
+        for k in parts:
+            parts[k].append(g[k][idx])
+        n += 1
+    return {k: np.concatenate(v) for k, v in parts.items()} if n else None, n
+
+
+@torch.no_grad()
+def validate_value(net, pos, dev, batch=512):
+    """Value log loss and accuracy on value_positions()."""
+    net.eval()
+    ll, acc, n = 0.0, 0.0, len(pos['value'])
+    for i in range(0, n, batch):
+        t = {k: torch.from_numpy(v[i:i + batch]).to(dev) for k, v in pos.items()}
+        with autocast(dev):
+            v = net.value(net.encode(t['tiles'], t['globals'], t['techs'])[:, 0]).squeeze(-1).float()
+        ll += float(F.binary_cross_entropy_with_logits(v, t['value'], reduction='sum'))
+        acc += float(((v > 0).float() == t['value']).sum())
+    net.train()
+    return dict(value=round(ll / n, 4), value_acc=round(acc / n, 4), positions=n)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('data_dir')
@@ -240,6 +274,8 @@ def main():
     ap.add_argument('--fp32', action='store_true', help='train in float32 (no bf16 autocast)')
     ap.add_argument('--val_every', type=int, default=2000, help='validate and save last.pt every this many steps')
     ap.add_argument('--save_every', type=int, default=10000, help='keep a stepNNNNNN.pt checkpoint every this many steps')
+    ap.add_argument('--value_val_games', type=int, default=0,
+                    help='also check value on this many held-out games of each source, 16 positions each')
     args = ap.parse_args()
     global FP32
     FP32 = args.fp32
@@ -277,6 +313,12 @@ def main():
         val_sets.append([g for g in (load_game(f) for f in val_files) if g is not None])
         print(f'validation {d}: {len(val_sets[-1])} games, {sum(len(g["label"]) for g in val_sets[-1])} decisions', flush=True)
     val_games = val_sets[0]
+    value_sets = []
+    if args.value_val_games:
+        for d, _ in parse_sources(args.data_dir):
+            pos, n = value_positions(d, args.value_val_games, 16)
+            value_sets.append(pos)
+            print(f'value check {d}: {n} games, {0 if pos is None else len(pos["value"])} positions', flush=True)
     stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels)
     loader = torch.utils.data.DataLoader(stream, batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda',
                                          prefetch_factor=4, persistent_workers=True)
@@ -309,6 +351,9 @@ def main():
                 for i, vs in enumerate(val_sets):
                     if vs:
                         rec['val' if i == 0 else f'val_{i}'] = validate(net, vs, dev)
+                for i, pos in enumerate(value_sets):
+                    if pos is not None:
+                        rec['vval' if i == 0 else f'vval_{i}'] = validate_value(net, pos, dev)
                 torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step,
                                 config=dict(d=args.d, layers=args.layers)), ckpt_path)
                 if step % args.save_every == 0:
