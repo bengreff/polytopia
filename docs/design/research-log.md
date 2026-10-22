@@ -589,3 +589,12 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **S1 stops** after its gen 1 evaluation against Crazy. Its results stay on record.
 - **Expected and falsifier:** as S1's, with gen 0 = R7. R7's gen-0 Crazy evaluation on the PC is the
   baseline (Mac: 191/200).
+- **Amended before S2's first learning step (17:20):** **no BC anchor** (`bc_weight` 0). The
+  learner trains on self-play games only.
+  - Ben: "We should not be memorizing a training set. As long as whatever we have is trained on all
+    7k human games we are good."
+  - Gen 0 (R7) is trained on all 7,732 games. A 20% anchor would replay ~0.65 passes over the human
+    set every generation, i.e. memorizing it.
+  - Drift away from sensible play is watched by the per-generation evaluations vs gen 0 and Crazy.
+  - Also new: settings can change between steps through `<run>/override.json`, without a restart.
+  - Game processes: all 28 threads 6am–10pm, half at night, when Ben's other projects run.

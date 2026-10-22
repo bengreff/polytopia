@@ -38,7 +38,8 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   improving; the better value head.
 - **Each generation:**
   - 1,500 training games at temperature 0.5, half against itself and half against earlier generations;
-  - one PPO step with the value head as baseline and a 20% BC anchor on all human games → `genNNN.pt`;
+  - one PPO step with the value head as baseline → `genNNN.pt`. No BC anchor: the human games
+    aren't replayed, to avoid memorizing them (Ben). Gen 0 already learned from all of them;
   - greedy evaluations of 200 games each vs the previous generation, Crazy (standard seeds) and gen 0,
     run beside the next generation's games.
 - **S1** (gen 0 = R4) was stopped after 1 generation:
@@ -52,8 +53,9 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - `python3 py/sp_strategy.py <games dirs>` (on the PC) profiles how each generation plays.
 - **Stop:** `touch ~/runs/sp/s2/STOP` (between steps). Restart with the same command; it is
   resumable. Killing the Python process also kills its game processes.
-- **The PC is shared:** crucible (inquiry) may only run 10pm–6am; the loop sizes its game
-  processes from the load average.
+- **The PC is shared:** crucible (inquiry) may only run 10pm–6am. The loop uses 28 game processes
+  in the daytime and 14 at night. Change settings between steps with `~/runs/sp/s2/override.json`,
+  e.g. `{"procs": 20}`.
 - **Connection:** from school Wi-Fi the PC is reachable only while it isn't paused in the eero app
   (memory `backhouse-guide`).
 

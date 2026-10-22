@@ -1,7 +1,7 @@
 """The self-play generation loop (research-log S1). Runs on the PC (WSL), unattended:
 
     generation g: play --games training games with gen(g-1)   (py/selfplay.py, QEMU game processes + GPU)
-                  one PPO step on them -> gen(g)               (py/train_rl.py: value baseline, BC anchor on human games)
+                  one PPO step on them -> gen(g)               (py/train_rl.py: value baseline, self-play games only)
                   evaluate gen(g), in the background beside the next generation's games:
                     vs gen(g-1)  greedy, --h2h_seeds x 2 games, seeds from 13,000,000 (the same every generation)
                     vs Crazy     greedy, --crazy_seeds x 2 games, seeds from 10,000,000 (the standard bot seeds)
@@ -15,7 +15,7 @@ Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training g
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
 the web app's watch mode); summary.tsv (one line per evaluation); loop.log; status.json.
 Restartable: finished steps are skipped (games already played, gen files present, evals with a json).
-Stop between steps: touch <run>/STOP.
+Stop between steps: touch <run>/STOP. Change settings between steps: <run>/override.json.
 
     cd ~/poly/py_sp && POLYHOST=qemu setsid nohup ~/polyvenv/bin/python sp_loop.py ~/runs/sp/s1 \
         --init ~/runs/r4_human_ft/step020000.pt > ~/runs/sp/s1.out 2>&1 < /dev/null &
@@ -65,10 +65,27 @@ def run_cmd(run, cmd, logfile):
         raise RuntimeError(f'step failed (exit {rc}): see {logfile}')
 
 
-def free_procs(cap, threads=28):
-    """Game processes for the next step: the threads other jobs leave free (1-minute load average,
-    which counts every WSL distro), at least 8, at most cap. The PC is shared with other projects."""
-    return max(8, min(cap, round(threads - os.getloadavg()[0]) + 2))
+def apply_overrides(run, args):
+    """<run>/override.json, if present, changes settings from the next step on, e.g.
+    {"bc_weight": 0, "games": 2000}; every change is logged once."""
+    path = os.path.join(run, 'override.json')
+    if not os.path.exists(path):
+        return
+    try:
+        new = json.load(open(path))
+    except ValueError as e:
+        log(run, f'override.json unreadable, ignored: {e}')
+        return
+    for k, v in new.items():
+        if hasattr(args, k) and getattr(args, k) != v:
+            log(run, f'override: {k} = {v} (was {getattr(args, k)})')
+            setattr(args, k, v)
+
+
+def free_procs(cap):
+    """Game processes for the next step. The PC is shared: Ben's other projects (crucible) run only
+    10pm-6am, so the loop takes up to `cap` in the daytime and half of it at night."""
+    return cap if 6 <= time.localtime().tm_hour < 22 else max(8, cap // 2)
 
 
 def eval_jobs(run, g, args):
@@ -139,14 +156,16 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.5)
     ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--bc', default='/home/greff/polydata/human_full:1')
-    ap.add_argument('--bc_weight', type=float, default=0.2)
+    ap.add_argument('--bc_weight', type=float, default=0.0,
+                    help='weight of a behaviour-cloning anchor on --bc; 0 (default) trains on self-play games only, '
+                         'so the human games aren\'t replayed (memorized) generation after generation')
     ap.add_argument('--epochs', type=int, default=2)
     ap.add_argument('--baseline', default='value', help='py/train_rl.py --baseline')
     ap.add_argument('--learn_extra', default='', help='more py/train_rl.py arguments, e.g. "--workers 4"')
     ap.add_argument('--h2h_seeds', type=int, default=100)
     ap.add_argument('--crazy_seeds', type=int, default=100)
     ap.add_argument('--crazy_every', type=int, default=1)
-    ap.add_argument('--procs', type=int, default=28, help='at most; fewer while other jobs use the CPU')
+    ap.add_argument('--procs', type=int, default=28, help='game processes in the daytime (half at night, when other projects run)')
     ap.add_argument('--slots', type=int, default=6)
     ap.add_argument('--eval_procs', type=int, default=8, help='game processes for the evaluations, which run beside the next generation\'s games')
     ap.add_argument('--eval_slots', type=int, default=4)
@@ -174,6 +193,7 @@ def main():
     evals = (g - 1, p) if p else None
     record_evals(run, g - 1, args)
     while g <= args.generations and not stopped(run):
+        apply_overrides(run, args)
         prev = gen_path(run, g - 1)
         games_dir = os.path.join(run, 'games', f'g{g:03d}')
         past = list(range(max(1, g - 1 - args.pool_size + 1), g - 1))  # earlier generations, not gen(g-1) itself
@@ -196,10 +216,12 @@ def main():
         status(run, step='learning')
         learn_dir = os.path.join(run, 'learn', f'g{g:03d}')
         t0 = time.time()
+        apply_overrides(run, args)
+        anchor = ['--bc', args.bc, '--bc_weight', str(args.bc_weight)] if args.bc_weight > 0 else []
         if not os.path.exists(os.path.join(learn_dir, 'policy.pt')):
             shutil.rmtree(learn_dir, ignore_errors=True)
-            run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir, '--bc', args.bc,
-                          '--bc_weight', str(args.bc_weight), '--temperature', str(args.temperature),
+            run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir] + anchor +
+                         ['--temperature', str(args.temperature),
                           '--lr', str(args.lr), '--epochs', str(args.epochs), '--baseline', args.baseline]
                     + args.learn_extra.split(),
                     os.path.join(run, 'learn', f'g{g:03d}.log'))
