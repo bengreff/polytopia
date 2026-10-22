@@ -8,7 +8,7 @@ requests --delay seconds apart; all pause for 10 minutes on HTTP 429. Games alre
 skipped, and failures go to raw/errors.tsv.
 
     python3 py/fetch_replays.py --token-file <jwtToken> [--ids data/replays/share_ids.tsv]
-        [--out data/replays/raw] [--workers 1] [--delay 4] [--limit N]
+        [--out data/replays/raw] [--workers 1] [--delay 4] [--limit N] [--newest-first]
 """
 import argparse
 import concurrent.futures as cf
@@ -39,6 +39,8 @@ def fetch(token, game_id):
         if resp.get('success') and resp.get('data'):
             return endpoint, resp['data']
         errors.append(f"{endpoint}: {resp.get('errorCode')} {resp.get('errorMessage')}")
+        if resp.get('errorCode') == 1005:  # "Can't load game": spectating it fails the same way
+            break
     raise RuntimeError('; '.join(errors))
 
 
@@ -50,10 +52,16 @@ def main():
     ap.add_argument('--workers', type=int, default=1, help='requests in flight at once')
     ap.add_argument('--delay', type=float, default=4.0, help='mean seconds between one worker\'s requests')
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--newest-first', action='store_true', help='fetch in order of the list\'s date column, newest first')
     args = ap.parse_args()
     token = open(args.token_file).read().strip()
     os.makedirs(args.out, exist_ok=True)
-    ids = [l.split('\t')[0] for l in open(args.ids).read().splitlines()[1:] if l.strip()]
+    lines = open(args.ids).read().splitlines()
+    rows = [l.split('\t') for l in lines[1:] if l.strip()]
+    if args.newest_first:  # by the list's date column; recent games load, many older ones no longer do
+        col = next(i for i, h in enumerate(lines[0].split('\t')) if h in ('started', 'publish_date'))
+        rows.sort(key=lambda r: r[col], reverse=True)
+    ids = list(dict.fromkeys(r[0] for r in rows))
     failed = set()
     err_path = os.path.join(args.out, 'errors.tsv')
     if os.path.exists(err_path):

@@ -167,8 +167,15 @@ layers only when a metric asks for them.**
     - tournament settings give the format: GameMode 1 Might; MapType 0 Drylands, 1 Lakes,
       2 Continents, 3 Archipelago, 5 Pangea; MapSize 0 Tiny, 1 Small;
     - **the API lists only the 50 most recent completed tournaments** (~17 days; filters don't
-      widen it), so older tournament ids come from web search (`data/replays/cm_tournaments.txt`)
-      and from the `gameContext.externalTournamentId` of downloaded games;
+      widen it). The website's own search lists a space's whole history with the anonymous token
+      any visitor gets. `tools/cm_list_tournaments.py` drives a headless Chrome with a fresh
+      profile (no sign-in) and writes the ids to `data/replays/cm_tournaments.txt`. The search
+      caps at 10,000 results per query, so it is split by tournament type:
+      - Polytopia Official: 2,723 tournaments, plus 14,221 "Instant Tournaments" (Might
+        **Continents** Small, ~3 games each, so out of format; a possible pretraining source);
+      - PolyChampions: 3,779; Grid Haven (TLC): 589; Duelists: 388;
+    - games older than ~2026 often no longer load (server error 1005 "Can't load game"): most
+      from 2023-04/05 and 2025-09/11 failed; 2026 games load;
     - WC 2026 qualifiers: 12 tribes, 788–1,590 players each (~14k), split into numbered
       sub-tournaments ("Kickoo Qualifiers #3", 128 slots, ~40–80 games each), then invite-only
       finals;

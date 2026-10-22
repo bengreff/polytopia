@@ -12,7 +12,7 @@ Only the championship format is converted unless --all: two players of regular t
 Small (14x14).
 
     python3 py/convert_replays.py [--raw data/replays/raw] [--out data/human1] [--port 8400]
-        [--binary polyhost_replay] [--all]
+        [--binary polyhost_replay] [--all] [--shard i/n]
 (POLYHOST=mac runs polyhost natively on the Mac, see polyenv.launch.)
 
 Each game also gets a final check: the state our replay ends in against the final state the server
@@ -151,9 +151,11 @@ def main():
     ap.add_argument('--port', type=int, default=8400)
     ap.add_argument('--binary', default='polyhost_replay')
     ap.add_argument('--all', action='store_true', help='convert every game, not only the championship format')
+    ap.add_argument('--shard', default='0/1', help='i/n: convert only every n-th game (by id), for parallel runs')
     args = ap.parse_args()
+    shard, shards = map(int, args.shard.split('/'))
     os.makedirs(args.out, exist_ok=True)
-    files = sorted(f for f in os.listdir(args.raw) if f.endswith('.json'))
+    files = sorted(f for f in os.listdir(args.raw) if f.endswith('.json') and int(f[:8], 16) % shards == shard)
     log = open(os.path.join(args.out, 'games.tsv'), 'a')
     misses = open(os.path.join(args.out, 'not_in_legal.tsv'), 'a')
     done = {l.split('\t')[0] for l in open(os.path.join(args.out, 'games.tsv'))}
