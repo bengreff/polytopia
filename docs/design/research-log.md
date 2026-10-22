@@ -441,3 +441,16 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - **Evaluation:** standard Crazy 188/200 (R4 at 20k: 188); 19 weak cells 324/380 (R4 at 20k:
     328/380).
   - No change yet. Iteration 2's games (with the i01 policy) are running at 297/379 vs Crazy.
+- **Iteration 2** (05:16): its games won 297/379 vs Crazy at temperature 0.5 (iteration 1's
+  games: 308/400).
+  - **Evaluation:** standard Crazy 186/200 (R4 at 20k: 188; paired 7 vs 9, p = 0.80); 19 weak cells
+    316/380 = 83.2% (R4 at 20k: 328/380).
+  - **Falsifier fired:** no gain on the 19 cells after 2 iterations (point estimate lower).
+  - Iteration 3 was stopped during its games at the end of the night.
+- **Reading of tonight's RL (R5, R5b, R5c; 6 learner steps in all):** none moved greedy play.
+  - Each step is small: KL 0.01–0.02 per iteration, with ~600 games and one outcome for ~500
+    decisions.
+  - The sampled policy did improve in R5b (84% → 91%).
+  - Before more RL: much more throughput (the native Windows host, or GPU inference once R3 is
+    off the GPU), a learned baseline (the value head is decent on human data now: log loss ~0.5),
+    and acting at a lower temperature.
