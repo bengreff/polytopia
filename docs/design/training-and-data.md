@@ -139,18 +139,40 @@ layers only when a metric asks for them.**
 
     Self-test on a bot game recorded locally: 571/571 labels equal the AI's own legal-list
     choice, and the replayed final state is byte-identical to the live one after the same
-    save/load. Real downloads are untested until we have a token.
+    save/load.
+  - **Real downloads (64 games, native Mac polyhost):**
+    - all 64 replay to the end, and **every one ends in the server's recorded final state**,
+      apart from cosmetic or scratch fields (statecompare over a fresh save/load of both);
+    - this holds although **none is version 123**: the 59 WC 2026 qualifier games are 122 (35)
+      and 121 (24), plus 5 Glory games from 2022–23 (93–96);
+    - v122: 26 identical in content, 9 differ only in `unit.birthClimateSkinType` (−1 vs 0, a
+      skin); v121: only `VillageNameSeed` (village names); v93–96 also show tiny `aggressions`
+      drifts (AI memory);
+    - the 59 championship-format games give 26,328 labelled decisions with **0 human commands
+      outside our legal list**. StartMatch (played by the client) and Resign (58 of 59 games end
+      that way; our agent never resigns) are excluded.
+
+    The converter writes the check per game (`final` column), so every game is verified, not
+    just these.
 - **Sources:**
-  - YouTube descriptions: **1,376 unique IDs so far** (Justeeni Lingueeni 871, PolyChampions 370,
-    the official channel 134; 2025–2026). Justeeni covers WC faceoffs, qualifiers and cups;
-    PolyChampions is mostly team games. ~1.2k videos are still being scanned, slowly, because
-    YouTube rate-limits fast crawls. IDs are in `data/replays/share_ids.tsv` (gitignored);
-  - Challengermode (WC qualifiers, ~13.8k players): the public GraphQL API
-    (`publicapi.challengermode.com/graphql`) exposes `Match.gameSession.lobbyInformation.gameSessionId`,
-    but data queries need a key (refresh key → `/mk1/v1/auth/access_keys`). Untested: whether a
-    non-host key can read Polytopia matches, and whether `gameSessionId` is the Polytopia game GUID.
-    The game's own `GameContext` stores `ExternalMatchId`/`ExternalTournamentId`, so the server
-    links the two;
+  - YouTube descriptions: **1,456 unique IDs** (Justeeni Lingueeni, PolyChampions, the official
+    channel; 2022–2026). Justeeni covers WC faceoffs, qualifiers and cups; PolyChampions is
+    mostly team games. YouTube rate-limits fast crawls. IDs are in `data/replays/share_ids.tsv`
+    (gitignored);
+  - **Challengermode** (`py/cm_replays.py`, Ben's API refresh key in
+    `~/.config/polytopia/challengermode_refresh_key`):
+    - every tournament match reports statistics, among them the game's share link (`ReplayLink`,
+      `General.ReplayLink` before ~2025), mode, map size, team count and both tribes;
+      `lobbyInformation.gameSessionId` is only Challengermode's own match id;
+    - tournament settings give the format: GameMode 1 Might; MapType 0 Drylands, 1 Lakes,
+      2 Continents, 3 Archipelago, 5 Pangea; MapSize 0 Tiny, 1 Small;
+    - **the API lists only the 50 most recent completed tournaments** (~17 days; filters don't
+      widen it), so older tournament ids come from web search (`data/replays/cm_tournaments.txt`)
+      and from the `gameContext.externalTournamentId` of downloaded games;
+    - WC 2026 qualifiers: 12 tribes, 788–1,590 players each (~14k), split into numbered
+      sub-tournaments ("Kickoo Qualifiers #3", 128 slots, ~40–80 games each), then invite-only
+      finals;
+    - first harvest (80 tournaments): **902 Might/Lakes/Small games** from 36 of them;
   - Ben's own games.
 - **Collect IDs now**, since replays may expire (PolyAnalytics' did). Record the build version per
   replay; older builds may not replay on 2.17.3. Detect auto-skipped and rushed turns caused by the

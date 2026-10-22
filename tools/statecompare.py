@@ -35,32 +35,33 @@ def diff(a, b, path, out):
         for i, (x, y) in enumerate(zip(a, b)): diff(x, y, f'{path}[{i}]', out)
     elif a != b: out.append((path, a, b))
 
-d = sys.argv[1]
-steps = sorted(int(re.search(r'_(\d+)\.json', f).group(1)) for f in glob.glob(os.path.join(d, 'real_*.json')))
-bad = 0
-for n in steps:
-    a = canon(json.load(open(os.path.join(d, f'real_{n}.json'))))
-    b = canon(json.load(open(os.path.join(d, f'ours_{n}.json'))))
-    out = []
-    diff(a, b, '', out)
-    if out:
-        bad += 1
-        if bad <= 3:
-            print(f'command {n}: {len(out)} content differences')
-            for p, x, y in out[:12]: print(f'   {p}: real {json.dumps(x)[:100]}  ours {json.dumps(y)[:100]}')
-print(f'{len(steps)} byte-different states: {len(steps) - bad} identical in content, {bad} differ')
-
-if '--summary' in sys.argv:
-    import collections
-    kinds = collections.Counter(); first = {}
+if __name__ == '__main__':  # importable for canon() and diff()
+    d = sys.argv[1]
+    steps = sorted(int(re.search(r'_(\d+)\.json', f).group(1)) for f in glob.glob(os.path.join(d, 'real_*.json')))
+    bad = 0
     for n in steps:
         a = canon(json.load(open(os.path.join(d, f'real_{n}.json'))))
         b = canon(json.load(open(os.path.join(d, f'ours_{n}.json'))))
-        out = []; diff(a, b, '', out)
-        for p, x, y in out:
-            k = re.sub(r'\[\d+\]', '[]', p)
-            kinds[k] += 1; first.setdefault(k, (n, p, x, y))
-    print('\ndifference kinds (path, count, first command):')
-    for k, c in kinds.most_common(40):
-        n, p, x, y = first[k]
-        print(f'  {c:6d}  {k}   first at command {n}: real {json.dumps(x)[:60]} ours {json.dumps(y)[:60]}')
+        out = []
+        diff(a, b, '', out)
+        if out:
+            bad += 1
+            if bad <= 3:
+                print(f'command {n}: {len(out)} content differences')
+                for p, x, y in out[:12]: print(f'   {p}: real {json.dumps(x)[:100]}  ours {json.dumps(y)[:100]}')
+    print(f'{len(steps)} byte-different states: {len(steps) - bad} identical in content, {bad} differ')
+
+    if '--summary' in sys.argv:
+        import collections
+        kinds = collections.Counter(); first = {}
+        for n in steps:
+            a = canon(json.load(open(os.path.join(d, f'real_{n}.json'))))
+            b = canon(json.load(open(os.path.join(d, f'ours_{n}.json'))))
+            out = []; diff(a, b, '', out)
+            for p, x, y in out:
+                k = re.sub(r'\[\d+\]', '[]', p)
+                kinds[k] += 1; first.setdefault(k, (n, p, x, y))
+        print('\ndifference kinds (path, count, first command):')
+        for k, c in kinds.most_common(40):
+            n, p, x, y = first[k]
+            print(f'  {c:6d}  {k}   first at command {n}: real {json.dumps(x)[:60]} ours {json.dumps(y)[:60]}')
