@@ -120,3 +120,23 @@ Common setup unless stated:
 - **Also reported:** held-out policy top-1, value accuracy, results by seat and by tribe.
 - **Falsifier/kill:** not met within 2 weeks of agent time → re-scope (rules access, encoding,
   data), don't add layers.
+
+## R4 — fine-tune on human games (pre-registered 2026-10-21, 21:25)
+
+- **Why now:** the teacher (the game's AI on our seat) wins only 6/100 games against **Crazy**
+  (runs/teacher/eval_d3), so cloning the AI caps us far below the M2 target. Humans beat Crazy.
+  On held-out human games the R3 policy (step 90k) agrees with the human's move only 19% of the
+  time (top-5 36%, `py/human_bench.py`, 20 games), against 82% on held-out AI games.
+- **Hypothesis:** fine-tuning the AI-cloned policy on human championship games makes the raw policy
+  stronger against the bots, most of all against Crazy.
+- **Change:** R3's step-100,000 weights, then trained on `human1` only (6,055 training games,
+  704 held out by CRC32; accepted by the final-state check), same losses and model.
+  - **Schedule:** 20,000 steps × 256 (≈ 2 passes), lr 1e-4 with 1,000 warmup steps and cosine
+    decay; checkpoints every 5,000 steps.
+  - **Hardware:** the PC's GPU, shared with R3 (speed only).
+- **Evaluation:** vs Normal and vs Crazy, 100 seeds × 2 sides each, the same seeds as R3's
+  step-100k base, plus `human_bench.py` on 150 held-out human games.
+- **Expected:** human top-1 rises from ~19% to ≥ 35%; vs Crazy above the base; vs Normal within
+  10 points of the base.
+- **Falsifier:** vs Normal drops more than 15 points with no gain vs Crazy → human-only fine-tuning
+  hurts the raw policy; next try mixed data (human + AI games) instead.

@@ -18,6 +18,7 @@ import torch
 
 import model as M
 import polyenv
+import remote
 
 REGULAR_TRIBES = sorted(polyenv.TRIBES.values())
 TURN_CAP = 150
@@ -57,6 +58,8 @@ def batch_inputs(obs, statuses):
 
 @torch.no_grad()
 def policy_logits(net, device, inputs):
+    if isinstance(net, remote.RemoteNet):  # --remote: the PC's GPU
+        return net.infer(inputs)[0]
     t = {k: torch.from_numpy(v).to(device) for k, v in inputs.items()}
     logits, _, _ = net(t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'])
     return logits.float().cpu().numpy()
@@ -86,10 +89,17 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.0)
     ap.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--out', default=None, help='results .tsv')
+    ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--teacher', action='store_true',
                     help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
     args = ap.parse_args()
-    net, step = (None, 'teacher') if args.teacher else load_policy(args.checkpoint, args.device)
+    if args.teacher:
+        net, step = None, 'teacher'
+    elif args.remote:
+        net = remote.RemoteNet(args.checkpoint)
+        step = net.step
+    else:
+        net, step = load_policy(args.checkpoint, args.device)
     rng = np.random.default_rng(0)
     jobs = []  # (seed, agent seat)
     for k in range(args.seeds):

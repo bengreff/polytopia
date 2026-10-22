@@ -9,6 +9,8 @@ the decision log below records what is settled.
 | [architecture.md](architecture.md) | Turn planner + network evaluator, and where ML sits inside the planner |
 | [training-and-data.md](training-and-data.md) | Warm start, data sources, self-play, gates, compute |
 | [open-questions.md](open-questions.md) | Decisions that need Ben, and unknowns we must measure |
+| [iteration-plan.md](iteration-plan.md) | How the network improves run by run from here (night of 2026-10-21), with a status log |
+| [research-log.md](research-log.md) | Every run: pre-registered hypothesis, config, result |
 | [reviews/2026-10-20.md](reviews/2026-10-20.md) | Adversarial review findings, and what was done with each |
 
 ## Goals (Ben, 2026-10-20)

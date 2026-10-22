@@ -6,6 +6,10 @@ each tile's final owner (none / mine / the opponent's).
 
     python train_bc.py <data_dir> <run_dir> [--steps 60000] [--batch 256]
 
+data_dir may list several sources with sample shares, `dirA:0.5,dirB:0.3,dirC:0.2`: each game is
+drawn from a source with probability proportional to share / mean decisions per game, so shares are
+fractions of training decisions. Validation runs per source (`val` for the first, `val_<i>` after).
+
 Held-out validation games: AI games (g<seed>.npz) whose seed is a multiple of 50; human games
 (<game_id>.npz, from py/convert_replays.py) whose CRC32 of the game id is a multiple of 10.
 
@@ -105,21 +109,55 @@ def collate(games, picks, max_legal=1024, rng=None):
         own=np.stack([games[g]['own'][d] for g, d in picks]))
 
 
+def parse_sources(spec):
+    """'dirA:0.5,dirB:0.5' (or a single 'dir') -> [(dir, share)]."""
+    out = []
+    for part in spec.split(','):
+        d, _, w = part.partition(':')
+        out.append((d, float(w) if w else 1.0))
+    return out
+
+
+def mean_decisions(data_dir, n=20):
+    files = list_games(data_dir, val=False)[:n]
+    sizes = []
+    for f in files:
+        try:
+            sizes.append(len(np.load(f)['label']))
+        except Exception:
+            pass
+    return max(1.0, float(np.mean(sizes))) if sizes else 1.0
+
+
 class Stream(torch.utils.data.IterableDataset):
     """Each worker loads a window of random training games, shuffles their decisions, and yields
-    batches; the game list is re-read every window, so data still being generated joins in."""
+    batches; the game list is re-read every window, so data still being generated joins in. With
+    several sources, each game of the window is drawn from a source with probability proportional
+    to share / mean decisions per game."""
 
     def __init__(self, data_dir, batch, window, seed, min_seed=None, random_labels=False):
-        self.data_dir, self.batch, self.window, self.seed = data_dir, batch, window, seed
+        self.sources = parse_sources(data_dir)
+        self.batch, self.window, self.seed = batch, window, seed
         self.min_seed, self.random_labels = min_seed, random_labels
+        sizes = [mean_decisions(d) for d, _ in self.sources]
+        p = np.array([w / n for (_, w), n in zip(self.sources, sizes)])
+        self.p = p / p.sum()
+
+    def pick_files(self, rng):
+        lists = [list_games(d, val=False, min_seed=self.min_seed) for d, _ in self.sources]
+        out = []
+        for _ in range(self.window):
+            i = rng.choices(range(len(lists)), weights=self.p)[0]
+            if lists[i]:
+                out.append(rng.choice(lists[i]))
+        return out
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         rng = random.Random(self.seed * 1000 + (info.id if info else 0))
         while True:
-            files = list_games(self.data_dir, val=False, min_seed=self.min_seed)
             games = []
-            for f in rng.sample(files, min(self.window, len(files))):
+            for f in self.pick_files(rng):
                 try:
                     g = load_game(f)
                 except Exception as e:  # e.g. a file still being copied: skip it, never kill the run
@@ -228,9 +266,12 @@ def main():
               indent=1)
     print(f'{n_params / 1e6:.1f}M parameters', flush=True)
 
-    val_files = list_games(args.data_dir, val=True)[:args.val_games]
-    val_games = [g for g in (load_game(f) for f in val_files) if g is not None]
-    print(f'validation: {len(val_games)} games, {sum(len(g["label"]) for g in val_games)} decisions', flush=True)
+    val_sets = []
+    for d, _ in parse_sources(args.data_dir):
+        val_files = list_games(d, val=True)[:args.val_games]
+        val_sets.append([g for g in (load_game(f) for f in val_files) if g is not None])
+        print(f'validation {d}: {len(val_sets[-1])} games, {sum(len(g["label"]) for g in val_sets[-1])} decisions', flush=True)
+    val_games = val_sets[0]
     stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels)
     loader = torch.utils.data.DataLoader(stream, batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda',
                                          prefetch_factor=4, persistent_workers=True)
@@ -258,9 +299,11 @@ def main():
             m = dict(zip(['policy', 'value', 'owner', 'top1', 'value_acc'], (acc_sum / 200).round(4).tolist()))
             acc_sum[:] = 0
             rec = dict(step=step, lr=round(lr, 7), samples_per_s=round(seen / (time.time() - t0)), train=m,
-                       games=len(list_games(args.data_dir, False, args.min_seed)))
+                       games=sum(len(list_games(d, False, args.min_seed)) for d, _ in parse_sources(args.data_dir)))
             if step % args.val_every == 0:
-                rec['val'] = validate(net, val_games, dev)
+                for i, vs in enumerate(val_sets):
+                    if vs:
+                        rec['val' if i == 0 else f'val_{i}'] = validate(net, vs, dev)
                 torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step,
                                 config=dict(d=args.d, layers=args.layers)), ckpt_path)
                 if step % args.save_every == 0:
