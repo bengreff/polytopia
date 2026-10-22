@@ -434,3 +434,10 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - **The falsifier fired:** more training on the same human data, even the complete set, keeps
     improving imitation but no longer improves play against the bots. R4 at 20k stays the
     reference.
+
+### R5c results
+- **Iteration 1** (04:40): learner KL 0.017, clip fraction ~0.25.
+  - **Games:** its 600 games on the 19 cells won 308/400 vs Crazy at temperature 0.5.
+  - **Evaluation:** standard Crazy 188/200 (R4 at 20k: 188); 19 weak cells 324/380 (R4 at 20k:
+    328/380).
+  - No change yet. Iteration 2's games (with the i01 policy) are running at 297/379 vs Crazy.
