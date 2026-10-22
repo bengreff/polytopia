@@ -5,7 +5,8 @@ final state's command stack is played through ActionManager one command at a tim
 REPLAY/RSTEP). Before each command of a seated player, it records that player's observation and
 legal list, and the command's row in that list as the label. Commands outside our legal list are
 counted and logged (they point at legal-list gaps), except StartMatch (the client plays it) and
-Resign (logged as `resigned`). Nature's commands and EndMatch are played but not recorded.
+Resign (it decides the outcome: see resignation()). Nature's commands and EndMatch are played but
+not recorded.
 
 Only the championship format is converted unless --all: two players of regular tribes, Might, Lakes,
 Small (14x14).
@@ -51,8 +52,11 @@ def championship(meta):
             and all(p[1] in REGULAR_TRIBES for p in meta['players']))
 
 
-def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn, check):
-    """gen_data.save_game's arrays (see there), with the game id and settings instead of a seed."""
+def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn, check, outcome):
+    """gen_data.save_game's arrays (see there), with the game id and settings instead of a seed. `winner`
+    is the seat that did not resign in a resigned game (see resignation()), else TryGetWinner, which
+    `engine_winner` keeps; `resigned` is the seat that resigned or was kicked (0 if none), `kicked`
+    whether it was a kick for running out of time."""
     offsets = np.zeros(len(rec.legal) + 1, np.int32)
     offsets[1:] = np.cumsum([len(l) for l in rec.legal])
     np.savez_compressed(
@@ -61,7 +65,8 @@ def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn
         legal=np.concatenate(rec.legal), legal_offsets=offsets,
         label=np.asarray(rec.labels, np.int16), player=np.asarray(rec.players, np.uint8),
         tribes=np.asarray([p[1] for p in meta['players']], np.int16), game_id=game_id,
-        game_version=np.int32(meta['version']), winner=np.uint8(st.winner), turns=np.int32(st.turn),
+        game_version=np.int32(meta['version']), winner=np.uint8(outcome['winner']), engine_winner=np.uint8(outcome['engine_winner']),
+        resigned=np.uint8(outcome['resigned']), kicked=np.bool_(outcome['kicked']), turns=np.int32(st.turn),
         ended=np.bool_(st.ended), final_owner=owner.reshape(-1), final_capital_of=capital.reshape(-1),
         not_in_legal=np.int32(not_in_legal), out_of_turn=np.int32(out_of_turn), final_check=check, source='human',
         obs_version=np.int32(polyenv.OBS_VERSION), legal_version=np.int32(polyenv.LEGAL_VERSION))
@@ -77,7 +82,7 @@ def convert(env, raw, out_dir, keep_all, misses):
     if not keep_all and not championship(meta):
         return meta, None
     rec = Recorder(0, None)
-    not_in_legal = out_of_turn = resigned = 0
+    not_in_legal = out_of_turn = 0
     while left:
         obs = env.observe([(0, 0)])[0] if not st.ended else None
         before = st
@@ -87,7 +92,7 @@ def convert(env, raw, out_dir, keep_all, misses):
         elif label == polyenv.REPLAY_NOT_IN_LEGAL and cmd[0] == START_MATCH:
             pass  # the client starts the match; nobody chooses it
         elif label == polyenv.REPLAY_NOT_IN_LEGAL and cmd[0] == RESIGN:
-            resigned = player  # a person's choice our agent never makes; the game ends here
+            pass  # a person's choice our agent never makes; the outcome comes from resignation() below
         elif label == polyenv.REPLAY_NOT_IN_LEGAL:
             not_in_legal += 1
             misses.write(f'{game_id}\t{before.turn}\t{player}\t{polyenv.describe(cmd)}\t{len(before.legal)}\n')
@@ -96,10 +101,24 @@ def convert(env, raw, out_dir, keep_all, misses):
         if not ok:
             raise polyenv.EnvError(f'recorded command {polyenv.describe(cmd)} was rejected')
     check = final_check(env, final)
+    resigned, kicked = resignation(env.dump(2))  # slot 2 holds the server's final state
+    outcome = dict(winner=3 - resigned if resigned else st.winner, engine_winner=st.winner, resigned=resigned, kicked=kicked)
     if rec.labels:
         owner, capital = env.owners(0)
-        save(os.path.join(out_dir, f'{game_id}.npz'), game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn, check)
-    return meta, (len(rec.labels), not_in_legal, out_of_turn, st, check, resigned)
+        save(os.path.join(out_dir, f'{game_id}.npz'), game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn,
+             check, outcome)
+    return meta, (len(rec.labels), not_in_legal, out_of_turn, st, check, outcome)
+
+
+def resignation(dump):
+    """The seat that resigned (or was kicked for running out of time) and whether it was a kick, read
+    from a final state: (0, False) if no seat or both did. A resignation decides the game, but the
+    game's own TryGetWinner can name the resigner when they resigned on their own turn (it falls
+    back to the current player), so outcomes of resigned games come from here."""
+    gone = [p['Id'] for p in dump['PlayerStates'] if p['Id'] in (1, 2) and p['resignedTurn'] >= 0]
+    resigns = [c for c in dump['CommandStack'] if isinstance(c, dict) and 'ResignedPlayerId' in c]
+    resigned = gone[0] if len(gone) == 1 else 0
+    return resigned, bool(resigned and resigns and resigns[-1]['ResignedPlayerId'] == resigned and resigns[-1]['WasKicked'])
 
 
 def final_check(env, final):
@@ -148,13 +167,13 @@ def main():
                 totals['skipped'] += 1
                 log.write(f"{raw['id']}\tskipped\t{fmt}\n")
             else:
-                n, nil, oot, st, check, resigned = result
+                n, nil, oot, st, check, outcome = result
                 totals['games'] += 1
                 totals['decisions'] += n
                 totals['not_in_legal'] += nil
                 tribes = ','.join(str(p[1]) for p in meta['players'])
-                log.write(f"{raw['id']}\tok\t{fmt}\ttribes {tribes}\twinner {st.winner}\tturns {st.turn}\t"
-                          f"decisions {n}\tnot_in_legal {nil}\tout_of_turn {oot}\tresigned {resigned}\tfinal {check}\n")
+                log.write(f"{raw['id']}\tok\t{fmt}\ttribes {tribes}\twinner {outcome['winner']}\tturns {st.turn}\t"
+                          f"decisions {n}\tnot_in_legal {nil}\tout_of_turn {oot}\tresigned {outcome['resigned']}{' kicked' if outcome['kicked'] else ''}\tfinal {check}\n")
             log.flush()
             misses.flush()
     print(totals)
