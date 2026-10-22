@@ -159,13 +159,14 @@ def main():
     ap.add_argument('--self_share', type=float, default=0.5)
     ap.add_argument('--pool_size', type=int, default=8)
     ap.add_argument('--temperature', type=float, default=0.5)
-    ap.add_argument('--lr', type=float, default=1e-4)
+    ap.add_argument('--lr', type=float, default=3e-5)
     ap.add_argument('--bc', default='/home/greff/polydata/human_full:1')
     ap.add_argument('--bc_weight', type=float, default=0.0,
                     help='weight of a behaviour-cloning anchor on --bc; 0 (default) trains on self-play games only, '
                          'so the human games aren\'t replayed (memorized) generation after generation')
     ap.add_argument('--epochs', type=int, default=2)
     ap.add_argument('--baseline', default='value', help='py/train_rl.py --baseline')
+    ap.add_argument('--target_kl', type=float, default=0.05, help='py/train_rl.py --target_kl: the most a generation may move')
     ap.add_argument('--learn_extra', default='', help='more py/train_rl.py arguments, e.g. "--workers 4"')
     ap.add_argument('--h2h_seeds', type=int, default=100)
     ap.add_argument('--crazy_seeds', type=int, default=100)
@@ -227,7 +228,8 @@ def main():
             shutil.rmtree(learn_dir, ignore_errors=True)
             run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir] + anchor +
                          ['--temperature', str(args.temperature),
-                          '--lr', str(args.lr), '--epochs', str(args.epochs), '--baseline', args.baseline]
+                          '--lr', str(args.lr), '--epochs', str(args.epochs), '--baseline', args.baseline,
+                          '--target_kl', str(args.target_kl)]
                     + args.learn_extra.split(),
                     os.path.join(run, 'learn', f'g{g:03d}.log'))
         last = (open(os.path.join(learn_dir, 'log.jsonl')).read().strip().splitlines() or ['(no log lines)'])[-1]

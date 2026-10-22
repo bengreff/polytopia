@@ -118,6 +118,8 @@ def main():
     ap.add_argument('--window', type=int, default=16)
     ap.add_argument('--workers', type=int, default=6)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--target_kl', type=float, default=0.0,
+                    help='stop early once the mean KL to the acting policy over the last 50 steps passes this (0: never)')
     ap.add_argument('--baseline', choices=['opponent', 'value'], default='opponent',
                     help='opponent: per-opponent mean outcome; value: the acting network\'s v_old (py/selfplay.py games)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
@@ -201,6 +203,10 @@ def main():
             print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + '\n')
             log.flush()
+            if args.target_kl and rec['kl'] > args.target_kl:  # PPO's early stop: the policy has moved enough
+                print(f'stopping at step {step}: KL {rec["kl"]} > {args.target_kl}', flush=True)
+                log.write(json.dumps(dict(step=step, stopped='target_kl', kl=rec['kl'])) + '\n')
+                break
     torch.save(dict(model=net.state_dict(), step=ck.get('step', 0), rl_from=args.init, config=cfg),
                os.path.join(args.out_dir, 'policy.pt'))
     print(f'done: {step} steps in {time.time() - t0:.0f} s', flush=True)

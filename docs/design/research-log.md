@@ -655,3 +655,28 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - the M4 gate, before it is quoted again.
   - Recorded seat-2 bot games in runs/games are relabelled (`mirror_bug: true`, both tribes = the
     bot's).
+
+### S2 results (stopped 18:45)
+- **Gen 1** (no anchor, lr 1e-4, value baseline): the learner ran away.
+  - KL to the acting policy rose to ~1.6 in mid-epoch and ended at 0.50, with clip fraction
+    45–62% (S1's gen 1 with the anchor: KL 0.037).
+  - Gen 1 vs gen 0: 33/80 when stopped (41%). Worse, not better.
+- **Reading:** without the anchor, lr 1e-4 makes steps far beyond PPO's trust region. The value
+  baseline also works: its error, 0.174 against the outcome's 0.250, is a 30% variance cut.
+  - The step size is the problem, not the signal.
+
+## S3 — S2 with a bounded step per generation (pre-registered 2026-10-22, 18:45)
+- **Change from S2:**
+  - `--target_kl 0.05`: the learner stops once the mean KL to the acting policy over the last 50
+    steps passes 0.05 (PPO's standard early stop);
+  - lr 3e-5 (S2: 1e-4).
+  - Everything else as S2: gen 0 = R7, no BC anchor, value baseline, 1,500 games, half against
+    itself.
+- **Reuse:** S2's gen-1 training games were played by gen 0 (R7) with the same seeds and pool. They
+  are exactly S3's gen-1 games, so they are copied rather than replayed.
+- **Bot evaluations use the fixed seat-2 setup** (above). S3's gen-0 Crazy evaluation is R7's
+  corrected baseline.
+- **Expected:** KL ≤ ~0.06 per generation; each generation ≥ 50% vs the previous; by gen 6
+  ≥ 58% vs gen 0.
+- **Falsifier:** gen 3 not above 50% vs gen 0 (point estimate) → the per-generation step is too
+  small to matter at 1,500 games; next to try: more games per generation.
