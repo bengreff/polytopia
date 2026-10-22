@@ -6,8 +6,13 @@
 //   GET  /state          map, players and the human's legal moves
 //   POST /new?tribe=&opponent=&mode=&difficulty=&size=&map=
 //   POST /do?i=<index into legal moves>     then the bot plays until it is your turn
+//
+// difficulty -1 makes the opponent our trained network instead of the game's AI: seat 2 is then an
+// outside seat, and each of its decisions is asked of py/agent_server.py on 127.0.0.1:$POLY_AGENT_PORT
+// (default 8131), with the same observation and legal list the bot interface gives Python.
 //   GET  /gamedata       the game's GameLogicData JSON, for names and stats
 
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -28,6 +33,8 @@ struct Session {
     bool reveal = false;
     std::string lastError;
     uint64_t games = 0;
+    bool netOpponent = false;  // seat 2 is played by py/agent_server.py
+    int agentFd = -1;
 
     const Method* explored = method(api.tile, "GetExplored", 1);
     const Method* tileUnit = method(api.tile, "get_unit", 0);
@@ -59,7 +66,8 @@ struct Session {
     void start(int tribe, int opponent, int difficulty, int mode, int mapPreset, int mapSize) {
         env::Spec spec;
         spec.seats[0] = {tribe, -1};
-        spec.seats[1] = {opponent, difficulty};
+        netOpponent = difficulty < 0;
+        spec.seats[1] = {opponent, netOpponent ? -1 : difficulty};
         spec.mode = mode;
         spec.mapPreset = mapPreset;
         spec.mapSize = mapSize;
@@ -68,6 +76,68 @@ struct Session {
         match = std::make_unique<env::Match>(api);
         match->onBotCommand = [this](Object* cmd) { logCommand(cmd); };
         match->create(spec);
+        agentMoves();
+    }
+
+    static bool sendAll(int fd, const void* p, size_t n) {
+        for (size_t off = 0; off < n;) {
+            ssize_t k = write(fd, static_cast<const char*>(p) + off, n - off);
+            if (k <= 0) return false;
+            off += size_t(k);
+        }
+        return true;
+    }
+
+    static bool readAll(int fd, void* p, size_t n) {
+        for (size_t off = 0; off < n;) {
+            ssize_t k = read(fd, static_cast<char*>(p) + off, n - off);
+            if (k <= 0) return false;
+            off += size_t(k);
+        }
+        return true;
+    }
+
+    // The network's choice for the player to move: u16 width, u16 height, u32 legal rows, then
+    // the observation (tiles, globals, techs) and the legal rows, as wire.hpp sends them. Returns
+    // -1 if the agent server can't be reached.
+    int askAgent() {
+        if (agentFd < 0) {
+            const char* env = std::getenv("POLY_AGENT_PORT");
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_port = htons(env ? std::atoi(env) : 8131);
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            agentFd = socket(AF_INET, SOCK_STREAM, 0);
+            if (connect(agentFd, (sockaddr*)&a, sizeof a)) { close(agentFd); agentFd = -1; return -1; }
+        }
+        std::vector<int16_t> tiles(size_t(match->width) * match->height * env::T_COUNT);
+        int32_t globals[env::G_COUNT];
+        uint8_t techs[env::kTechSlots];
+        match->observe(match->currentPlayer(), tiles.data(), globals, techs);
+        uint16_t wh[2] = {uint16_t(match->width), uint16_t(match->height)};
+        uint32_t n = uint32_t(match->legal.size());
+        int32_t choice = -1;
+        bool ok = sendAll(agentFd, wh, sizeof wh) && sendAll(agentFd, &n, sizeof n) &&
+                  sendAll(agentFd, tiles.data(), tiles.size() * sizeof(int16_t)) && sendAll(agentFd, globals, sizeof globals) &&
+                  sendAll(agentFd, techs, sizeof techs) && sendAll(agentFd, match->legal.data(), n * sizeof(env::Cmd)) &&
+                  readAll(agentFd, &choice, sizeof choice);
+        if (!ok) { close(agentFd); agentFd = -1; return -1; }
+        return choice;
+    }
+
+    // Plays the network's seat until it is the person's turn again. If the agent server is down,
+    // the game's AI moves for it, and lastError says so.
+    void agentMoves() {
+        for (int k = 0; netOpponent && !match->ended() && match->currentPlayer() == 2 && k < 2000; ++k) {
+            int i = askAgent();
+            if (i < 0 || i >= int(match->legal.size())) {
+                lastError = "agent server not reachable on POLY_AGENT_PORT; the game's AI moved instead";
+                i = match->botChoice();
+                if (i < 0) { match->step(env::Match::kBotOwn); continue; }
+            }
+            logCommand(match->legalCmds[size_t(i)].get());
+            if (!match->step(i)) { lastError = "agent: " + match->lastError; return; }
+        }
     }
 
     void logCommand(Object* cmd) {
@@ -85,6 +155,7 @@ struct Session {
         log.clear();
         if (!match->step(int(i))) { lastError = match->lastError; return false; }
         lastError.clear();
+        agentMoves();
         return true;
     }
 
