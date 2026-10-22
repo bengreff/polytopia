@@ -8,15 +8,16 @@ the bottom is updated as results come in.
 
 | Player on our seat | vs Easy | vs Normal | vs Hard | vs Crazy |
 |---|---|---|---|---|
-| Teacher (the game's AI, person seat) | 96.5% | *running* | ~27% (60 games) | **6%** (100 games) |
+| Teacher (the game's AI, person seat) | 96.5% | 65.0% | 31.0% | **10.0%** |
 | R3 step 50k (BC on 20k AI games) | 92.5% | 54.0% | — | — |
-| R3 step 90k | *running* | **57.0%** (50.1–63.7) | *running* | ~9% (160 games) |
+| R3 step 90k | 89.5% | **57.0%** (50.1–63.7) | 25.0% | 10.5% |
+| R3 step 100k | — | 59.0% | *running* | 9.0% |
 
 Each cell is 100 seeds × 2 sides, with 95% Wilson intervals in research-log.md.
 
 - **The teacher can't beat Crazy, so imitating it can't either.** The game's AI with a person's
-  income wins 6/100 against Crazy (+3★ per turn) and about a quarter against Hard (+1★ per
-  turn, same brain). Between two copies of the AI, income decides the game. Beating Crazy means
+  income wins 10% against Crazy (+3★ per turn) and 31% against Hard (+1★ per turn, same
+  brain). The R3 policy is already within a few points of it everywhere. Between two copies of the AI, income decides the game. Beating Crazy means
   **playing better than the AI**, not like it.
 - **Human games:** 6,721 championship-format games accepted by the final-state check, 2.76M
   decisions; 6,055 for training and 704 held out by game-id hash.
@@ -115,3 +116,7 @@ Every iteration is one pre-registered change, judged on fixed seeds.
 - 21:16 Started. R3 at step 95k of 290k (ends ~02:30, slower while R4 shares the GPU). Download
   at 7,296 fetched / 16.3k attempted.
 - 21:25 R4 launched on the PC (shares the GPU with R3).
+- 21:45 Step 90k and the teacher fully evaluated (table above). Built: `py/dagger.py` (also
+  records sampled moves and their probabilities for RL), `py/train_rl.py` (PPO learner, tested on
+  4 games), and remote GPU inference (correct, but 150–170 ms per batch while the GPU trains, so
+  unused for now). DAgger/RL data from step 100k queued on the Mac (1,000 games).

@@ -33,6 +33,7 @@ import torch.nn.functional as F
 import model as M
 import polyenv
 
+IGNORE = -100  # policy label of a decision without one (cross-entropy ignore_index)
 VAL_EVERY = 50
 HUMAN_VAL_EVERY = 10
 COSMETIC_FIELDS = {'birthClimateSkinType', 'VillageNameSeed'}
@@ -79,10 +80,13 @@ def load_game(path):
     kicked = bool(z['kicked']) if 'kicked' in z.files else False
     has_value = ended and winner in (1, 2) and not kicked  # a timeout says nothing about the position
     value = np.where(player == winner, 1.0, 0.0).astype(np.float32) if has_value else np.full(D, -1.0, np.float32)
+    label = z['label'].astype(np.int64)
+    if 'played' in z.files:  # py/dagger.py: -1 where the AI would play its StayCommand; no label there
+        label = np.where(label >= 0, label, IGNORE)
     owner = z['final_owner'].astype(np.int64)
     own = np.where(owner[None, :] == player[:, None], 1, np.where((owner[None, :] == 1) | (owner[None, :] == 2), 2, 0))
     return dict(tiles=z['tiles'], globals=z['globals'], techs=z['techs'], legal=z['legal'],
-                offsets=z['legal_offsets'], label=z['label'].astype(np.int64), value=value, own=own.astype(np.int8))
+                offsets=z['legal_offsets'], label=label, value=value, own=own.astype(np.int8))
 
 
 def collate(games, picks, max_legal=1024, rng=None):
@@ -177,11 +181,12 @@ def to_device(b, dev):
 
 def losses(net, b):
     logits, v, own = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
-    pol = F.cross_entropy(logits, b['label'])
+    has_l = b['label'] != IGNORE
+    pol = F.cross_entropy(logits[has_l], b['label'][has_l]) if has_l.any() else logits[:, 0].sum() * 0
     has_v = b['value'] >= 0
     val = F.binary_cross_entropy_with_logits(v[has_v], b['value'][has_v]) if has_v.any() else v.sum() * 0
     own_loss = F.cross_entropy(own.reshape(-1, 3), b['own'].long().reshape(-1))
-    acc = (logits.argmax(1) == b['label']).float().mean()
+    acc = (logits.argmax(1) == b['label'])[has_l].float().mean() if has_l.any() else pol * 0
     vacc = ((v[has_v] > 0).float() == b['value'][has_v]).float().mean() if has_v.any() else acc * 0
     return pol, val, own_loss, acc, vacc
 

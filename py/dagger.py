@@ -6,11 +6,13 @@ positions the policy actually gets into, which behaviour cloning on the AI's own
 it. Opponents cycle by seed over --opponents: a bot difficulty (0-3) on the other seat, or `self`
 for the policy on both seats (both seats recorded). The agent's seat alternates.
 
-Recorded per agent decision, as gen_data.py does: observation, legal list, the AI's choice (its
-StayCommand, outside the agent's list, is not recorded) and the player. Outcomes give value targets
-for the policy's own games. Files are g<seed>.npz in gen_data.py's layout, plus `opponent`
-(difficulty, or -1 for self-play) and `agent_seats`; seeds start at 20,000,000, apart from the
-teacher data (0-19,999) and the evaluation seeds (10,000,000+).
+Recorded per agent decision: observation, legal list, player, `label` (the AI's choice; -1 when it
+would play its StayCommand, which is outside the agent's list), `played` (the policy's row) and
+`logp` (its log-probability under the sampling policy, 0 when greedy). So the same games serve
+DAgger (train_bc.py skips label -1) and RL (py/train_rl.py uses played/logp and the outcome).
+Files are g<seed>.npz in gen_data.py's layout plus those arrays, `opponent` (difficulty, or -1 for
+self-play) and `agent_seats`; seeds start at 20,000,000, apart from the teacher data (0-19,999)
+and the evaluation seeds (10,000,000+). Repeating an opponent in --opponents raises its share.
 
     POLYHOST=mac .venv/bin/python py/dagger.py <checkpoint.pt> <out_dir> --games 1000 \
         [--opponents 1,2,3,self] [--procs 6 --slots 6] [--temperature 0]
@@ -32,14 +34,38 @@ TURN_CAP = 150
 COMMANDS_PER_TURN_CAP = 400
 
 
+class Recorder(gen_data.Recorder):
+    def __init__(self, seed, spec):
+        super().__init__(seed, spec)
+        self.played, self.logp = [], []
+
+
 def save(out_dir, rec, st, owner, capital, opponent, agent_seats):
     gen_data.save_game(out_dir, rec, st, owner, capital)
     path = os.path.join(out_dir, f'g{rec.seed:08d}.npz')
     z = dict(np.load(path))
     z.update(opponent=np.int8(opponent), agent_seats=np.asarray(agent_seats, np.uint8),
+             played=np.asarray(rec.played, np.int16), logp=np.asarray(rec.logp, np.float32),
              source=np.str_('dagger'))
     np.savez_compressed(path + '.tmp.npz', **z)
     os.replace(path + '.tmp.npz', path)
+
+
+def sample(net, device, obs, statuses, temperature, rng):
+    """The policy's rows and their log-probabilities under the sampling distribution (softmax of
+    logits / temperature; greedy with log-probability 0 when temperature is 0)."""
+    inputs = eval_vs_bot.batch_inputs(obs, statuses)
+    logits = eval_vs_bot.policy_logits(net, device, inputs)
+    if temperature <= 0:
+        return logits.argmax(1), np.zeros(len(logits))
+    acts, logps = [], []
+    for row, m in zip(logits, inputs['mask']):
+        z = (row[m] - row[m].max()) / temperature
+        lp = z - np.log(np.exp(z).sum())
+        a = int(rng.choice(len(lp), p=np.exp(lp) / np.exp(lp).sum()))
+        acts.append(a)
+        logps.append(lp[a])
+    return np.array(acts), np.array(logps)
 
 
 def main():
@@ -85,7 +111,7 @@ def main():
                 bots, agent_seats = ((None, opp) if seat == 0 else (opp, None)), (seat + 1,)
             spec = polyenv.Spec(tribes=tribes, bots=bots, seed=seed)
             st = envs[e].new(slot, spec)
-            live[e][slot] = dict(rec=gen_data.Recorder(seed, spec), st=st, opp=opp, agent_seats=agent_seats,
+            live[e][slot] = dict(rec=Recorder(seed, spec), st=st, opp=opp, agent_seats=agent_seats,
                                  turn=st.turn, n=0)
 
         for e in range(len(envs)):
@@ -124,14 +150,15 @@ def main():
             flat_obs = [o for e in range(len(envs)) for o in obs[e]]
             flat_labels = [b for e in range(len(envs)) for b in labels[e]]
             statuses = [live[e][s]['st'] for e, s in flat]
-            acts = eval_vs_bot.choose(net, args.device, flat_obs, statuses, args.temperature, rng)
+            acts, logps = sample(net, args.device, flat_obs, statuses, args.temperature, rng)
             per_env = [[] for _ in envs]
-            for (e, s), o, label, a in zip(flat, flat_obs, flat_labels, acts):
+            for (e, s), o, label, a, lp in zip(flat, flat_obs, flat_labels, acts, logps):
                 g = live[e][s]
                 st = g['st']
-                if label >= 0:
-                    g['rec'].add(o, st.legal, label, st.current)
-                else:
+                g['rec'].add(o, st.legal, label, st.current)
+                g['rec'].played.append(int(a))
+                g['rec'].logp.append(float(lp))
+                if label < 0:
                     g['rec'].unlabelled += 1
                 if st.turn != g['turn']:
                     g['turn'], g['n'] = st.turn, 0
