@@ -207,3 +207,20 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     - same evaluation code and seeds as the base's 59%;
     - seats balanced;
     - every game won by the game's own `TryGetWinner`.
+
+## R6 — human fine-tune on the winners' moves only (pre-registered 2026-10-21, 22:10)
+
+- **Hypothesis:** imitating only the side that won each human game (filtered behaviour cloning)
+  gives a stronger raw policy than imitating both sides (R4).
+- **Change from R4:** `--winners_only`. No policy label on the loser's decisions, nor in games
+  decided by a timeout kick; the value and ownership targets are unchanged. Same init (R3 step
+  100k), data snapshot (6,741 files on the PC), schedule (20,000 steps, lr 1e-4) and seed.
+  - Each batch carries roughly half the policy labels of R4's.
+  - Also logs the new value check (`--value_val_games 400`); it doesn't affect training.
+- **Evaluation:** R4's protocol at the same steps (6k from `last.pt`, then 20k): vs Normal, Hard
+  and Crazy, 200 games each on the fixed seeds, paired with R4 by `tools/compare_evals.py`, plus
+  `human_bench.py`.
+- **Expected:** vs Crazy higher than R4 at the same step; human top-1 a little lower (half of
+  human moves are losers').
+- **Falsifier:** vs Crazy not higher than R4 at both 6k and 20k (pooled paired sign test p > 0.2)
+  → filtering by result doesn't help at this data size; keep both sides.
