@@ -49,6 +49,10 @@ the decision log below records what is settled.
 | 2026-10-21 | M1 teacher = the game's AI on both **person** seats of the exact championship build (handicap 1, AutoPlay off → `GetStupidity` 0). This is the "Crazy-brain, Normal-income" teacher | `PlayerState.GetStupidity` = max(0, 2 − handicap) for AutoPlay players, 0 otherwise |
 | 2026-10-21 | First-move edge, AI vs AI on the championship build: **first seat won 5,757/11,333 = 50.8% (95% CI 49.9–51.7%)** | At most about one point. The early 6/6 and the 53% on the first 1,732 games were sampling noise |
 | 2026-10-21 | **Human games are accepted by a final-state check, not by version.** A replay counts only if replaying its recorded commands on our build reaches the game server's own recorded final state in content (allowed differences: cosmetic `unit.birthClimateSkinType`, `VillageNameSeed`). Versions 121/122 (2026 qualifiers) pass | GameState carries its Version and the rules branch on it, so our 2.17.3 build plays older games under their own rules; the server's final state proves it per game. First 59 games: 26,328 decisions, 0 human commands outside our legal list |
+| 2026-10-21 | **Human replays are the lever.** Fine-tuning the AI-cloned policy on 6.7k human championship games (R4) took it from 9% to 94% vs Crazy (raw policy, no search); M1 and M2's win-rate thresholds met | The teacher (the game's own AI on our seat) wins only 10% vs Crazy, so cloning it caps there; humans beat Crazy |
+| 2026-10-22 | **M4 gate on R4 at 20k vs Crazy:** pooled 92.4% over 5,760 games (pass); 3 of 288 cells below 70% (fail, narrowly: Oumaji vs Vengir, Oumaji vs Xin-xi, Xin-xi vs Vengir). Ben's best-of-5 is next | `--cells 20` evaluation; weak cells confirmed with fresh seeds |
+| 2026-10-22 | No gain at night-1 scale from policy-only PPO (R5/R5b/R5c), winners-only imitation (R6) or more human steps on the complete set (R7). More RL needs more simulation throughput (native Windows host) and a learned baseline first | Research-log entries R5–R7, each with its falsifier |
+| 2026-10-22 | Operations: with R3 holding ~7 GB, only one more training job on the PC's 16 GB GPU; WSL background launches end with a `sleep`; every transfer to the PC is retried | Two GPU jams and a lost launch on night 1 |
 | 2026-10-20 | Observation v1 = allowlist of what the viewer's client shows. Enemy unit XP, age and home city are withheld; opponent stars and techs are withheld | Fog principle (scope-and-rules.md); the client shows veteran status, not XP |
 
 ## Iteration log
@@ -74,3 +78,6 @@ the decision log below records what is settled.
   - Lean milestones M0–M5 with definitions of done, Ben checkpoints and kill criteria.
   - Statistical gates; CI suite against silent bugs; PPO-vs-expert-iteration A/B.
   - Full dispositions in reviews/2026-10-20.md.
+- **Night 1** (2026-10-21/22): iteration-plan.md. Human fine-tune (R4) reaches 94% vs Crazy; the M4
+  gate passes pooled and fails on 3 cells; RL, winners-only and longer training give no further
+  gain yet.

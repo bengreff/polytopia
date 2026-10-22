@@ -4,12 +4,17 @@ A working plan for improving the network in measured steps, starting the night t
 download finished. Runs are pre-registered in [research-log.md](research-log.md). The status log at
 the bottom is updated as results come in.
 
-## Headline (22:05)
+## Headline (end of night, 05:35)
 
-**Fine-tuning on human games (R4) took the raw policy from 9% to 90% against Crazy** (200 games,
-95% CI 85.1–93.4), and from 59% to 100% against Normal, after only 6,000 steps. It wins by early
-capital capture, as people do. The rest of this plan is now about pushing that past the M4 gate
-(Crazy ≥ 90% lower bound, no matchup cell below 70%) and checking it with Ben.
+**Fine-tuning on human games (R4) took the raw policy, with no search, from 9% to 94% against Crazy**
+(R4 at 20k steps: 188/200; 92.4% over the full 5,760-game M4 gate). Normal and Hard: 99.5%.
+- **M1 and M2's win-rate thresholds are met.** M4's pooled condition is met. 3 of 288 matchup
+  cells sit just under 70%, all involving Oumaji, Vengir or Xin-xi.
+- **Nothing else tried tonight improved on R4 at 20k:**
+  - RL: R5, R5b and R5c, 6 learner steps in all;
+  - imitating only the winners (R6);
+  - 20k more human steps on the complete set (R7: better imitation, same play).
+- **Reference policy:** `runs/r4_human_ft/step020000.pt`. Ben can play it with `tools/play.sh`.
 
 ## Where we were (21:30)
 
@@ -205,3 +210,7 @@ Decision rules:
 - 04:32 **R7 at 20k = R4 at 20k** in play (Crazy 191 vs 188, weak cells 323/380 vs 328/380, pooled
   p = 0.91), better at imitation (top-1 43.7% vs 43.2%). The falsifier fired: the human data has
   plateaued for play strength. R5c (RL on the weak cells) iteration 1 is learning (KL 0.017).
+- 05:35 **End of night.** R5c iteration 2: weak cells 316/380 vs R4's 328 (falsifier fired). Its
+  iteration 3 was stopped mid-games, and the Mac's queue is stopped. Only R3 still runs on the PC
+  (step 248k of 290k, alone on the GPU, ends ~07:00). Results are in research-log.md, the state in
+  HANDOFF.md.
