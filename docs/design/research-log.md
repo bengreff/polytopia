@@ -181,6 +181,17 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     and the lr had decayed.
   - R4 at 20k is the reference policy from here.
 
+- **M4 gate screen, step 20k (2026-10-22, 00:30):** vs Crazy, 4 games for every (agent tribe, bot
+  tribe, agent seat) cell, 288 cells, seeds from 11,000,000 (`--cells 4`).
+  - **Pooled: 1,092/1,152 = 94.8%** (Wilson 93.4–95.9). The gate's pooled condition (lower bound
+    ≥ 90%) is met. By seat: 550/576 and 542/576.
+  - **Cells:** 238 won 4/4, 41 won 3/4, 8 won 2/4, 1 won 1/4. A true 95% cell scores ≤ 2/4
+    with probability ~1.4%, about 4 of 288 by chance; 9 did.
+  - **Weakest tribes:** as the bot's tribe, Zebasi 82/96 and Vengir 84/96; as ours, Xin-xi 86/96,
+    Aimo and Quetzali 88/96.
+  - **Next:** the 9 cells below 70% re-tested with 20 games each (seeds from 12,000,000) to tell weak
+    matchups from noise.
+
 ## R5 — policy-only RL from the human-tuned policy (pre-registered 2026-10-21, 22:05)
 
 - **Why:** R4 at 6k steps (human fine-tune) wins 200/200 vs Normal and ~75% vs Crazy (evaluation
