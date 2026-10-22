@@ -2,7 +2,7 @@
 
     generation g: play --games training games with gen(g-1)   (py/selfplay.py, QEMU game processes + GPU)
                   one PPO step on them -> gen(g)               (py/train_rl.py: value baseline, BC anchor on human games)
-                  evaluate gen(g), overlapped with the next generation's learning:
+                  evaluate gen(g), in the background beside the next generation's games:
                     vs gen(g-1)  greedy, --h2h_seeds x 2 games, seeds from 13,000,000 (the same every generation)
                     vs Crazy     greedy, --crazy_seeds x 2 games, seeds from 10,000,000 (the standard bot seeds)
                     vs gen 0     greedy, --h2h_seeds x 2 games, seeds from 14,000,000
@@ -88,7 +88,7 @@ def start_evals(run, g, args):
     todo = [j for j in eval_jobs(run, g, args) if not os.path.exists(os.path.join(run, 'evals', f'{j[0]}_g{g:03d}.json'))]
     if not todo:
         return None
-    procs = free_procs(args.eval_procs)
+    procs = args.eval_procs
     log(run, f'gen {g:03d}: evaluating ({", ".join(j[0] for j in todo)}) with {procs} game processes')
     os.makedirs(os.path.join(run, 'evals'), exist_ok=True)
     script = []
@@ -148,7 +148,7 @@ def main():
     ap.add_argument('--crazy_every', type=int, default=1)
     ap.add_argument('--procs', type=int, default=28, help='at most; fewer while other jobs use the CPU')
     ap.add_argument('--slots', type=int, default=6)
-    ap.add_argument('--eval_procs', type=int, default=20, help='at most; evaluations share the CPU with the learner')
+    ap.add_argument('--eval_procs', type=int, default=8, help='game processes for the evaluations, which run beside the next generation\'s games')
     ap.add_argument('--eval_slots', type=int, default=4)
     ap.add_argument('--port', type=int, default=9200)
     args = ap.parse_args()
@@ -163,14 +163,16 @@ def main():
     while os.path.exists(gen_path(run, g)):
         g += 1
     log(run, f'starting at generation {g} (pid {os.getpid()})')
-    evals = None  # (generation, Popen) of the evaluations running in the background
-    first_pending = max(0, g - 3)
-    for e in range(first_pending, g):  # evaluations a restart left unfinished
-        evals_proc = start_evals(run, e, args)
-        if evals_proc:
+    for e in range(max(0, g - 3), g - 1):  # older evaluations a restart left unfinished
+        p = start_evals(run, e, args)
+        if p:
             log(run, f'evaluating gen {e:03d} (left over)')
-            evals_proc.wait()
+            p.wait()
         record_evals(run, e, args)
+    # each generation's evaluations run in the background beside the next generation's games
+    p = start_evals(run, g - 1, args)
+    evals = (g - 1, p) if p else None
+    record_evals(run, g - 1, args)
     while g <= args.generations and not stopped(run):
         prev = gen_path(run, g - 1)
         games_dir = os.path.join(run, 'games', f'g{g:03d}')
@@ -179,7 +181,8 @@ def main():
             [f'self:{args.self_share}'] + [f'{gen_path(run, p)}:{(1 - args.self_share) / (len(past) + 1):.4f}'
                                            for p in [0] + past]
         status(run, generation=g, step='games', pool=pool)
-        procs = free_procs(args.procs)
+        procs = free_procs(args.procs) - (args.eval_procs if evals and evals[1].poll() is None else 0)
+        procs = max(8, procs)
         log(run, f'gen {g:03d}: playing {args.games} games with gen {g - 1:03d} on {procs} game processes, '
                  f'pool {",".join(os.path.basename(p) for p in pool)}')
         t0 = time.time()
@@ -190,18 +193,10 @@ def main():
                 os.path.join(run, 'games', f'g{g:03d}.log'))
         tail = (open(os.path.join(run, 'games', f'g{g:03d}.log')).read().strip().splitlines() or [''])[-1]
         log(run, f'gen {g:03d}: games done in {time.time() - t0:.0f} s: {tail}')
-        # the previous generation's evaluations run on the CPU while this one learns on the GPU
-        if evals is not None:
-            evals[1].wait()
-            record_evals(run, evals[0], args)
-        p = start_evals(run, g - 1, args)
-        evals = (g - 1, p) if p else None
         status(run, step='learning')
         learn_dir = os.path.join(run, 'learn', f'g{g:03d}')
         t0 = time.time()
-        if os.path.exists(os.path.join(learn_dir, 'policy.pt')):
-            pass
-        else:
+        if not os.path.exists(os.path.join(learn_dir, 'policy.pt')):
             shutil.rmtree(learn_dir, ignore_errors=True)
             run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir, '--bc', args.bc,
                           '--bc_weight', str(args.bc_weight), '--temperature', str(args.temperature),
@@ -212,14 +207,15 @@ def main():
         log(run, f'gen {g:03d}: learned in {time.time() - t0:.0f} s: {last}')
         shutil.copy(os.path.join(learn_dir, 'policy.pt'), gen_path(run, g) + '.tmp')
         os.replace(gen_path(run, g) + '.tmp', gen_path(run, g))
+        if evals is not None:
+            evals[1].wait()
+            record_evals(run, evals[0], args)
+        p = start_evals(run, g, args)
+        evals = (g, p) if p else None
         g += 1
     if evals is not None:
         evals[1].wait()
         record_evals(run, evals[0], args)
-    p = start_evals(run, g - 1, args)
-    if p:
-        p.wait()
-        record_evals(run, g - 1, args)
     log(run, 'stopped' if stopped(run) else 'done')
     status(run, step='stopped')
 

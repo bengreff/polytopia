@@ -52,6 +52,21 @@ def load_net(path, device):
     return net.to(device).eval()
 
 
+class Locked:
+    """A game process shared by threads: one request at a time."""
+
+    def __init__(self, env):
+        self.env, self.lock = env, threading.Lock()
+
+    def __getattr__(self, name):
+        fn = getattr(self.env, name)
+
+        def call(*a, **k):
+            with self.lock:
+                return fn(*a, **k)
+        return call
+
+
 class Inference:
     """Batches decision requests from the worker threads, per network. A request is (key, obs, statuses,
     temperature) and gets back (rows, log-probabilities, values); greedy rows have log-probability 0,
@@ -266,60 +281,75 @@ def main():
 
     errors = []
 
-    def worker(i):
-        try:
-            with polyenv.launch(args.port + i) as env:
-                blob_prefix[0] = struct.pack('<i', env.info()['game_version'])  # as the game's server sends states
-                live = {}
-                for s in range(args.slots):
+    def run_slots(i, env, slots):
+        """Plays games on these slots of one game process until no jobs are left."""
+        live = {}
+        for s in slots:
+            g = new_game(env, s)
+            if g:
+                live[s] = g
+        while live and not errors:
+            slots_now = sorted(live)
+            te = time.time()
+            obs = env.observe([(s, 0) for s in slots_now])
+            counters['env'] += time.time() - te
+            acts = {}
+            by_key = {}
+            for s, o in zip(slots_now, obs):
+                g = live[s]
+                by_key.setdefault(g['seats'][g['st'].current], []).append((s, o))
+            for key, items in by_key.items():
+                temp = 0.0 if match else args.temperature
+                rows, logp, value = infer.request(key, [o for _, o in items], [live[s]['st'] for s, _ in items], temp)
+                for (s, o), a, lp, v in zip(items, rows, logp, value):
+                    g = live[s]
+                    st = g['st']
+                    if not match and st.current in g['record']:
+                        g['rec'].add(o, st.legal, int(a), st.current)
+                        g['rec'].played.append(int(a))
+                        g['rec'].logp.append(float(lp))
+                        g['rec'].value.append(float(v))
+                    if st.turn != g['turn']:
+                        g['turn'], g['n'] = st.turn, 0
+                    g['n'] += 1
+                    if g['n'] > COMMANDS_PER_TURN_CAP:  # a safety net against a stuck policy
+                        a = int(np.nonzero(st.legal[:, 0] == END_TURN)[0][0])
+                    acts[s] = int(a)
+            te = time.time()
+            stepped = env.step([(s, acts[s]) for s in slots_now])
+            counters['env'] += time.time() - te
+            counters['decisions'] += len(slots_now)
+            for s, (ok, st) in zip(slots_now, stepped):
+                if not ok:
+                    raise polyenv.EnvError(f'env {i} slot {s}: legal command rejected')
+                live[s]['st'] = st
+                if st.ended or st.turn >= TURN_CAP:
+                    finish(env, s, live.pop(s))
                     g = new_game(env, s)
                     if g:
                         live[s] = g
-                while live and not errors:
-                    slots = sorted(live)
-                    te = time.time()
-                    obs = env.observe([(s, 0) for s in slots])
-                    counters['env'] += time.time() - te
-                    acts = {}
-                    by_key = {}
-                    for s, o in zip(slots, obs):
-                        g = live[s]
-                        by_key.setdefault(g['seats'][g['st'].current], []).append((s, o))
-                    for key, items in by_key.items():
-                        temp = 0.0 if match else args.temperature
-                        rows, logp, value = infer.request(key, [o for _, o in items], [live[s]['st'] for s, _ in items], temp)
-                        for (s, o), a, lp, v in zip(items, rows, logp, value):
-                            g = live[s]
-                            st = g['st']
-                            if not match and st.current in g['record']:
-                                g['rec'].add(o, st.legal, int(a), st.current)
-                                g['rec'].played.append(int(a))
-                                g['rec'].logp.append(float(lp))
-                                g['rec'].value.append(float(v))
-                            if st.turn != g['turn']:
-                                g['turn'], g['n'] = st.turn, 0
-                            g['n'] += 1
-                            if g['n'] > COMMANDS_PER_TURN_CAP:  # a safety net against a stuck policy
-                                a = int(np.nonzero(st.legal[:, 0] == END_TURN)[0][0])
-                            acts[s] = int(a)
-                    te = time.time()
-                    stepped = env.step([(s, acts[s]) for s in slots])
-                    counters['env'] += time.time() - te
-                    counters['decisions'] += len(slots)
-                    for s, (ok, st) in zip(slots, stepped):
-                        if not ok:
-                            raise polyenv.EnvError(f'env {i} slot {s}: legal command rejected')
-                        live[s]['st'] = st
-                        if st.ended or st.turn >= TURN_CAP:
-                            finish(env, s, live.pop(s))
-                            g = new_game(env, s)
-                            if g:
-                                live[s] = g
+
+    def guarded(fn, *a):
+        try:
+            fn(*a)
         except Exception as e:
             errors.append(e)
             raise
 
-    threads = [threading.Thread(target=worker, args=(i,), daemon=True) for i in range(args.procs)]
+    def worker(i):
+        """One game process, its slots in two groups on two threads: while one group waits for the
+        network, the process steps the other (the process serves one request at a time)."""
+        with polyenv.launch(args.port + i) as raw:
+            blob_prefix[0] = struct.pack('<i', raw.info()['game_version'])  # as the game's server sends states
+            env = Locked(raw)
+            groups = [list(range(0, args.slots, 2)), list(range(1, args.slots, 2))]
+            ts = [threading.Thread(target=guarded, args=(run_slots, i, env, grp), daemon=True) for grp in groups if grp]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+
+    threads = [threading.Thread(target=guarded, args=(worker, i), daemon=True) for i in range(args.procs)]
     for t in threads:
         t.start()
     for t in threads:
