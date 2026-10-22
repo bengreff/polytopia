@@ -267,6 +267,10 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Paired on Crazy: only i01 won 10, only R4 won 10 (p = 1).
   - **No measurable change.** The step is small (lr 3e-5 with cosine decay, anchor weight 0.5), so
     this is expected after one iteration.
+- **Iteration 2** (00:18): its games won 334/400 vs Crazy at temperature 0.5 (iteration 1's
+  games: 314/400). Greedy evaluation: Hard 195/200, Crazy 182/200 (R4 at 6k: 195, 180).
+- **R5 stops here** (its 2 iterations are done). The remaining iterations moved to R5b, which uses
+  a larger step and starts from R4 at 20k, now the better start (94% vs Crazy).
 
 ## R5b — RL with a larger step, from R4 at 20k (pre-registered 2026-10-21, 23:55)
 
