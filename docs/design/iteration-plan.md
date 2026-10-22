@@ -199,3 +199,6 @@ Decision rules:
     ends ~04:20.
   - R5c's first 600 games (weak cells) are playing on the Mac. Its learning is queued for after R7,
     to keep one GPU job beside R3.
+- 02:40 Browser check of `tools/play.sh runs/r4_human_ft/step020000.pt`: the UI renders a game
+  against the network (headless Chrome screenshot at turn 12, its warrior already next to our
+  capital). Ready for Ben.
