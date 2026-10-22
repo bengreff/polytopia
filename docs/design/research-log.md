@@ -680,3 +680,10 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   ≥ 58% vs gen 0.
 - **Falsifier:** gen 3 not above 50% vs gen 0 (point estimate) → the per-generation step is too
   small to matter at 1,500 games; next to try: more games per generation.
+
+### S3 results
+- **Gen 0 (R7) vs Crazy with the seat-2 fix:** 188/200 (94.0%, 89.8–96.5%); seat 1 97/100,
+  seat 2 91/100. With the mirror matches it had been 190/200.
+- **Gen 1's learning step:** stopped at the KL limit after 2,200 of 7,636 steps (KL 0.052, clip
+  fraction 0.34), so ~29% of the generation's decisions were used. Its evaluations were running at
+  19:00.

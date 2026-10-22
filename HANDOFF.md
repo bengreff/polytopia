@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-10-22, afternoon: S2 self-play running on the PC)
+# Handoff: Polytopia AI (2026-10-22, evening: S3 self-play on the PC, public replay site)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -30,36 +30,42 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-10-22, 17:10): S2 self-play generations from R7, running on the PC
+## Now (2026-10-22, 19:00): S3 self-play running on the PC; public replay site live
 
-- **What:** `py/sp_loop.py` on the PC (started 17:09), files in `/home/greff/runs/sp/s2/`.
-  Pre-registered as S2 in research-log.md.
-- **Generation 0 = R7 at 20k:** trained on all 7,732 human games until held-out imitation stopped
-  improving; the better value head.
-- **Each generation:**
-  - 1,500 training games at temperature 0.5, half against itself and half against earlier generations;
-  - one PPO step with the value head as baseline → `genNNN.pt`. No BC anchor: the human games
-    aren't replayed, to avoid memorizing them (Ben). Gen 0 already learned from all of them;
-  - greedy evaluations of 200 games each vs the previous generation, Crazy (standard seeds) and gen 0,
-    run beside the next generation's games.
-- **S1** (gen 0 = R4) was stopped after 1 generation:
-  - gen 1 vs gen 0: 106/200;
-  - vs Crazy: 193/200 against R4's 188 (paired 10 vs 5, p = 0.30).
-  - Files are in `/home/greff/runs/sp/s1/`.
-- **Watch it:**
-  - `tools/sp_sync.sh s2` prints `summary.tsv`.
-  - `--games` and `--ckpt` add the evaluation games and checkpoints. Both are big: avoid them on the
-    hotspot.
-  - `python3 py/sp_strategy.py <games dirs>` (on the PC) profiles how each generation plays.
-- **Stop:** `touch ~/runs/sp/s2/STOP` (between steps). Restart with the same command; it is
-  resumable. Killing the Python process also kills its game processes.
-- **Speed (18:00):**
-  - ~530 decisions/s on 28 game processes, CPU-bound; the GPU is ~25% busy.
-  - That's ~70 min per generation in the daytime, slower at night (14 processes).
-  - polyhost now checks moves once per unit: identical legal lists, 3.4× faster on R7's long games.
-- **The PC is shared:** crucible (inquiry) may only run 10pm–6am. The loop uses 28 game processes
-  in the daytime and 14 at night. Change settings between steps with `~/runs/sp/s2/override.json`,
-  e.g. `{"procs": 20}`.
+- **S3** (`/home/greff/runs/sp/s3/`, research-log S3): self-play generations from R7, which is
+  gen 0 (trained on all 7,732 human games).
+  - Each generation: 1,500 games, half against itself and half against earlier generations.
+  - Learning: PPO with the value baseline, **no human-data anchor** (Ben: don't memorize the human
+    set), lr 3e-5, and a **KL limit of 0.05 per generation** (`--target_kl`).
+  - Evaluations of each generation, beside the next one's games: vs the previous generation, vs
+    Crazy (standard seeds) and vs gen 0.
+  - Gen 0 vs Crazy, corrected: 188/200.
+  - Gen 1's step stopped at the KL limit after 2,200 of 7,636 steps; its evaluations were running
+    at 19:00.
+  - Settings change between steps via `~/runs/sp/s3/override.json` (e.g. `{"lr": 1e-5}`). If gen 1
+    helps, a lower lr spreads the KL budget over more of the games.
+  - Stop: `touch ~/runs/sp/s3/STOP`. Resumable.
+- **S2 failed and was stopped:** no anchor at lr 1e-4 moved the policy too far (KL 1.6), and gen 1
+  lost to gen 0. S1 (from R4, with the anchor) was stopped after 1 generation.
+- **Public site:** https://bengreff.github.io/polytopia-ai/ (repo bengreff/polytopia-ai, public).
+  - It holds only the static site, exported board states and a names/stats extract; no game code
+    or data files.
+  - The results panel and replays (the whole board, moves/s speeds, games ranked by
+    back-and-forth).
+  - **Auto-update:** `tools/site_update.sh s3 loop` on the Mac (log `runs/sp/site_update_s3.log`)
+    republishes after every evaluated generation: `py/rank_games.py`, then `py/export_site.py`,
+    then git push. It needs the Mac awake and the link to the PC.
+- **Local app:** `tools/play.sh …`, then "Watch recorded games":
+  - sort and filter by back-and-forth, comeback, result or set;
+  - moves/s speeds and a fitted board;
+  - `#watch=<path>&speed=2.5` links.
+- **Seat-2 mirror-match bug fixed** (research-log): every evaluation against the built-in bots had
+  the network in seat 2 play the bot's tribe. The M4 gate needs re-running before it is quoted.
+- **Speed:**
+  - ~530 decisions/s on 28 game processes, CPU-bound; ~70 min per generation in the daytime.
+  - polyhost checks moves once per unit: identical legal lists, 3.4× faster.
+- **The PC is shared:** crucible (inquiry) runs only 10pm–6am. The loop uses 28 game processes in
+  the daytime and 14 at night.
 - **Connection:** from school Wi-Fi the PC is reachable only while it isn't paused in the eero app
   (memory `backhouse-guide`).
 
