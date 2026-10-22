@@ -163,3 +163,10 @@ Decision rules:
   - The GPU then thrashed with four jobs in 16 GB, so R6 was stopped (relaunch after R4) and the
     idle inference server killed. The learner runs at ~1.25 steps/s and finishes ~23:07.
   - R4 is at 11.6k of 20k.
+- 23:35 R5 iteration 1: no change (Crazy 180/200, same as R4 at 6k; Hard 196 vs 195).
+  - Iteration 2's games: 334/400 vs Crazy at temperature 0.5 (iteration 1's games: 314/400). The
+    sampled policy may be improving even though the greedy one isn't yet.
+  - The old loop missed the learner launch again; launched by hand.
+- 23:35 R4 finished 20k steps: human held-out top-1 43.6% (42.3% at 6k), no overfitting. Its
+  games evaluation runs on the Mac while R5's learner trains. R6 relaunched from scratch (GPU: R3,
+  R5 learner, R6).
