@@ -229,3 +229,11 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   human moves are losers').
 - **Falsifier:** vs Crazy not higher than R4 at both 6k and 20k (pooled paired sign test p > 0.2)
   → filtering by result doesn't help at this data size; keep both sides.
+- **Incident (2026-10-21, 22:35):** stopped at step 2,800 and to be relaunched from scratch, same
+  config, once R4 finishes.
+  - **Cause:** four training processes (R3, R4, R6, R5's learner) plus an idle inference server
+    oversubscribed the GPU's 16 GB (15.8 GB in use). The driver started paging, and every job
+    crawled: R5's learner took 12 minutes for its first 50 steps, and R3/R4 logged nothing for
+    3–4 minutes.
+  - **Fix:** the inference server and R6 were stopped. The rule from now on: at most three
+    training processes on the GPU at once.

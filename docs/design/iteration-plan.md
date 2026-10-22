@@ -157,3 +157,9 @@ Decision rules:
   Game processes and the network each take half the time, so `dagger.py` and `eval_vs_bot.py` now
   overlap them over two groups of slots (identical games on the same seeds). `rl_loop.sh` now
   retries every transfer after a 30-s ssh outage at 22:12. R4 at step 9k, R6 at 1k, R3 at 115k.
+- 22:37 R5 iteration 1 played 600 games (Crazy 314/400 = 78.5% at temperature 0.5).
+  - The loop's own learner launch never ran: WSL closed the session before the background job
+    started. The learner was launched by hand, and the loop is fixed.
+  - The GPU then thrashed with four jobs in 16 GB, so R6 was stopped (relaunch after R4) and the
+    idle inference server killed. The learner runs at ~1.25 steps/s and finishes ~23:07.
+  - R4 is at 11.6k of 20k.
