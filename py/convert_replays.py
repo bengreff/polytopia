@@ -16,12 +16,14 @@ Small (14x14).
 (POLYHOST=mac runs polyhost natively on the Mac, see polyenv.launch.)
 
 Each game also gets a final check: the state our replay ends in against the final state the server
-recorded (column `final` in games.tsv): 'bytes', 'content', or 'differs <n> <first field>'.
+recorded (column `final` in games.tsv, npz final_check): 'bytes', 'content', or 'differs <n> <first
+field>', with every differing field's name in npz final_diff_fields (games.tsv column `fields`).
 """
 import argparse
 import base64
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -52,7 +54,7 @@ def championship(meta):
             and all(p[1] in REGULAR_TRIBES for p in meta['players']))
 
 
-def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn, check, outcome):
+def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn, check, diff_fields, outcome):
     """gen_data.save_game's arrays (see there), with the game id and settings instead of a seed. `winner`
     is the seat that did not resign in a resigned game (see resignation()), else TryGetWinner, which
     `engine_winner` keeps; `resigned` is the seat that resigned or was kicked (0 if none), `kicked`
@@ -68,7 +70,8 @@ def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn
         game_version=np.int32(meta['version']), winner=np.uint8(outcome['winner']), engine_winner=np.uint8(outcome['engine_winner']),
         resigned=np.uint8(outcome['resigned']), kicked=np.bool_(outcome['kicked']), turns=np.int32(st.turn),
         ended=np.bool_(st.ended), final_owner=owner.reshape(-1), final_capital_of=capital.reshape(-1),
-        not_in_legal=np.int32(not_in_legal), out_of_turn=np.int32(out_of_turn), final_check=check, source='human',
+        not_in_legal=np.int32(not_in_legal), out_of_turn=np.int32(out_of_turn), final_check=check,
+        final_diff_fields=np.asarray(diff_fields, dtype=str), source='human',
         obs_version=np.int32(polyenv.OBS_VERSION), legal_version=np.int32(polyenv.LEGAL_VERSION))
     os.replace(path + '.tmp.npz', path)
 
@@ -100,14 +103,14 @@ def convert(env, raw, out_dir, keep_all, misses):
             out_of_turn += 1
         if not ok:
             raise polyenv.EnvError(f'recorded command {polyenv.describe(cmd)} was rejected')
-    check = final_check(env, final)
+    check, diff_fields = final_check(env, final)
     resigned, kicked = resignation(env.dump(2))  # slot 2 holds the server's final state
     outcome = dict(winner=3 - resigned if resigned else st.winner, engine_winner=st.winner, resigned=resigned, kicked=kicked)
     if rec.labels:
         owner, capital = env.owners(0)
         save(os.path.join(out_dir, f'{game_id}.npz'), game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn,
-             check, outcome)
-    return meta, (len(rec.labels), not_in_legal, out_of_turn, st, check, outcome)
+             check, diff_fields, outcome)
+    return meta, (len(rec.labels), not_in_legal, out_of_turn, st, check, diff_fields, outcome)
 
 
 def resignation(dump):
@@ -122,18 +125,23 @@ def resignation(dump):
 
 
 def final_check(env, final):
-    """Compares the state our replay ended in with the final state the server recorded: 'bytes' if
+    """Compares the state our replay ended in with the final state the server recorded. Returns 'bytes' if
     identical after the same save and load, 'content' if equal by tools/statecompare.py (which ignores
-    UI side effects and AI scratch state), otherwise the number of differing fields and the first one."""
+    UI side effects and AI scratch state), otherwise 'differs <count> <first path>'; and the sorted
+    names of every differing field (the last named path component: '.Map.tiles[3].unit.birthClimateSkinType'
+    gives 'birthClimateSkinType', '.PlayerStates[0].aggressions.2' gives 'aggressions')."""
     version = final[:4]
     ours = version + env.save(0)
     env.replay(1, polyenv.Spec(), ours, ours)
     env.replay(2, polyenv.Spec(), final, final)
     if env.save(1) == env.save(2):
-        return 'bytes'
+        return 'bytes', []
     out = []
     statecompare.diff(statecompare.canon(env.dump(2)), statecompare.canon(env.dump(1)), '', out)
-    return 'content' if not out else f'differs {len(out)} {out[0][0]}'
+    if not out:
+        return 'content', []
+    names = {next(n for n in reversed(re.split(r'[.\[\]]+', p)) if n and not n.lstrip('-').isdigit()) for p, _, _ in out}
+    return f'differs {len(out)} {out[0][0]}', sorted(names)
 
 
 def main():
@@ -167,13 +175,13 @@ def main():
                 totals['skipped'] += 1
                 log.write(f"{raw['id']}\tskipped\t{fmt}\n")
             else:
-                n, nil, oot, st, check, outcome = result
+                n, nil, oot, st, check, diff_fields, outcome = result
                 totals['games'] += 1
                 totals['decisions'] += n
                 totals['not_in_legal'] += nil
                 tribes = ','.join(str(p[1]) for p in meta['players'])
                 log.write(f"{raw['id']}\tok\t{fmt}\ttribes {tribes}\twinner {outcome['winner']}\tturns {st.turn}\t"
-                          f"decisions {n}\tnot_in_legal {nil}\tout_of_turn {oot}\tresigned {outcome['resigned']}{' kicked' if outcome['kicked'] else ''}\tfinal {check}\n")
+                          f"decisions {n}\tnot_in_legal {nil}\tout_of_turn {oot}\tresigned {outcome['resigned']}{' kicked' if outcome['kicked'] else ''}\tfinal {check}\tfields {','.join(diff_fields)}\n")
             log.flush()
             misses.flush()
     print(totals)
