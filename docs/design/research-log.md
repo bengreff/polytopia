@@ -355,6 +355,18 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Iteration 1** (02:13; relaunched after the 00:55 GPU jam): learner KL 0.017, clip fraction
   0.22, anchor loss 2.07. **Crazy 187/200** (R4 at 20k: 188/200).
 
+- **Iteration 2** (02:34): its games (played with the i01 policy) won **365/400 vs Crazy** at
+  temperature 0.5, against 336/400 for iteration 1's games played by R4 at 20k (+7 points, ~3σ).
+  The sampled policy improved, while the greedy one (what's evaluated) hadn't moved yet (187 vs
+  188).
+  - The **learner crashed** (CUDA device-side assert): one decision of 284,423 had its played row
+    at index ≥ 1,024, beyond `collate`'s 1,024-row cap (the longest legal list was 1,200 rows).
+    Fixed: such decisions are skipped.
+  - BC training has the same cap but clamps the label instead, so the very rare decisions with more
+    than 1,024 legal rows train on a wrong label. Negligible here; worth raising the cap later.
+  - **R5b ends here** with one evaluated iteration (no change). The GPU slot goes to R7, the
+    better-evidenced lever.
+
 ## R5c — RL aimed at the weak matchups (pre-registered 2026-10-22, 02:20)
 
 - **Why:** the full M4 gate failed on 3 cells, and 19 cells won ≤ 15/20
@@ -387,7 +399,9 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   everything else as R4. Validation on human_full's own held-out split; the hash split is the same
   rule, so R4's held-out games stay held out.
 - **Starts:** when R5b stops (after its 2nd iteration if it shows no gain; the GPU takes one job
-  beside R3).
+  beside R3). **Launched 02:40.** Its validation split is human_full's first 40 held-out files (39
+  accepted), not R4's 40, so the training-log numbers don't compare with R4's; `human_bench.py`
+  (human1's split) does.
 - **Evaluation:** vs Crazy, Hard and Normal (200 games each, fixed seeds) and the 19 weak cells
   (380 games, seeds from 12,000,000), all paired with R4 at 20k; plus `human_bench.py`.
 - **Expected:** vs Crazy ≥ R4's 188/200; a paired gain on the weak cells.

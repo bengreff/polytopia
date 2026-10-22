@@ -193,3 +193,9 @@ Decision rules:
 - 02:33 R6 (winners-only) = R4: 586/600 each over the three bots, p = 1. Falsifier fired. R4 at 20k
   on the 19 weakest cells with fresh seeds: 86.3%, no cell under 70%. The 3 failing gate cells
   are 65–70% over 40 games each. R5b iteration 1 was flat (187 vs 188); iteration 2 is learning.
+- 02:40 R5b's 2nd learner crashed on a legal list longer than 1,024 rows (fixed). Its games show
+  the sampled policy improving: 365/400 vs Crazy, up from 336/400. R5b ends.
+  - **R7 launched** on the PC: 20k more human steps from R4 at 20k on the complete human set;
+    ends ~04:20.
+  - R5c's first 600 games (weak cells) are playing on the Mac. Its learning is queued for after R7,
+    to keep one GPU job beside R3.
