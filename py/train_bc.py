@@ -6,7 +6,12 @@ each tile's final owner (none / mine / the opponent's).
 
     python train_bc.py <data_dir> <run_dir> [--steps 60000] [--batch 256]
 
-Games whose seed is a multiple of 50 are held out for validation.
+Held-out validation games: AI games (g<seed>.npz) whose seed is a multiple of 50; human games
+(<game_id>.npz, from py/convert_replays.py) whose CRC32 of the game id is a multiple of 10.
+
+Human games are used only if replaying them reached the game server's own final state (final_check
+'bytes' or 'content', or differing only in cosmetic fields). A game decided by a timeout kick still
+trains the policy but gives no value target.
 """
 import argparse
 import json
@@ -15,6 +20,7 @@ import os
 import random
 import subprocess
 import time
+import zlib
 
 import numpy as np
 import torch
@@ -24,24 +30,51 @@ import model as M
 import polyenv
 
 VAL_EVERY = 50
+HUMAN_VAL_EVERY = 10
+COSMETIC_FIELDS = {'birthClimateSkinType', 'VillageNameSeed'}
+
+
+def is_val(name):
+    stem = name[:-4]
+    if stem.startswith('g') and stem[1:].isdigit():
+        return int(stem[1:]) % VAL_EVERY == 0
+    return zlib.crc32(stem.encode()) % HUMAN_VAL_EVERY == 0
 
 
 def list_games(data_dir, val, min_seed=None):
     out = []
     for f in os.listdir(data_dir):
-        if f.startswith('g') and f.endswith('.npz') and not f.endswith('.tmp.npz'):
-            seed = int(f[1:9])
-            if (seed % VAL_EVERY == 0) == val and (min_seed is None or seed >= min_seed):
-                out.append(os.path.join(data_dir, f))
+        if not f.endswith('.npz') or f.endswith('.tmp.npz'):
+            continue
+        if min_seed is not None and f.startswith('g') and f[1:-4].isdigit() and int(f[1:-4]) < min_seed:
+            continue
+        if is_val(f) == val:
+            out.append(os.path.join(data_dir, f))
     return sorted(out)
 
 
+def accepted(z):
+    """Human games: only those whose replay reached the server's recorded final state."""
+    if 'final_check' not in z.files:
+        return True  # our own generated games
+    check = str(z['final_check'])
+    if check in ('bytes', 'content'):
+        return True
+    fields = set(str(x) for x in z['final_diff_fields']) if 'final_diff_fields' in z.files else None
+    return bool(fields) and fields <= COSMETIC_FIELDS
+
+
 def load_game(path):
+    """The arrays of one game, or None if it isn't accepted (see accepted())."""
     z = np.load(path)
+    if not accepted(z):
+        return None
     D = len(z['label'])
     player = z['player'].astype(np.int64)
     ended, winner = bool(z['ended']), int(z['winner'])
-    value = np.where(player == winner, 1.0, 0.0).astype(np.float32) if ended else np.full(D, -1.0, np.float32)
+    kicked = bool(z['kicked']) if 'kicked' in z.files else False
+    has_value = ended and winner in (1, 2) and not kicked  # a timeout says nothing about the position
+    value = np.where(player == winner, 1.0, 0.0).astype(np.float32) if has_value else np.full(D, -1.0, np.float32)
     owner = z['final_owner'].astype(np.int64)
     own = np.where(owner[None, :] == player[:, None], 1, np.where((owner[None, :] == 1) | (owner[None, :] == 2), 2, 0))
     return dict(tiles=z['tiles'], globals=z['globals'], techs=z['techs'], legal=z['legal'],
@@ -88,9 +121,12 @@ class Stream(torch.utils.data.IterableDataset):
             games = []
             for f in rng.sample(files, min(self.window, len(files))):
                 try:
-                    games.append(load_game(f))
+                    g = load_game(f)
                 except Exception as e:  # e.g. a file still being copied: skip it, never kill the run
                     print(f'skipping unreadable {f}: {e}', flush=True)
+                    continue
+                if g is not None:
+                    games.append(g)
             picks = [(g, d) for g, game in enumerate(games) for d in range(len(game['label']))]
             rng.shuffle(picks)
             for i in range(0, len(picks) - self.batch + 1, self.batch):
@@ -153,6 +189,7 @@ def main():
     ap.add_argument('--owner_weight', type=float, default=0.2)
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--resume', action='store_true')
+    ap.add_argument('--init', default=None, help='start from this checkpoint\'s weights (fine-tuning)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--min_seed', type=int, default=None, help='train only on games with seed >= this')
     ap.add_argument('--random_labels', action='store_true', help='the R2 canary: uniformly random policy labels')
@@ -175,6 +212,9 @@ def main():
         net.load_state_dict(ck['model'])
         opt.load_state_dict(ck['opt'])
         step = ck['step']
+    if args.init and not (args.resume and os.path.exists(ckpt_path)):
+        net.load_state_dict(torch.load(args.init, map_location=dev)['model'])
+        print(f'initialised from {args.init}', flush=True)
     n_params = sum(p.numel() for p in net.parameters())
     if dev == 'cuda' and os.environ.get('CC'):  # torch.compile needs a C compiler; the fixed-shape encoder gains ~1.4x
         net.encode = torch.compile(net.encode)
@@ -189,7 +229,7 @@ def main():
     print(f'{n_params / 1e6:.1f}M parameters', flush=True)
 
     val_files = list_games(args.data_dir, val=True)[:args.val_games]
-    val_games = [load_game(f) for f in val_files]
+    val_games = [g for g in (load_game(f) for f in val_files) if g is not None]
     print(f'validation: {len(val_games)} games, {sum(len(g["label"]) for g in val_games)} decisions', flush=True)
     stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels)
     loader = torch.utils.data.DataLoader(stream, batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda',
