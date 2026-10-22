@@ -120,44 +120,56 @@ def main():
                     start(e, s)
         t0 = time.time()
         timing = dict(env=0.0, net=0.0)
-        while any(live):
+        # Two groups of slots (even, odd) alternate: while the network chooses for one group on this
+        # thread, the game processes step the other group and observe it again on `orch`. Each game
+        # process only ever serves one request at a time, as before.
+        orch = cf.ThreadPoolExecutor(1)
+
+        def finish(group):
             for e in range(len(envs)):
                 for s, g in list(live[e].items()):
                     st = g['st']
-                    if st.ended or st.turn >= TURN_CAP:
-                        owner, capital = envs[e].owners(s)
-                        save(args.out_dir, g['rec'], st, owner, capital, g['opp'], g['agent_seats'])
-                        res = 'cap' if not st.ended else 'self' if g['opp'] < 0 else \
-                            'win' if st.winner in g['agent_seats'] else 'loss'
-                        done.append((g['opp'], res))
-                        log.write(f"{g['rec'].seed}\t{g['opp']}\t{','.join(map(str, g['agent_seats']))}\t"
-                                  f"{g['rec'].spec.tribes[0]},{g['rec'].spec.tribes[1]}\t{res}\t{st.turn}\t"
-                                  f"{len(g['rec'].labels)}\t{g['rec'].unlabelled}\n")
-                        log.flush()
-                        del live[e][s]
-                        if jobs:
-                            start(e, s)
-                        if len(done) % 50 == 0:
-                            summary = ', '.join(
-                                f"vs {'self' if o < 0 else o}: {sum(r == 'win' for oo, r in done if oo == o)}/"
-                                f"{sum(oo == o for oo, _ in done)}" for o in opponents)
-                            print(f'{len(done)} games ({summary}), {time.time() - t0:.0f} s '
-                                  f'(game processes {timing["env"]:.0f} s, network {timing["net"]:.0f} s)', flush=True)
-            order = [sorted(l) for l in live]
-            if not any(order):
-                break
+                    if s % 2 != group or not (st.ended or st.turn >= TURN_CAP):
+                        continue
+                    owner, capital = envs[e].owners(s)
+                    save(args.out_dir, g['rec'], st, owner, capital, g['opp'], g['agent_seats'])
+                    res = 'cap' if not st.ended else 'self' if g['opp'] < 0 else \
+                        'win' if st.winner in g['agent_seats'] else 'loss'
+                    done.append((g['opp'], res))
+                    log.write(f"{g['rec'].seed}\t{g['opp']}\t{','.join(map(str, g['agent_seats']))}\t"
+                              f"{g['rec'].spec.tribes[0]},{g['rec'].spec.tribes[1]}\t{res}\t{st.turn}\t"
+                              f"{len(g['rec'].labels)}\t{g['rec'].unlabelled}\n")
+                    log.flush()
+                    del live[e][s]
+                    if jobs:
+                        start(e, s)
+                    if len(done) % 50 == 0:
+                        summary = ', '.join(
+                            f"vs {'self' if o < 0 else o}: {sum(r == 'win' for oo, r in done if oo == o)}/"
+                            f"{sum(oo == o for oo, _ in done)}" for o in sorted(set(opponents)))
+                        print(f'{len(done)} games ({summary}), {time.time() - t0:.0f} s '
+                              f'(game processes {timing["env"]:.0f} s, network {timing["net"]:.0f} s)', flush=True)
+
+        def prep(group):
+            """Finishes the group's games, then observes its live slots and asks the AI for its label."""
+            finish(group)
+            order = [sorted(s for s in l if s % 2 == group) for l in live]
             t1 = time.time()
             obs = list(pool.map(lambda e: envs[e].observe([(s, 0) for s in order[e]]) if order[e] else [], range(len(envs))))
             labels = list(pool.map(lambda e: envs[e].bot(order[e]) if order[e] else [], range(len(envs))))
-            t2 = time.time()
-            timing['env'] += t2 - t1
+            timing['env'] += time.time() - t1
             flat = [(e, s) for e in range(len(envs)) for s in order[e]]
-            flat_obs = [o for e in range(len(envs)) for o in obs[e]]
-            flat_labels = [b for e in range(len(envs)) for b in labels[e]]
+            return flat, [o for e in range(len(envs)) for o in obs[e]], [b for e in range(len(envs)) for b in labels[e]]
+
+        def act(data):
+            """The policy's choice for each slot of a prepared group, recorded; per-env actions, or None."""
+            flat, flat_obs, flat_labels = data
+            if not flat:
+                return None
+            t2 = time.time()
             statuses = [live[e][s]['st'] for e, s in flat]
             acts, logps = sample(net, args.device, flat_obs, statuses, args.temperature, rng)
-            t3 = time.time()
-            timing['net'] += t3 - t2
+            timing['net'] += time.time() - t2
             per_env = [[] for _ in envs]
             for (e, s), o, label, a, lp in zip(flat, flat_obs, flat_labels, acts, logps):
                 g = live[e][s]
@@ -173,13 +185,29 @@ def main():
                 if g['n'] > COMMANDS_PER_TURN_CAP:  # a safety net against a stuck policy
                     a = int(np.nonzero(st.legal[:, 0] == 15)[0][0])
                 per_env[e].append((s, int(a)))
-            stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))
-            timing['env'] += time.time() - t3
-            for e in range(len(envs)):
-                for (s, _), (ok, st) in zip(per_env[e], stepped[e]):
-                    if not ok:
-                        raise polyenv.EnvError(f'env {e} slot {s}: legal command rejected')
-                    live[e][s]['st'] = st
+            return per_env
+
+        def step_then_prep(group, per_env):
+            if per_env is not None:
+                t3 = time.time()
+                stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))
+                timing['env'] += time.time() - t3
+                for e in range(len(envs)):
+                    for (s, _), (ok, st) in zip(per_env[e], stepped[e]):
+                        if not ok:
+                            raise polyenv.EnvError(f'env {e} slot {s}: legal command rejected')
+                        live[e][s]['st'] = st
+            return prep(group)
+
+        here, group = prep(0), 0
+        nxt = orch.submit(prep, 1)
+        while True:
+            per_env = act(here)
+            other = nxt.result()
+            if per_env is None and not other[0]:
+                break
+            nxt = orch.submit(step_then_prep, group, per_env)
+            here, group = other, 1 - group
     print(f'checkpoint step {step}: {len(done)} games in {time.time() - t0:.0f} s', flush=True)
 
 
