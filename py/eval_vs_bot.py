@@ -92,6 +92,9 @@ def main():
     ap.add_argument('--cells', type=int, default=0,
                     help='M4 gate layout instead of random tribes: this many games for every (agent tribe, bot tribe, '
                          'agent seat) cell, 144 x 2 cells, seeds from 11,000,000')
+    ap.add_argument('--cell_list', default=None,
+                    help='with --cells: only these cells, a file of lines "agent_tribe bot_tribe agent_seat(1|2)"; '
+                         'seeds from 12,000,000')
     ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--teacher', action='store_true',
                     help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
@@ -105,7 +108,15 @@ def main():
         net, step = load_policy(args.checkpoint, args.device)
     rng = np.random.default_rng(0)
     jobs = []  # (seed, agent seat, tribes or None for the seed's own draw)
-    if args.cells:
+    if args.cells and args.cell_list:
+        seed = 12_000_000
+        for line in open(args.cell_list):
+            if line.strip():
+                ta, tb, s1 = (int(x) for x in line.split())
+                for _ in range(args.cells):
+                    jobs.append((seed, s1 - 1, (ta, tb) if s1 == 1 else (tb, ta)))
+                    seed += 1
+    elif args.cells:
         seed = 11_000_000
         for ta in REGULAR_TRIBES:
             for tb in REGULAR_TRIBES:
