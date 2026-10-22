@@ -3,16 +3,19 @@
 POSTs {"GameId": id} to polytopia-prod.net/api/game/get_game_view_model, and to spectate_game if
 that fails, with the token of a logged-in game client. The reply holds the game's settings,
 participants and two GameState blobs (initial and current, base64): the client's
-GameViewModel. Each game is saved as raw/<id>.json, unchanged. Requests are spaced out, games
-already saved are skipped, and failures go to raw/errors.tsv.
+GameViewModel. Each game is saved as raw/<id>.json, unchanged. Each of --workers threads spaces its
+requests --delay seconds apart; all pause for 10 minutes on HTTP 429. Games already saved are
+skipped, and failures go to raw/errors.tsv.
 
     python3 py/fetch_replays.py --token-file <jwtToken> [--ids data/replays/share_ids.tsv]
-        [--out data/replays/raw] [--delay 4] [--limit N]
+        [--out data/replays/raw] [--workers 1] [--delay 4] [--limit N]
 """
 import argparse
+import concurrent.futures as cf
 import json
 import os
 import random
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -44,7 +47,8 @@ def main():
     ap.add_argument('--token-file', required=True)
     ap.add_argument('--ids', default='data/replays/share_ids.tsv')
     ap.add_argument('--out', default='data/replays/raw')
-    ap.add_argument('--delay', type=float, default=4.0, help='mean seconds between requests')
+    ap.add_argument('--workers', type=int, default=1, help='requests in flight at once')
+    ap.add_argument('--delay', type=float, default=4.0, help='mean seconds between one worker\'s requests')
     ap.add_argument('--limit', type=int, default=0)
     args = ap.parse_args()
     token = open(args.token_file).read().strip()
@@ -59,33 +63,48 @@ def main():
         todo = todo[:args.limit]
     print(f'{len(ids)} ids, {len(todo)} to fetch', flush=True)
     errors = open(err_path, 'a')
-    got = 0
-    for i, g in enumerate(todo):
-        if i:
-            time.sleep(args.delay * (0.5 + random.random()))
-        try:
-            endpoint, data = fetch(token, g)
-        except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
-                raise SystemExit(f'HTTP {e.code}: the token was refused (expired?). Log in to the game again.')
-            if e.code == 429:
-                print('rate-limited; waiting 10 minutes', flush=True)
-                time.sleep(600)
-                continue
-            errors.write(f'{g}\tHTTP {e.code}\n'); errors.flush()
-            continue
-        except Exception as e:
-            errors.write(f'{g}\t{e}\n'); errors.flush()
-            continue
+    lock = threading.Lock()
+    paused_until = [0.0]
+    done = [0, 0]  # fetched, tried
+
+    def one(g):
+        while True:
+            time.sleep(max(0.0, paused_until[0] - time.time()) + args.delay * (0.5 + random.random()))
+            try:
+                endpoint, data = fetch(token, g)
+                break
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    print(f'HTTP {e.code}: the token was refused (expired?). Log in to the game again.', flush=True)
+                    os._exit(2)
+                if e.code == 429:
+                    with lock:
+                        if paused_until[0] < time.time():
+                            print('rate-limited; all workers wait 10 minutes', flush=True)
+                            paused_until[0] = time.time() + 600
+                    continue
+                return g, f'HTTP {e.code}'
+            except Exception as e:
+                return g, str(e)
         data['_endpoint'] = endpoint
         path = os.path.join(args.out, f'{g}.json')
         with open(path + '.tmp', 'w') as f:
             json.dump(data, f)
         os.replace(path + '.tmp', path)
-        got += 1
-        if got % 25 == 0:
-            print(f'{got} fetched ({i + 1}/{len(todo)} tried)', flush=True)
-    print(f'done: {got} fetched, {len(todo) - got} failed or skipped', flush=True)
+        return g, None
+
+    with cf.ThreadPoolExecutor(args.workers) as ex:
+        for g, err in ex.map(one, todo):
+            with lock:
+                done[1] += 1
+                if err:
+                    errors.write(f'{g}\t{err}\n')
+                    errors.flush()
+                else:
+                    done[0] += 1
+                    if done[0] % 50 == 0:
+                        print(f'{done[0]} fetched ({done[1]}/{len(todo)} tried)', flush=True)
+    print(f'done: {done[0]} fetched, {done[1] - done[0]} failed', flush=True)
 
 
 if __name__ == '__main__':
