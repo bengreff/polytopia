@@ -60,9 +60,16 @@ the time.** Every cell below is 200 games, sides swapped, on fixed seeds; see re
   - **R6, imitating only the winning side of human games:** identical to R4 (586/600 each).
   - **R7, 20k more steps on the complete human set (7,732 games):** better imitation (top-1
     43.7%), the same play (Crazy 191 vs 188; weak cells 323 vs 328; pooled p = 0.91).
-- **Running at handoff (05:35):**
-  - Only **R3** on the PC (`/home/greff/runs/r3_m1`, AI cloning, step ~248k of 290k, ends
-    ~07:00). It is superseded; its result only completes the record.
+- **Watching games:**
+  - `tools/play.sh runs/r4_human_ft/step020000.pt` serves the web app at http://localhost:8123.
+    Started at 05:58 and left running.
+  - "Watch recorded games" in the menu lists every recorded game. All evaluations record their
+    games (`runs/games/<tag>/`), and Ben's own browser games are recorded under
+    `runs/games/play_<date>/`.
+  - `python3 py/send_games.py` puts chosen games at the top ("Sent by Claude"). 22 are sent: R4's
+    12 losses vs Crazy, 6 losses in the weak matchups, 4 wins.
+- **Running at handoff (06:00):**
+  - **R3 was stopped** on Ben's instruction at step ~259k. The PC's GPU is free.
   - Nothing of mine is running. The Mac's queue runner was told to stop (`runs/queue/stop`); delete
     that file before restarting `tools/queue.sh`.
   - `polyhost-mac env 8600` (pid 8009) is a stale process from before tonight, not mine. Left
@@ -183,9 +190,7 @@ the time.** Every cell below is 200 games, sides swapped, on fixed seeds; see re
 
 ## For Ben
 
-1. **Stop R3** (`/home/greff/runs/r3_m1`, AI cloning to 290k steps)? It is superseded by the human
-   fine-tune, holds ~7 GB and a third of the GPU, and runs until mid-morning. The permission check
-   wouldn't let me stop it.
+1. ~~Stop R3~~: done, on Ben's instruction.
 2. **Install Polytopia on the PC through Steam** (still not installed). A native Windows host
    would let the PC play games next to its GPU, the biggest throughput gain available.
 3. **OK to build the determinized-state builder** (fog-safe search)?

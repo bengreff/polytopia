@@ -454,3 +454,24 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Before more RL: much more throughput (the native Windows host, or GPU inference once R3 is
     off the GPU), a learned baseline (the value head is decent on human data now: log loss ~0.5),
     and acting at a lower temperature.
+
+## Morning checks (2026-10-22, ~05:50, Ben's questions)
+- **R3 stopped** on Ben's instruction at step ~259k. Its last checkpoint is `step250000.pt`; R3 is
+  superseded by the human fine-tune.
+- **The bots get their built-in advantage**, checked in a match built exactly as the evaluation
+  builds it:
+
+  | Bot difficulty | Bot handicap | Bot income at the start | Our income |
+  |---|---|---|---|
+  | Easy | 0 | 1★ | 2★ |
+  | Normal | 1 | 2★ | 2★ |
+  | Hard | 2 | 3★ | 2★ |
+  | Crazy | 4 | **5★ (+3★ per turn)** | 2★ |
+
+  The bot has AutoPlay on, so `GetStupidity` = max(0, 2 − handicap) and Crazy plays without
+  deliberate mistakes. Our seat is a person's seat (handicap 1, AutoPlay off). This is
+  `AddAIOpponent(tribe, HandicapFromDifficulty(d))`, as the real app builds bot opponents.
+- **Recorded re-run of R4 at 20k vs Crazy** (`tools/eval.sh … r4_20k_watch 3`, same seeds): 188/200
+  again, so the evaluation is deterministic.
+- **The 3 failing M4 cells, 10 fresh games each** (seeds from 12,000,000, `runs/evals/m4_failing3.txt`):
+  24/30 = 80%.
