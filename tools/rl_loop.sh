@@ -8,7 +8,8 @@
 #
 # Env OPPONENTS (default 1,2,2,3,3,self) sets the opponent mix, as py/dagger.py --opponents; TEMP
 # (default 1) the sampling temperature, used by both the actors and the learner; LR (default 3e-5)
-# and BCW (default 0.5) the learner's learning rate and behaviour-cloning anchor weight.
+# and BCW (default 0.5) the learner's learning rate and behaviour-cloning anchor weight; PAIRS a
+# py/dagger.py --tribe_pairs file.
 # Files: Mac data/rl/<name>/iNN (games), runs/rl/<name>/iNN.pt (policies), runs/evals/<name>_iNN_d*.
 # PC: ~/polydata/rl/<name>/iNN, ~/runs/rl/<name>/iNN (train_rl output). Code: ~/poly/py_rl.
 set -e
@@ -34,7 +35,7 @@ while [ $i -lt $((first + iters)) ]; do
     seed=$((30000000 + i * 100000))
     echo "$(date '+%H:%M:%S') $name $it: playing $games games with $cur"
     POLYHOST=mac .venv/bin/python py/dagger.py $cur data/rl/$name/$it --games $games --first_seed $seed \
-        --opponents ${OPPONENTS:-1,2,2,3,3,self} --procs 6 --slots 12 --port 8900 --temperature ${TEMP:-1} > runs/rl/$name/$it.play.log 2>&1
+        --opponents ${OPPONENTS:-1,2,2,3,3,self} ${PAIRS:+--tribe_pairs $PAIRS} --procs 6 --slots 12 --port 8900 --temperature ${TEMP:-1} > runs/rl/$name/$it.play.log 2>&1
     tail -2 runs/rl/$name/$it.play.log
     retry push_games 2>/dev/null
     retry push_init
