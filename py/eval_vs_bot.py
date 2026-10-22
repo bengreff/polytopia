@@ -89,6 +89,9 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.0)
     ap.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--out', default=None, help='results .tsv')
+    ap.add_argument('--cells', type=int, default=0,
+                    help='M4 gate layout instead of random tribes: this many games for every (agent tribe, bot tribe, '
+                         'agent seat) cell, 144 x 2 cells, seeds from 11,000,000')
     ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--teacher', action='store_true',
                     help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
@@ -101,9 +104,18 @@ def main():
     else:
         net, step = load_policy(args.checkpoint, args.device)
     rng = np.random.default_rng(0)
-    jobs = []  # (seed, agent seat)
-    for k in range(args.seeds):
-        jobs += [(args.first_seed + k, 0), (args.first_seed + k, 1)]
+    jobs = []  # (seed, agent seat, tribes or None for the seed's own draw)
+    if args.cells:
+        seed = 11_000_000
+        for ta in REGULAR_TRIBES:
+            for tb in REGULAR_TRIBES:
+                for seat in (0, 1):
+                    for _ in range(args.cells):
+                        jobs.append((seed, seat, (ta, tb) if seat == 0 else (tb, ta)))
+                        seed += 1
+    else:
+        for k in range(args.seeds):
+            jobs += [(args.first_seed + k, 0, None), (args.first_seed + k, 1, None)]
     jobs.reverse()
     results = []
     out = open(args.out, 'a') if args.out else None
@@ -113,8 +125,9 @@ def main():
         live = [dict() for _ in envs]  # per env: slot -> dict(job, status, turn commands)
 
         def start(e, slot):
-            seed, seat = jobs.pop()
-            tribes = tuple(int(t) for t in np.random.default_rng(seed).choice(REGULAR_TRIBES, 2))
+            seed, seat, tribes = jobs.pop()
+            if tribes is None:
+                tribes = tuple(int(t) for t in np.random.default_rng(seed).choice(REGULAR_TRIBES, 2))
             bots = (None, args.difficulty) if seat == 0 else (args.difficulty, None)
             st = envs[e].new(slot, polyenv.Spec(tribes=tribes, bots=bots, seed=seed))
             live[e][slot] = dict(seed=seed, seat=seat, tribes=tribes, st=st, turn=st.turn, n=0)
