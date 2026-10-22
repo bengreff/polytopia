@@ -69,8 +69,9 @@ def accepted(z):
     return bool(fields) and fields <= COSMETIC_FIELDS
 
 
-def load_game(path):
-    """The arrays of one game, or None if it isn't accepted (see accepted())."""
+def load_game(path, winners_only=False):
+    """The arrays of one game, or None if it isn't accepted (see accepted()). winners_only: no policy
+    label on the losing side's decisions, nor on any decision of a game without a value target."""
     z = np.load(path)
     if not accepted(z):
         return None
@@ -83,6 +84,8 @@ def load_game(path):
     label = z['label'].astype(np.int64)
     if 'played' in z.files:  # py/dagger.py: -1 where the AI would play its StayCommand; no label there
         label = np.where(label >= 0, label, IGNORE)
+    if winners_only:
+        label = np.where(value == 1.0, label, IGNORE)
     owner = z['final_owner'].astype(np.int64)
     own = np.where(owner[None, :] == player[:, None], 1, np.where((owner[None, :] == 1) | (owner[None, :] == 2), 2, 0))
     return dict(tiles=z['tiles'], globals=z['globals'], techs=z['techs'], legal=z['legal'],
@@ -139,8 +142,9 @@ class Stream(torch.utils.data.IterableDataset):
     several sources, each game of the window is drawn from a source with probability proportional
     to share / mean decisions per game."""
 
-    def __init__(self, data_dir, batch, window, seed, min_seed=None, random_labels=False):
+    def __init__(self, data_dir, batch, window, seed, min_seed=None, random_labels=False, winners_only=False):
         self.sources = parse_sources(data_dir)
+        self.winners_only = winners_only
         self.batch, self.window, self.seed = batch, window, seed
         self.min_seed, self.random_labels = min_seed, random_labels
         sizes = [mean_decisions(d) for d, _ in self.sources]
@@ -163,7 +167,7 @@ class Stream(torch.utils.data.IterableDataset):
             games = []
             for f in self.pick_files(rng):
                 try:
-                    g = load_game(f)
+                    g = load_game(f, self.winners_only)
                 except Exception as e:  # e.g. a file still being copied: skip it, never kill the run
                     print(f'skipping unreadable {f}: {e}', flush=True)
                     continue
@@ -274,6 +278,7 @@ def main():
     ap.add_argument('--fp32', action='store_true', help='train in float32 (no bf16 autocast)')
     ap.add_argument('--val_every', type=int, default=2000, help='validate and save last.pt every this many steps')
     ap.add_argument('--save_every', type=int, default=10000, help='keep a stepNNNNNN.pt checkpoint every this many steps')
+    ap.add_argument('--winners_only', action='store_true', help='imitate only the winning side of each game (validation unchanged)')
     ap.add_argument('--value_val_games', type=int, default=0,
                     help='also check value on this many held-out games of each source, 16 positions each')
     args = ap.parse_args()
@@ -319,7 +324,8 @@ def main():
             pos, n = value_positions(d, args.value_val_games, 16)
             value_sets.append(pos)
             print(f'value check {d}: {n} games, {0 if pos is None else len(pos["value"])} positions', flush=True)
-    stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels)
+    stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels,
+                    args.winners_only)
     loader = torch.utils.data.DataLoader(stream, batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda',
                                          prefetch_factor=4, persistent_workers=True)
     log = open(os.path.join(args.run_dir, 'log.jsonl'), 'a')
