@@ -163,3 +163,23 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   10 points of the base.
 - **Falsifier:** vs Normal drops more than 15 points with no gain vs Crazy → human-only fine-tuning
   hurts the raw policy; next try mixed data (human + AI games) instead.
+
+## R5 — policy-only RL from the human-tuned policy (pre-registered 2026-10-21, 22:05)
+
+- **Why:** R4 at 6k steps (human fine-tune) wins 200/200 vs Normal and ~75% vs Crazy (evaluation
+  running). That leaves room above it, and enough wins and losses against Hard and Crazy to learn
+  from.
+- **Hypothesis:** PPO on the game's result, from R4's step-6,000 weights, raises the raw policy's
+  win rate against Crazy.
+- **Change:** RL iterations (`tools/rl_loop.sh r5`):
+  - **Games:** 600 per iteration, sampled at temperature 1. Opponents: Hard 1/4, Crazy 1/2, itself
+    1/4. Seeds 30,000,000 + 100,000 × iteration.
+  - **Learner:** `py/train_rl.py` defaults. Clip 0.2, lr 3e-5 with cosine decay over 2 epochs,
+    entropy 0.003, value weight 0.25, BC anchor weight 0.5 on `human1` (R4's own data).
+  - Each iteration starts from the previous one's policy.
+- **Evaluation:** every iteration vs Hard and Crazy (100 seeds × 2 sides each, the fixed seeds),
+  paired against R4 step 6k with `tools/compare_evals.py`.
+- **Expected:** vs Crazy rises over 6 iterations; vs Hard does not drop.
+- **Falsifier:** no gain vs Crazy after 4 iterations (paired sign test p > 0.2 and point estimate
+  not higher), or a drop of more than 5 points → stop, look at the learner's logs (ratio, KL,
+  clip fraction, entropy), don't stack changes.
