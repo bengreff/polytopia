@@ -324,6 +324,33 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     kept, and the loop skips games already played.
   - **Rule from now on:** with R3 running, only one more training process on the GPU.
 
+### R6 results (2026-10-22, 02:30)
+
+| | vs Normal | vs Hard | vs Crazy | Human top-1 / CE | Value (150 games) |
+|---|---|---|---|---|---|
+| R4 step 20k | 199/200 | 199/200 | 188/200 | 43.2% / 2.15 | 75.7%, 0.607 |
+| R6 step 10k | — | — | 175/200 | — | — |
+| R6 step 20k | 200/200 | 197/200 | 189/200 | 42.8% / 2.19 | 76.8%, 0.580 |
+
+- **Paired, R6 vs R4 at 20k:** vs Crazy only R6 won 8 games, only R4 won 7. Pooled over the three
+  bots, 586 = 586 with 10 vs 10 (p = 1).
+- **Falsifier fired:** filtering the human data by result gives no gain at this data size.
+  Imitate both sides.
+- **Value:** R6's new 400-game value check ended at log loss 0.47, accuracy 79.9%.
+- The 6k checkpoint was lost (its `last.pt` was overwritten), so 10k stands in for it.
+
+### R4 step 20k on the 19 weakest cells, fresh seeds (02:30)
+- 20 games per cell, seeds from 12,000,000 (`--cell_list runs/evals/r4_20k_gate_weak15.txt`):
+  **328/380 = 86.3%** (82.5–89.4). The gate's seeds gave 70.5%; those cells were picked for scoring
+  low.
+- No cell is below 70% on the fresh seeds.
+- **The three failing cells,** pooled over both seed sets (40 games each):
+  - Oumaji vs Vengir, seat 1: 26/40 (65%)
+  - Oumaji vs Xin-xi, seat 1: 27/40 (68%)
+  - Xin-xi vs Vengir, seat 2: 28/40 (70%)
+
+  Weaker than the average matchup, but not broken. This is the paired baseline for R5c.
+
 ### R5b results
 - **Iteration 1** (02:13; relaunched after the 00:55 GPU jam): learner KL 0.017, clip fraction
   0.22, anchor loss 2.07. **Crazy 187/200** (R4 at 20k: 188/200).

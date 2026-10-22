@@ -190,3 +190,6 @@ Decision rules:
 - 02:12 **Full M4 gate for R4 at 20k vs Crazy: 92.4% pooled over 5,760 games (lower bound 91.7%):
   pass. 3 of 288 cells under 70%: fail, narrowly.** The failing cells are Oumaji vs Vengir (11/20),
   Oumaji vs Xin-xi (11/20), Xin-xi vs Vengir (12/20). Real weak matchups; next, aim training at them.
+- 02:33 R6 (winners-only) = R4: 586/600 each over the three bots, p = 1. Falsifier fired. R4 at 20k
+  on the 19 weakest cells with fresh seeds: 86.3%, no cell under 70%. The 3 failing gate cells
+  are 65–70% over 40 games each. R5b iteration 1 was flat (187 vs 188); iteration 2 is learning.
