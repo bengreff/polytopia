@@ -29,6 +29,8 @@ import torch.nn.functional as F
 import model as M
 import train_bc
 
+MAX_LEGAL = 1024  # train_bc.collate's default max_legal
+
 
 def game_targets(files):
     """Per file: {player id: z} for the agent seats of finished games, and the opponent; then the
@@ -77,7 +79,9 @@ class RLStream(torch.utils.data.IterableDataset):
                     games.append(g)
                     extra.append(dict(played=z['played'].astype(np.int64), logp=z['logp'].astype(np.float32),
                                       adv=a[:, 0], won=a[:, 1]))
-                picks = [(gi, d) for gi, e in enumerate(extra) for d in range(len(e['adv'])) if not np.isnan(e['adv'][d])]
+                # collate keeps at most MAX_LEGAL rows per decision; a played row beyond them can't be scored
+                picks = [(gi, d) for gi, e in enumerate(extra) for d in range(len(e['adv']))
+                         if not np.isnan(e['adv'][d]) and e['played'][d] < MAX_LEGAL]
                 rng.shuffle(picks)
                 for j in range(0, len(picks) - self.batch + 1, self.batch):
                     chunk = picks[j:j + self.batch]
