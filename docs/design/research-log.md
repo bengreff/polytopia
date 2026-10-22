@@ -412,3 +412,10 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Expected:** vs Crazy ≥ R4's 188/200; a paired gain on the weak cells.
 - **Falsifier:** pooled over Crazy + the weak cells, no paired gain (p > 0.2 and the point estimate
   not higher) → more of the same data has stopped paying.
+
+### R7 results
+- **Interim, step 10k (03:50):** vs Crazy 186/200 (R4 at 20k: 188); 19 weak cells 317/380 = 83.4%
+  (R4 at 20k: 328/380).
+  - Paired, pooled over the 580 games: only R7 won 32, only R4 won 45 (p = 0.17). Not better so
+    far.
+  - The learning rate is mid-schedule; the 20k checkpoint decides.
