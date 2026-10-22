@@ -78,6 +78,7 @@
   .grow .res { width: 52px; font-weight: 600; } .grow .res.win { color: #7fdc7f; } .grow .res.loss { color: #ff8a80; }
   .grow .when { color: var(--dim); width: 128px; } .grow .note { color: var(--gold); }
   .ghead { margin: 12px 0 4px; color: var(--gold); font-style: italic; }
+  .grow .spark { flex: none; width: 90px; height: 22px; } .grow .swing { color: var(--dim); width: 150px; flex: none; }
   #toast { position: fixed; top: 132px; left: 50%; transform: translateX(-50%); background: var(--card); border-radius: 14px;
            padding: 8px 14px; font-size: 14px; color: var(--dim); max-width: 90vw; opacity: 0; transition: opacity .4s; pointer-events: none; }
 </style>
@@ -113,7 +114,12 @@
 <div class="overlay" id="choiceview"><div class="panel"><h2 id="choicetitle">City upgrade</h2><div id="choices"></div></div></div>
 <div class="overlay" id="logview"><div class="panel"><h2>Bot's last turn</h2><div id="log"></div></div></div>
 <div class="overlay" id="watchview"><div class="panel"><h2>Recorded games</h2>
-  <p class="muted">Newest first. Games sent by Claude are at the top. Click one to watch it.</p>
+  <p class="muted">Games sent by Claude are at the top. Click one to watch it.</p>
+  <div class="form" style="margin-bottom:8px">
+    <label>Sort</label><select id="gsort"><option value="time">Newest first</option><option value="swing">Most back-and-forth</option><option value="comeback">Biggest comeback</option><option value="turns">Longest</option></select>
+    <label>Show</label><select id="gfilter"><option value="all">All games</option><option value="win">Network wins</option><option value="loss">Network losses</option></select>
+    <label>From</label><select id="gtag"><option value="">Every set</option></select>
+  </div>
   <div id="gamelist"></div></div></div>
 <div id="watchbar">
   <span class="wbtn" id="wfirst" title="Start (Home)">⏮</span><span class="wbtn" id="wprevturn" title="Previous turn (↑)">⏪</span>
@@ -121,7 +127,7 @@
   <span class="wbtn" id="wnext" title="Next move (→)">▶</span><span class="wbtn" id="wnextturn" title="Next turn (↓)">⏩</span>
   <span class="wbtn" id="wlast" title="End (End)">⏭</span>
   <select id="wview" title="Whose view"><option value="0">Whole map</option><option value="1">Player 1's view</option><option value="2">Player 2's view</option></select>
-  <select id="wspeed" title="Autoplay speed"><option value="turn">Autoplay by turn</option><option value="move" selected>Autoplay by move</option></select>
+  <select id="wspeed" title="Autoplay speed"><option value="turn">1 turn / 1.5 s</option><option value="1">1 move/s</option><option value="2">2 moves/s</option><option value="2.5" selected>2.5 moves/s</option><option value="3">3 moves/s</option><option value="5">5 moves/s</option><option value="10">10 moves/s</option></select>
   <span class="wbtn" id="wlist" title="Other games">☰</span><span class="wbtn" id="wexit" title="Leave watch mode">✕</span>
   <div id="winfo"></div>
 </div>

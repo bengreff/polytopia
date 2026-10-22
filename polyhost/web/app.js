@@ -83,6 +83,17 @@ function centerOn(x, y) {
   view.oy = innerHeight * 0.45 - wy * view.s;
 }
 
+// The whole board on screen, between the top bar and the watch bar (key F).
+function fitBoard() {
+  const w = state.width, h = state.height;
+  const left = worldOf(0, h - 1)[0] - TW / 2, right = worldOf(w - 1, 0)[0] + TW / 2;
+  const top = -TH, bottom = worldOf(w - 1, h - 1)[1] + TH / 2 + DEPTH;
+  const availW = innerWidth * 0.96, availH = innerHeight - 230;
+  view.s = Math.max(0.2, Math.min(availW / (right - left), availH / (bottom - top)));
+  view.ox = innerWidth / 2 - (left + right) / 2 * view.s;
+  view.oy = 130 + availH / 2 - (top + bottom) / 2 * view.s;
+}
+
 // ---------- drawing ----------
 
 const stars = Array.from({ length: 160 }, () => [Math.random(), Math.random(), Math.random() * 1.4 + 0.3]);
@@ -463,42 +474,64 @@ async function wstep(q) {
 function stopAutoplay() { clearInterval(autoplay); autoplay = null; }
 function toggleAutoplay() {
   if (autoplay) { stopAutoplay(); render(); return; }
-  const byTurn = $('wspeed').value === 'turn';
-  autoplay = setInterval(() => { if (!busy) { busy = true; wstep(byTurn ? 'turn=1' : 'd=1').finally(() => busy = false); } }, byTurn ? 1500 : 250);
+  const v = $('wspeed').value, byTurn = v === 'turn';
+  autoplay = setInterval(() => { if (!busy) { busy = true; wstep(byTurn ? 'turn=1' : 'd=1').finally(() => busy = false); } },
+    byTurn ? 1500 : 1000 / Number(v));
   render();
 }
-async function openWatchList() {
-  const d = await api('/games');
+let gamesData = null;
+// The lead per turn (network minus opponent, share of territory; py/rank_games.py) as a sparkline.
+function spark(leads) {
+  if (!leads || leads.length < 2) return '<svg class="spark"></svg>';
+  const w = 90, h = 22, n = leads.length, x = i => (i / (n - 1) * w).toFixed(1), y = v => (h / 2 - v * h / 2).toFixed(1);
+  const pts = leads.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}"><line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="#555" stroke-width="0.5"/>`
+    + `<polyline points="${pts}" fill="none" stroke="#e8c45a" stroke-width="1.2"/></svg>`;
+}
+function renderGameList() {
+  const d = gamesData;
   const row = (g, note) => {
     const r = document.createElement('div'); r.className = 'grow';
-    const t = g.tribes || [], agent = g.agent || 1;
+    const t = g.tribes || [];
     const name = i => title(nameOf('tribeData', t[i - 1]));
     const res = g.result || '';
-    r.innerHTML = `<span class="res ${res}">${res}</span><span class="when">${g.time || ''}</span>`
+    const sw = g.swing !== undefined ? `${g.lead_changes} lead changes, behind ${Math.round(100 * g.comeback)}%` : '';
+    r.innerHTML = `<span class="res ${res}">${res}</span><span class="when">${g.time || ''}</span>${spark(g.leads)}<span class="swing">${sw}</span>`
       + `<span>${name(1)} (${g.players?.[1] || 'player 1'}) vs ${name(2)} (${g.players?.[2] || 'player 2'}), ${g.turns ?? '?'} turns`
       + ` <span class="muted">${g.path}</span>${note ? ` <span class="note">${note}</span>` : ''}</span>`;
     r.onclick = () => watchGame(g);
     return r;
   };
-  const byTime = (a, b) => (b.time || '').localeCompare(a.time || '');
+  const key = $('gsort').value, filt = $('gfilter').value, tag = $('gtag').value;
+  const cmp = key === 'time' ? (a, b) => (b.time || '').localeCompare(a.time || '')
+    : (a, b) => (b[key] ?? -1) - (a[key] ?? -1);
+  const keep = g => (filt === 'all' || g.result === filt) && (!tag || g.tag === tag);
   const kids = [];
   if (d.sent.length) {
     const h = document.createElement('div'); h.className = 'ghead'; h.textContent = 'Sent by Claude'; kids.push(h);
-    for (const g of d.sent.slice().sort(byTime)) kids.push(row(g, g.note));
+    for (const g of d.sent) kids.push(row(g, g.note));
     const h2 = document.createElement('div'); h2.className = 'ghead'; h2.textContent = 'All recorded games'; kids.push(h2);
   }
-  for (const g of d.games.slice().sort(byTime).slice(0, 400)) kids.push(row(g));
+  for (const g of d.games.filter(keep).sort(cmp).slice(0, 400)) kids.push(row(g));
   if (!kids.length) kids.push(Object.assign(document.createElement('p'), { textContent: 'No recorded games yet.' }));
   $('gamelist').replaceChildren(...kids);
+}
+async function openWatchList() {
+  gamesData = await api('/games');
+  const tags = [...new Set(gamesData.games.map(g => g.tag).filter(Boolean))].sort();
+  const cur = $('gtag').value;
+  $('gtag').replaceChildren(new Option('Every set', ''), ...tags.map(t => new Option(t, t)));
+  $('gtag').value = tags.includes(cur) ? cur : '';
+  renderGameList();
   $('menuview').style.display = 'none';
   $('watchview').style.display = 'flex';
 }
+for (const id of ['gsort', 'gfilter', 'gtag']) $(id).onchange = renderGameList;
 async function watchGame(g) {
   stopAutoplay(); sel = null; centeredFor = null; watchMeta = g;
   state = await api(`/watch?path=${encodeURIComponent(g.path)}`, 'POST');
   $('watchview').style.display = 'none';
-  const cap = state.tiles.find(t => t.capitalOf === 1);
-  if (cap) centerOn(cap.x, cap.y);
+  fitBoard();
   resize(); render();
 }
 $('watchgames').onclick = openWatchList;
@@ -518,6 +551,7 @@ addEventListener('keydown', e => {
   const k = { ArrowRight: 'd=1', ArrowLeft: 'd=-1', ArrowDown: 'turn=1', ArrowUp: 'turn=-1', Home: 'to=0', End: 'to=1000000' }[e.key];
   if (k) { e.preventDefault(); wstep(k); }
   if (e.key === ' ') { e.preventDefault(); toggleAutoplay(); }
+  if (e.key === 'f' || e.key === 'F') { fitBoard(); draw(); }
 });
 
 // ---------- actions ----------
@@ -646,4 +680,15 @@ function start() {
   $('tribe').value = 7; $('opponent').value = 13;
   state = await api('/state');
   start();
+  // #watch=<path>&speed=2.5&view=0 opens a recorded game and starts autoplay (speed in moves/s or "turn")
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('watch')) {
+    const d = await api('/games');
+    const g = [...d.sent, ...d.games].find(x => x.path === h.get('watch')) || { path: h.get('watch') };
+    if (h.get('speed')) $('wspeed').value = h.get('speed');
+    await watchGame(g);
+    if (h.get('view')) { $('wview').value = h.get('view'); state = await api(`/wview?v=${h.get('view')}`, 'POST'); render(); }
+    $('menuview').style.display = 'none';
+    toggleAutoplay();
+  }
 })();
