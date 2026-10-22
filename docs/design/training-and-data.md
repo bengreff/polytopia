@@ -180,6 +180,23 @@ layers only when a metric asks for them.**
       sub-tournaments ("Kickoo Qualifiers #3", 128 slots, ~40–80 games each), then invite-only
       finals;
     - first harvest (80 tournaments): **902 Might/Lakes/Small games** from 36 of them;
+    - **full harvest (2026-10-22): 27,548 Might/Lakes/Small game ids** from the four spaces;
+  - **The resulting set, `data/human1/` (gitignored; `games.tsv` indexes it):**
+    - 8,420 games downloaded: 5,404 + 1,093 from Challengermode, the rest from YouTube links;
+    - **7,732 championship-format games, 3,173,215 labelled human decisions**; 667 skipped
+      (other format or special tribes), 13 failed (a recorded command rejected on our build,
+      mostly old versions);
+    - versions: 4,702 v122, 2,106 v121, 246 v123, ~680 older (v93–v120);
+    - **7,623 replay to the server's final state** apart from `birthClimateSkinType` and
+      `VillageNameSeed`; 274 games end by a timeout kick;
+    - all 12 regular tribes, 746 (Vengir) to 1,847 (Imperius) seat-games each;
+    - 70 human commands fall outside our legal list, in 27 games (1 in 45,000):
+      - 11 of those games failed to convert anyway;
+      - in the clean ones, most misses come with an **empty** legal list (our interface considered
+        the game over or stalled while recorded commands continued; open question);
+      - 4 PeaceTreaty misses in v103–v112 games.
+
+      The trainer reads these from `not_in_legal.tsv`.
   - Ben's own games.
 - **Collect IDs now**, since replays may expire (PolyAnalytics' did). Record the build version per
   replay; older builds may not replay on 2.17.3. Detect auto-skipped and rushed turns caused by the
