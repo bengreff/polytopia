@@ -367,6 +367,11 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - **R5b ends here** with one evaluated iteration (no change). The GPU slot goes to R7, the
     better-evidenced lever.
 
+- **Interpretation check (03:10):** R4 at 20k sampled at temperature 0.5 on the standard Crazy
+  seeds wins 178/200 (89.0%, 83.9–92.6), against 188/200 greedy. RL trains the sampled policy
+  (84% → 91% in R5b's own games), and its gains don't show in greedy play until the sampled policy
+  passes the greedy one.
+
 ## R5c — RL aimed at the weak matchups (pre-registered 2026-10-22, 02:20)
 
 - **Why:** the full M4 gate failed on 3 cells, and 19 cells won ≤ 15/20
