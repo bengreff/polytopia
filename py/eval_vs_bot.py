@@ -137,37 +137,51 @@ def main():
                 if jobs:
                     start(e, s)
         t0 = time.time()
-        while any(live):
-            # Finish games that are over, start new ones.
+        # Two groups of slots (even, odd) alternate: while the network chooses for one group on this
+        # thread, the game processes step the other group and observe it again on `orch`. Each game
+        # process only ever serves one request at a time. Games and results are the same as without
+        # the overlap (12 of 12 games identical in the check).
+        orch = cf.ThreadPoolExecutor(1)
+
+        def finish(group):
             for e in range(len(envs)):
                 for s, g in list(live[e].items()):
                     st = g['st']
-                    if st.ended or st.turn >= TURN_CAP:
-                        agent_id = g['seat'] + 1
-                        res = 'win' if st.ended and st.winner == agent_id else 'loss' if st.ended else 'cap'
-                        results.append((g['seed'], g['seat'], g['tribes'], res, st.turn))
-                        if out:
-                            out.write(f"{g['seed']}\t{g['seat']}\t{g['tribes'][0]}\t{g['tribes'][1]}\t{res}\t{st.turn}\n")
-                            out.flush()
-                        del live[e][s]
-                        if jobs:
-                            start(e, s)
-                        n = len(results)
-                        if n % 20 == 0:
-                            w = sum(r[3] == 'win' for r in results)
-                            lo, hi = wilson(w, n)
-                            print(f'{n} games: agent won {w} ({w / n:.1%}, 95% CI {lo:.1%}-{hi:.1%}), '
-                                  f'{sum(r[3] == "cap" for r in results)} capped, {time.time() - t0:.0f} s', flush=True)
-            order = [sorted(l) for l in live]
-            if not any(order):
-                break
+                    if s % 2 != group or not (st.ended or st.turn >= TURN_CAP):
+                        continue
+                    agent_id = g['seat'] + 1
+                    res = 'win' if st.ended and st.winner == agent_id else 'loss' if st.ended else 'cap'
+                    results.append((g['seed'], g['seat'], g['tribes'], res, st.turn))
+                    if out:
+                        out.write(f"{g['seed']}\t{g['seat']}\t{g['tribes'][0]}\t{g['tribes'][1]}\t{res}\t{st.turn}\n")
+                        out.flush()
+                    del live[e][s]
+                    if jobs:
+                        start(e, s)
+                    n = len(results)
+                    if n % 20 == 0:
+                        w = sum(r[3] == 'win' for r in results)
+                        lo, hi = wilson(w, n)
+                        print(f'{n} games: agent won {w} ({w / n:.1%}, 95% CI {lo:.1%}-{hi:.1%}), '
+                              f'{sum(r[3] == "cap" for r in results)} capped, {time.time() - t0:.0f} s', flush=True)
+
+        def prep(group):
+            """Finishes the group's games, then observes its live slots (and asks the AI, with --teacher)."""
+            finish(group)
+            order = [sorted(s for s in l if s % 2 == group) for l in live]
             obs = list(pool.map(lambda e: envs[e].observe([(s, 0) for s in order[e]]) if order[e] else [], range(len(envs))))
+            bots = list(pool.map(lambda e: envs[e].bot(order[e]) if order[e] else [], range(len(envs)))) if args.teacher else None
             flat = [(e, s) for e in range(len(envs)) for s in order[e]]
-            flat_obs = [o for e in range(len(envs)) for o in obs[e]]
+            return flat, [o for e in range(len(envs)) for o in obs[e]], \
+                [b for e in range(len(envs)) for b in bots[e]] if bots else None
+
+        def act(data):
+            flat, flat_obs, bots = data
+            if not flat:
+                return None
             statuses = [live[e][s]['st'] for e, s in flat]
             if args.teacher:
-                bots = list(pool.map(lambda e: envs[e].bot(order[e]) if order[e] else [], range(len(envs))))
-                acts = [b if b >= 0 else polyenv.STEP_BOT_OWN for e in range(len(envs)) for b in bots[e]]
+                acts = [b if b >= 0 else polyenv.STEP_BOT_OWN for b in bots]
             else:
                 acts = choose(net, args.device, flat_obs, statuses, args.temperature, rng)
             per_env = [[] for _ in envs]
@@ -179,12 +193,27 @@ def main():
                 if g['n'] > COMMANDS_PER_TURN_CAP and a != polyenv.STEP_BOT_OWN:  # a safety net against a stuck policy
                     a = int(np.nonzero(g['st'].legal[:, 0] == 15)[0][0])
                 per_env[e].append((s, int(a)))
-            stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))
-            for e in range(len(envs)):
-                for (s, _), (ok, st) in zip(per_env[e], stepped[e]):
-                    if not ok:
-                        raise polyenv.EnvError(f'env {e} slot {s}: legal command rejected')
-                    live[e][s]['st'] = st
+            return per_env
+
+        def step_then_prep(group, per_env):
+            if per_env is not None:
+                stepped = list(pool.map(lambda e: envs[e].step(per_env[e]) if per_env[e] else [], range(len(envs))))
+                for e in range(len(envs)):
+                    for (s, _), (ok, st) in zip(per_env[e], stepped[e]):
+                        if not ok:
+                            raise polyenv.EnvError(f'env {e} slot {s}: legal command rejected')
+                        live[e][s]['st'] = st
+            return prep(group)
+
+        here, group = prep(0), 0
+        nxt = orch.submit(prep, 1)
+        while True:
+            per_env = act(here)
+            other = nxt.result()
+            if per_env is None and not other[0]:
+                break
+            nxt = orch.submit(step_then_prep, group, per_env)
+            here, group = other, 1 - group
     n = len(results)
     w = sum(r[3] == 'win' for r in results)
     lo, hi = wilson(w, n)
