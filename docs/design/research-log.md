@@ -189,8 +189,16 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     with probability ~1.4%, about 4 of 288 by chance; 9 did.
   - **Weakest tribes:** as the bot's tribe, Zebasi 82/96 and Vengir 84/96; as ours, Xin-xi 86/96,
     Aimo and Quetzali 88/96.
-  - **Next:** the 9 cells below 70% re-tested with 20 games each (seeds from 12,000,000) to tell weak
-    matchups from noise.
+  - **Re-test of the 9 cells below 70%**, 20 fresh games each (seeds from 12,000,000,
+    `--cell_list`): **164/180 = 91.1%** (86.0–94.5). Every cell is ≥ 85%:
+    - 17/20: Aimo vs Vengir (seat 2), Oumaji vs Luxidoor (seat 1);
+    - 18/20: Oumaji vs Zebasi, Xin-xi vs Hoodrick, Xin-xi vs Vengir;
+    - 19/20: the other four.
+
+    The screen's low cells were noise.
+  - **M4 gate status:** the pooled condition is met (lower bound 93.4%). No cell is confirmed below
+    70%, but the gate as written needs ≥ 20 games in every cell (5,760 games), and 279 cells have
+    only the screen's 4. Ben's best-of-5 is the remaining step.
 
 ## R5 — policy-only RL from the human-tuned policy (pre-registered 2026-10-21, 22:05)
 

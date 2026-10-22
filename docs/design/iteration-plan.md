@@ -176,3 +176,7 @@ Decision rules:
 - 00:13 The matchup screen (R4 at 20k vs Crazy, 4 games per tribe pair × seat) first died: port
   8640 belongs to an old http.server of Ben's. Rerunning on 8740. Ports to avoid on this Mac: 8600,
   8631, 8640, 8650, 8655, 8660, 8765, 8771.
+- 00:35 **M4 screen for R4 at 20k:** 94.8% vs Crazy over all 288 tribe-pair × seat cells (1,152
+  games, lower bound 93.4%). The 9 cells under 70% re-tested at 20 games: 91.1%, all ≥ 85%. No weak
+  matchup confirmed. R5 ended flat (Crazy 182/200 vs 180 at its start). R5b iteration 1 is learning;
+  R6 at 8k steps.
