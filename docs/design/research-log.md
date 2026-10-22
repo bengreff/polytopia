@@ -267,3 +267,18 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Paired on Crazy: only i01 won 10, only R4 won 10 (p = 1).
   - **No measurable change.** The step is small (lr 3e-5 with cosine decay, anchor weight 0.5), so
     this is expected after one iteration.
+
+## R5b — RL with a larger step, from R4 at 20k (pre-registered 2026-10-21, 23:55)
+
+- **Why:** R5's first iteration moved the policy too little to measure (KL 0.011, Crazy 180/200
+  before and after), and R4 at 20k (94% vs Crazy) is now the reference.
+- **Hypothesis:** with a 3× larger learning rate and a weaker anchor, a few PPO iterations raise
+  the raw policy's win rate against Crazy above R4 at 20k.
+- **Change from R5:** start from R4 step 20k; lr 1e-4 (R5: 3e-5); BC anchor weight 0.2 (R5: 0.5).
+  - Same as R5: opponents Crazy 2/3, self 1/3; temperature 0.5; 600 games per iteration; 2 epochs.
+  - 5 iterations, starting when R5's iteration 2 has been evaluated.
+- **Evaluation:** every iteration vs Crazy, 200 games on the fixed seeds, paired with R4 at 20k.
+  Vs Hard and Normal at the end.
+- **Expected:** a paired gain vs Crazy by iteration 3; KL per iteration 0.03–0.1.
+- **Falsifier:** no paired gain after 3 iterations (point estimate not above 188/200), or a drop
+  below 180/200 → RL at this scale doesn't help; record and stop.
