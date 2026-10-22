@@ -6,7 +6,8 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
   same opponent (a bot difficulty, or self-play). A is then divided by its standard deviation over
   games. No learned baseline: the value head isn't trustworthy yet (research-log, R3).
 - **Policy loss:** -min(r A, clip(r, 1 - eps, 1 + eps) A) with r = pi(played) / pi_old(played),
-  pi_old from the recorded `logp` (the sampling policy, temperature 1).
+  pi_old from the recorded `logp` (the sampling policy). pi is softmax(logits / --temperature), the
+  same temperature the actors sampled at.
 - **Anchor:** cross-entropy on batches of supervised data (--bc, train_bc.py's source syntax), weight
   --bc_weight, so the policy doesn't drift from what it learned by imitation.
 - **Value:** BCE of the value head against z on the RL games (weight --value_weight).
@@ -98,6 +99,8 @@ def main():
     ap.add_argument('--value_weight', type=float, default=0.25)
     ap.add_argument('--entropy', type=float, default=0.003)
     ap.add_argument('--clip', type=float, default=0.2)
+    ap.add_argument('--temperature', type=float, default=1.0,
+                    help='the policy being improved is softmax(logits / T); must equal the actors\' --temperature')
     ap.add_argument('--lr', type=float, default=3e-5)
     ap.add_argument('--epochs', type=int, default=2)
     ap.add_argument('--batch', type=int, default=256)
@@ -141,7 +144,7 @@ def main():
         with train_bc.autocast(dev):
             logits, v, _ = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
         logits = logits.float()
-        logp_all = torch.log_softmax(logits, 1)
+        logp_all = torch.log_softmax(logits / args.temperature, 1)
         logp = logp_all.gather(1, b['played'][:, None]).squeeze(1)
         ratio = torch.exp(logp - b['logp'])
         A = b['adv']

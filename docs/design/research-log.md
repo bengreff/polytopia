@@ -175,6 +175,9 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - **Games:** 600 per iteration, sampled at temperature 1. Opponents: Crazy 2/3, itself 1/3
     (amended before the start: the first draft had Hard 1/4, but R4 at 6k wins every Hard game,
     which gives no learning signal). Seeds 30,000,000 + 100,000 × iteration.
+  - **Temperature 0.5** for both the actors' sampling and the learner's policy (also amended before
+    the start). R4 imitates humans, so its distribution is far flatter than the AI clone's (top-1
+    41%), and temperature-1 games would be much weaker than the greedy policy being evaluated.
   - **Learner:** `py/train_rl.py` defaults. Clip 0.2, lr 3e-5 with cosine decay over 2 epochs,
     entropy 0.003, value weight 0.25, BC anchor weight 0.5 on `human1` (R4's own data).
   - Each iteration starts from the previous one's policy.

@@ -6,7 +6,8 @@
 #   tools/rl_loop.sh <name> <start.pt on the Mac> <iterations> <games per iteration> <anchor spec on the PC> \
 #       [eval difficulties, e.g. "2 3"] [first iteration, default 1]
 #
-# Env OPPONENTS (default 1,2,2,3,3,self) sets the opponent mix, as py/dagger.py --opponents.
+# Env OPPONENTS (default 1,2,2,3,3,self) sets the opponent mix, as py/dagger.py --opponents; TEMP
+# (default 1) the sampling temperature, used by both the actors and the learner.
 # Files: Mac data/rl/<name>/iNN (games), runs/rl/<name>/iNN.pt (policies), runs/evals/<name>_iNN_d*.
 # PC: ~/polydata/rl/<name>/iNN, ~/runs/rl/<name>/iNN (train_rl output). Code: ~/poly/py_rl.
 set -e
@@ -21,7 +22,7 @@ while [ $i -lt $((first + iters)) ]; do
     seed=$((30000000 + i * 100000))
     echo "$(date '+%H:%M:%S') $name $it: playing $games games with $cur"
     POLYHOST=mac .venv/bin/python py/dagger.py $cur data/rl/$name/$it --games $games --first_seed $seed \
-        --opponents ${OPPONENTS:-1,2,2,3,3,self} --procs 6 --slots 12 --port 8900 --temperature 1 > runs/rl/$name/$it.play.log 2>&1
+        --opponents ${OPPONENTS:-1,2,2,3,3,self} --procs 6 --slots 12 --port 8900 --temperature ${TEMP:-1} > runs/rl/$name/$it.play.log 2>&1
     tail -2 runs/rl/$name/$it.play.log
     (cd data/rl/$name/$it && COPYFILE_DISABLE=1 tar --no-xattrs -cf - .) |
         ssh backhouse "wsl -d Ubuntu-22.04 -- bash -c \"mkdir -p ~/polydata/rl/$name/$it && tar xf - -C ~/polydata/rl/$name/$it\"" 2>/dev/null
@@ -31,7 +32,7 @@ while [ $i -lt $((first + iters)) ]; do
 cd /home/greff/poly/py_rl
 rm -rf /home/greff/runs/rl/$name/$it
 setsid nohup /home/greff/polyvenv/bin/python train_rl.py /home/greff/runs/rl/$name/$it.init.pt /home/greff/polydata/rl/$name/$it \
-    /home/greff/runs/rl/$name/$it --bc $anchor > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
+    /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
 EOF
     until ssh -o ConnectTimeout=20 backhouse "wsl -d Ubuntu-22.04 -- test -f /home/greff/runs/rl/$name/$it/policy.pt" 2>/dev/null; do
         if ssh -o ConnectTimeout=20 backhouse "wsl -d Ubuntu-22.04 -- bash -c \"grep -q Traceback /home/greff/runs/rl/$name/$it.log\"" 2>/dev/null; then
