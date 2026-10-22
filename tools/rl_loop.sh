@@ -1,7 +1,7 @@
 #!/bin/sh
 # Policy-only RL iterations (docs/design/iteration-plan.md): the Mac plays games with the current
-# policy (py/dagger.py, temperature 1), the PC takes one PPO step on them (py/train_rl.py), the new
-# policy comes back, and it is evaluated on the fixed seeds. Each iteration continues from the last.
+# policy (py/dagger.py), the PC takes one PPO step on them (py/train_rl.py), the new policy comes
+# back, and it is evaluated on the fixed seeds. Each iteration continues from the last.
 #
 #   tools/rl_loop.sh <name> <start.pt on the Mac> <iterations> <games per iteration> <anchor spec on the PC> \
 #       [eval difficulties, e.g. "2 3"] [first iteration, default 1]
@@ -14,7 +14,18 @@ set -e
 cd /Users/ben/polytopia
 name=$1; start=$2; iters=$3; games=$4; anchor=$5; evals=${6:-"2 3"}; first=${7:-1}
 mkdir -p data/rl/$name runs/rl/$name
-tar cf - -C py model.py polyenv.py train_bc.py train_rl.py | ssh backhouse "wsl -d Ubuntu-22.04 -- bash -c \"mkdir -p ~/poly/py_rl && tar xf - -C ~/poly/py_rl\"" 2>/dev/null
+
+# The link to the PC drops now and then: each transfer is a function, retried 6 times 30 s apart.
+retry() { n=0; until "$@"; do n=$((n + 1)); [ $n -ge 6 ] && return 1; echo "retrying $1 ($n)"; sleep 30; done; }
+pc() { ssh -o ConnectTimeout=30 backhouse "wsl -d Ubuntu-22.04 -- $1"; }
+push_code() { tar cf - -C py model.py polyenv.py train_bc.py train_rl.py 2>/dev/null | pc "bash -c \"mkdir -p ~/poly/py_rl && tar xf - -C ~/poly/py_rl\""; }
+push_games() { (cd data/rl/$name/$it && COPYFILE_DISABLE=1 tar --no-xattrs -cf - . 2>/dev/null) | pc "bash -c \"mkdir -p ~/polydata/rl/$name/$it && tar xf - -C ~/polydata/rl/$name/$it\""; }
+push_init() { pc "bash -c \"mkdir -p ~/runs/rl/$name && cat > ~/runs/rl/$name/$it.init.pt\"" < $cur; }
+launch() { pc "bash -s" < runs/rl/$name/$it.launch.sh; }
+fetch_policy() { pc "cat /home/greff/runs/rl/$name/$it/policy.pt" > runs/rl/$name/$it.pt.tmp; }
+fetch_log() { pc "cat /home/greff/runs/rl/$name/$it/log.jsonl" > runs/rl/$name/$it.learn.jsonl; }
+
+retry push_code 2>/dev/null
 cur=$start
 i=$first
 while [ $i -lt $((first + iters)) ]; do
@@ -24,25 +35,31 @@ while [ $i -lt $((first + iters)) ]; do
     POLYHOST=mac .venv/bin/python py/dagger.py $cur data/rl/$name/$it --games $games --first_seed $seed \
         --opponents ${OPPONENTS:-1,2,2,3,3,self} --procs 6 --slots 12 --port 8900 --temperature ${TEMP:-1} > runs/rl/$name/$it.play.log 2>&1
     tail -2 runs/rl/$name/$it.play.log
-    (cd data/rl/$name/$it && COPYFILE_DISABLE=1 tar --no-xattrs -cf - .) |
-        ssh backhouse "wsl -d Ubuntu-22.04 -- bash -c \"mkdir -p ~/polydata/rl/$name/$it && tar xf - -C ~/polydata/rl/$name/$it\"" 2>/dev/null
-    cat $cur | ssh backhouse "wsl -d Ubuntu-22.04 -- bash -c \"mkdir -p ~/runs/rl/$name && cat > ~/runs/rl/$name/$it.init.pt\""
+    retry push_games 2>/dev/null
+    retry push_init
     echo "$(date '+%H:%M:%S') $name $it: learning"
-    ssh backhouse "wsl -d Ubuntu-22.04 -- bash -s" <<EOF
+    cat > runs/rl/$name/$it.launch.sh <<EOF
 cd /home/greff/poly/py_rl
-rm -rf /home/greff/runs/rl/$name/$it
-setsid nohup /home/greff/polyvenv/bin/python train_rl.py /home/greff/runs/rl/$name/$it.init.pt /home/greff/polydata/rl/$name/$it \
-    /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
+if [ ! -f /home/greff/runs/rl/$name/$it/policy.pt ] && ! pgrep -f "[r]l/$name/$it --bc" > /dev/null; then
+    rm -rf /home/greff/runs/rl/$name/$it
+    setsid nohup /home/greff/polyvenv/bin/python train_rl.py /home/greff/runs/rl/$name/$it.init.pt /home/greff/polydata/rl/$name/$it \
+        /home/greff/runs/rl/$name/$it --bc $anchor --temperature ${TEMP:-1} > /home/greff/runs/rl/$name/$it.log 2>&1 < /dev/null &
+fi
 EOF
-    until ssh -o ConnectTimeout=20 backhouse "wsl -d Ubuntu-22.04 -- test -f /home/greff/runs/rl/$name/$it/policy.pt" 2>/dev/null; do
-        if ssh -o ConnectTimeout=20 backhouse "wsl -d Ubuntu-22.04 -- bash -c \"grep -q Traceback /home/greff/runs/rl/$name/$it.log\"" 2>/dev/null; then
-            echo "learner failed:"; ssh backhouse "wsl -d Ubuntu-22.04 -- tail -20 /home/greff/runs/rl/$name/$it.log"; exit 1
+    retry launch
+    waited=0
+    until pc "test -f /home/greff/runs/rl/$name/$it/policy.pt" 2>/dev/null; do
+        if pc "bash -c \"grep -q Traceback /home/greff/runs/rl/$name/$it.log\"" 2>/dev/null; then
+            echo "learner failed:"; pc "tail -20 /home/greff/runs/rl/$name/$it.log"; exit 1
         fi
+        waited=$((waited + 30))
+        if [ $waited -ge 3600 ]; then echo "learner produced nothing in an hour"; exit 1; fi
         sleep 30
     done
     sleep 5
-    ssh backhouse "wsl -d Ubuntu-22.04 -- cat /home/greff/runs/rl/$name/$it/policy.pt" > runs/rl/$name/$it.pt.tmp && mv runs/rl/$name/$it.pt.tmp runs/rl/$name/$it.pt
-    ssh backhouse "wsl -d Ubuntu-22.04 -- cat /home/greff/runs/rl/$name/$it/log.jsonl" > runs/rl/$name/$it.learn.jsonl
+    retry fetch_policy
+    mv runs/rl/$name/$it.pt.tmp runs/rl/$name/$it.pt
+    retry fetch_log
     tail -1 runs/rl/$name/$it.learn.jsonl
     cur=runs/rl/$name/$it.pt
     if [ -n "$evals" ]; then
