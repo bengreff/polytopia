@@ -39,3 +39,12 @@
 - Value over-optimization by search. Watch the selection-bias metric.
 - Local-only throughput. Measured in M0; the M3 A/B decides how search is spent.
 - Game patches: pin build 16375; fine-tune after patches; version-tag all data.
+
+## Found 2026-10-21 (night)
+- **Human replays with an empty legal list mid-game:** 14 clean games (e.g. 1fa4f4f5, e65f6f89,
+  292d2daf; v121/v122) have recorded commands at turns 7–26 while our replay's legal list is
+  empty, as if `env::Match` thought the game had ended or stalled. Their labelled decisions are
+  correct and stay in training; find out why the replay disagrees (`data/replays/raw/<id>.json`).
+  4 PeaceTreaty misses in v103–v112 games are real legal-list gaps on old versions.
+- **Seat 1 wins 75% of human championship games** (it always moves first; bot games 50.8%). Real
+  first-move edge between humans, or tournament seating (stronger player hosts)?
