@@ -182,7 +182,8 @@ def main():
                     'Lakes, small map, any of the 12 regular tribes). It first learned from 7,732 human tournament games; '
                     'since then it improves by self-play, one generation at a time. Every generation is tested against the '
                     'game\'s hardest built-in bot, against the previous generation and against generation 0. '
-                    'Watch its games below: the whole map is shown.'),
+                    'Watch its games below: the whole map is shown. Source code and research log: '
+                    '<a href="https://github.com/bengreff/polytopia" style="color:#9ec5ff">github.com/bengreff/polytopia</a>.'),
         'model': args.model or ('5.9M-parameter transformer over the 196 map tiles; it scores every legal move. Generation 0 '
                                 'is the network trained on the human games. Self-play: PPO on the outcome, with the network\'s '
                                 'own win estimate as baseline; opponents are itself and earlier generations.'),
