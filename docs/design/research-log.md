@@ -687,3 +687,33 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
 - **Gen 1's learning step:** stopped at the KL limit after 2,200 of 7,636 steps (KL 0.052, clip
   fraction 0.34), so ~29% of the generation's decisions were used. Its evaluations were running at
   19:00.
+- **Gens 1–8 overnight** (200 games each, standard seeds; paired sign tests against gen 0 on the same
+  Crazy games):
+
+  | Gen | vs previous | vs gen 0 | vs Crazy | Crazy, paired with gen 0 |
+  |---|---|---|---|---|
+  | 0 | — | — | 188 | — |
+  | 1 | 103 (51.5%) | 104 (52.0%) | 191 | 9 vs 6, p = 0.61 |
+  | 2 | 111 (55.5%) | 98 (49.0%) | 187 | 8 vs 9, p = 1 |
+  | 3 | 99 (49.5%) | 96 (48.0%) | 189 | 8 vs 7, p = 1 |
+  | 4 | 96 (48.0%) | 99 (49.5%) | **197** | 9 vs 0, p = 0.004 |
+  | 5 | 96 (48.0%) | 108 (54.0%) | 195 | 8 vs 1, p = 0.04 |
+  | 6 | 86 (43.0%) | 98 (49.0%) | 189 | 9 vs 8, p = 1 |
+  | 7 | 99 (49.5%) | **117 (58.5%, 51.6–65.1)** | **196** | 10 vs 2, p = 0.04 |
+  | 8 | 99 (49.5%) | **117 (58.5%, 51.6–65.1)** | 193 | 8 vs 3, p = 0.23 |
+
+  - From gen 2 on, the KL limit was never reached: KL 0.015–0.017 per generation with all
+    ~6,700 steps run.
+  - Night speed (8 game processes beside the evaluations): ~95 min of games per generation.
+- **Against the pre-registration:**
+  - "each generation ≥ 50% vs the previous": no, 43–55.5%; the single steps are within noise;
+  - **the falsifier fired at gen 3** (48% vs gen 0, not above 50%);
+  - the later expectation, ≥ 58% vs gen 0 by gen 6, was met only at gen 7 and gen 8 (58.5% both,
+    lower bounds 51.6%).
+- **Reading:**
+  - Small steps that each measure as "equal to the previous" do add up: gens 7 and 8 both beat
+    gen 0 with a lower bound above 50%.
+  - Against Crazy, gens 4, 5 and 7 are paired-significantly better than gen 0 (≈ 94% → 97–98%).
+  - Gen 6 was a dip on every measure.
+  - The evidence for self-play gains is real but modest. More games per generation (larger
+    steps at the same KL) is the next change, as the falsifier said.
