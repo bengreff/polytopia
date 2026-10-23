@@ -47,6 +47,10 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - Stop: `touch ~/runs/sp/s3/STOP`. Resumable.
 - **S2 failed and was stopped:** no anchor at lr 1e-4 moved the policy too far (KL 1.6), and gen 1
   lost to gen 0. S1 (from R4, with the anchor) was stopped after 1 generation.
+- **Code is public:** https://github.com/bengreff/polytopia (pushed 2026-10-23). Push after
+  committing.
+  - The history was rewritten to drop the August outreach drafts (`docs/outreach.md`) from every
+    commit; the original is in `~/polytopia-history-backup-2026-10-23.bundle`.
 - **Public site:** https://bengreff.github.io/polytopia-ai/ (repo bengreff/polytopia-ai, public).
   - It holds only the static site, exported board states and a names/stats extract; no game code
     or data files.
