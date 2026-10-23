@@ -45,6 +45,15 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - Settings change between steps via `~/runs/sp/s3/override.json` (e.g. `{"lr": 1e-5}`). If gen 1
     helps, a lower lr spreads the KL budget over more of the games.
   - Stop: `touch ~/runs/sp/s3/STOP`. Resumable.
+- **Staying up:**
+  - The Windows task `PolytopiaWSLKeepalive` (at logon; hidden `wsl -d Ubuntu-22.04 -- sleep
+    infinity`) keeps the distro alive: WSL kills a distro's jobs when its last wsl.exe session
+    ends.
+  - The Mac's `tools/site_update.sh s3 loop` restarts `sp_loop.py` if it isn't running and there is
+    no `STOP` file.
+  - On 2026-10-23 a Windows restart (17:08) had stopped the loop at gen 18.
+  - Results to gen 17: vs Crazy 198/200; vs gen 0 up to 65.5% (gen 16).
+  - How the training works: `docs/design/training-explained.md`.
 - **S2 failed and was stopped:** no anchor at lr 1e-4 moved the policy too far (KL 1.6), and gen 1
   lost to gen 0. S1 (from R4, with the anchor) was stopped after 1 generation.
 - **Code is public:** https://github.com/bengreff/polytopia (pushed 2026-10-23). Push after
