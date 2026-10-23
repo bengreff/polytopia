@@ -717,3 +717,22 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
   - Gen 6 was a dip on every measure.
   - The evidence for self-play gains is real but modest. More games per generation (larger
     steps at the same KL) is the next change, as the falsifier said.
+- **Gens 9–17** (to 2026-10-23 16:15):
+  - vs gen 0: 118, 111, 115, 119, 128, 127, 112, **131 (gen 16: 65.5%, 58.7–71.7)**, 118 of 200;
+  - vs Crazy: 195, 197, 192, 195, 192, 195, 192, 195, **198**;
+  - vs the previous generation: 42–54.5%.
+  - The loop died when Windows was restarted at 17:08. Now a Windows task holds WSL open and the
+    Mac's site loop restarts the loop when it isn't running.
+- **Human benchmark** (150 held-out human games, `py/human_bench.py`):
+
+  | | Top-1 | Policy CE | Value accuracy (early game) |
+  |---|---|---|---|
+  | Gen 0 | 43.7% | 2.109 | 77.2% (69.9%) |
+  | Gen 7 | 43.2% | 2.153 | 68.5% (54.8%) |
+  | Gen 17 | 42.5% | 2.219 | 69.5% (56.7%) |
+
+  - The policy stays human-like.
+  - The value head, trained only on self-play outcomes, lost most of its early-game accuracy on
+    human games.
+  - Options for using the human recordings without replaying them as labels:
+    [training-explained.md §9](training-explained.md).
