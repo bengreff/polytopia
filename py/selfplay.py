@@ -314,7 +314,9 @@ def main():
                         g['turn'], g['n'] = st.turn, 0
                     g['n'] += 1
                     if g['n'] > COMMANDS_PER_TURN_CAP:  # a safety net against a stuck policy
-                        a = int(np.nonzero(st.legal[:, 0] == END_TURN)[0][0])
+                        ends = np.nonzero(st.legal[:, 0] == END_TURN)[0]
+                        if len(ends):  # (not legal while a choice is pending, e.g. a city reward)
+                            a = int(ends[0])
                     acts[s] = int(a)
             te = time.time()
             stepped = env.step([(s, acts[s]) for s in slots_now])

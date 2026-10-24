@@ -228,8 +228,9 @@ def main():
                 if g['st'].turn != g['turn']:
                     g['turn'], g['n'] = g['st'].turn, 0
                 g['n'] += 1
-                if g['n'] > COMMANDS_PER_TURN_CAP and a != polyenv.STEP_BOT_OWN:  # a safety net against a stuck policy
-                    a = int(np.nonzero(g['st'].legal[:, 0] == 15)[0][0])
+                ends = np.nonzero(g['st'].legal[:, 0] == 15)[0]
+                if g['n'] > COMMANDS_PER_TURN_CAP and a != polyenv.STEP_BOT_OWN and len(ends):  # a safety net against a stuck policy
+                    a = int(ends[0])
                 per_env[e].append((s, int(a)))
             return per_env
 

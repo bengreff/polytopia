@@ -191,8 +191,9 @@ def main():
                 if st.turn != g['turn']:
                     g['turn'], g['n'] = st.turn, 0
                 g['n'] += 1
-                if g['n'] > COMMANDS_PER_TURN_CAP:  # a safety net against a stuck policy
-                    a = int(np.nonzero(st.legal[:, 0] == 15)[0][0])
+                ends = np.nonzero(st.legal[:, 0] == 15)[0]
+                if g['n'] > COMMANDS_PER_TURN_CAP and len(ends):  # a safety net against a stuck policy
+                    a = int(ends[0])
                 per_env[e].append((s, int(a)))
             return per_env
 
