@@ -8,8 +8,10 @@
                     vs gen 0     greedy, --h2h_seeds x 2 games, seeds from 14,000,000
                   (Crazy and gen 0 every --crazy_every generations)
 
-Opponents in the training games: the policy itself (--self_share), else an earlier generation drawn
-uniformly from the last --pool_size ones (gen 0 always among them).
+Opponents in the training games: the policy itself (--self_share), the game's AI (--bot_share, at
+difficulty --bot), else an earlier generation drawn uniformly from the --fixed ones (always there,
+e.g. 0,1,2) and the last --recent ones before gen(g-1). With --turn_cost, faster wins are worth a
+little more (py/train_rl.py --turn_cost).
 
 Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training games); learn/gNNN
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
@@ -157,7 +159,11 @@ def main():
     ap.add_argument('--generations', type=int, default=1000)
     ap.add_argument('--games', type=int, default=1500, help='training games per generation')
     ap.add_argument('--self_share', type=float, default=0.5)
-    ap.add_argument('--pool_size', type=int, default=8)
+    ap.add_argument('--fixed', default='0', help='generations always in the pool, e.g. "0,1,2"')
+    ap.add_argument('--recent', type=int, default=7, help='the last N generations before gen(g-1) in the pool')
+    ap.add_argument('--bot_share', type=float, default=0.0, help='training games against the game\'s AI')
+    ap.add_argument('--bot', type=int, default=3, help='its difficulty (3 = Crazy)')
+    ap.add_argument('--turn_cost', type=float, default=0.0, help='py/train_rl.py --turn_cost')
     ap.add_argument('--temperature', type=float, default=0.5)
     ap.add_argument('--lr', type=float, default=3e-5)
     ap.add_argument('--bc', default='/home/greff/polydata/human_full:1')
@@ -202,10 +208,12 @@ def main():
         apply_overrides(run, args)
         prev = gen_path(run, g - 1)
         games_dir = os.path.join(run, 'games', f'g{g:03d}')
-        past = list(range(max(1, g - 1 - args.pool_size + 1), g - 1))  # earlier generations, not gen(g-1) itself
-        pool = [f'self:{args.self_share}'] if g == 1 else \
-            [f'self:{args.self_share}'] + [f'{gen_path(run, p)}:{(1 - args.self_share) / (len(past) + 1):.4f}'
-                                           for p in [0] + past]
+        pool = [f'self:{args.self_share}'] + ([f'bot:{args.bot}:{args.bot_share}'] if args.bot_share > 0 else [])
+        fixed = [int(x) for x in str(args.fixed).split(',') if x.strip()]
+        past = sorted({p for p in fixed if p < g - 1} | set(range(max(0, g - 1 - args.recent), g - 1)))  # not gen(g-1)
+        if past:
+            share = (1 - args.self_share - (args.bot_share if args.bot_share > 0 else 0)) / len(past)
+            pool += [f'{gen_path(run, p)}:{share:.4f}' for p in past]
         status(run, generation=g, step='games', pool=pool)
         procs = free_procs(args.procs) - (args.eval_procs if evals and evals[1].poll() is None else 0)
         procs = max(8, procs)
@@ -229,7 +237,7 @@ def main():
             run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir] + anchor +
                          ['--temperature', str(args.temperature),
                           '--lr', str(args.lr), '--epochs', str(args.epochs), '--baseline', args.baseline,
-                          '--target_kl', str(args.target_kl)]
+                          '--target_kl', str(args.target_kl), '--turn_cost', str(args.turn_cost)]
                     + args.learn_extra.split(),
                     os.path.join(run, 'learn', f'g{g:03d}.log'))
         last = (open(os.path.join(learn_dir, 'log.jsonl')).read().strip().splitlines() or ['(no log lines)'])[-1]

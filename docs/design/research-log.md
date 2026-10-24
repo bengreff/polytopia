@@ -736,3 +736,56 @@ Every cell is 100 seeds × 2 sides (200 games), seeds 10,000,000+, with the 95% 
     human games.
   - Options for using the human recordings without replaying them as labels:
     [training-explained.md §9](training-explained.md).
+- **Gens 18–28** (to 2026-10-24 10:00; 200 games each):
+
+  | Gen | vs previous | vs gen 0 | vs Crazy |
+  |---|---|---|---|
+  | 18 | 101 | 116 | 196 |
+  | 19 | 87 | 133 | 192 |
+  | 20 | 104 | 120 | 192 |
+  | 21 | 94 | 121 | 192 |
+  | 22 | 96 | 132 | 195 |
+  | 23 | 98 | 131 | 195 |
+  | 24 | 101 | **140 (70.0%, 63.3–75.9)** | 192 |
+  | 25 | 93 | 128 | 191 |
+  | 26 | (crashed, see below) | 127 | 193 |
+  | 27 | 100 | 129 | 189 |
+  | 28 | 87 | — | 190 |
+
+  - Gen 26's evaluation against gen 25 crashed: the per-turn command cap forced End Turn while it
+    wasn't legal (a city reward was pending). Fixed in commit 855310b.
+  - **Wins are getting slower:**
+    - Gen 1 beat gen 0 in 25.4 turns on average (median 25); gen 24 took 34.5 (median 34).
+    - Against the previous generation, the average won game went from 27 turns (gen 1) to 35–39
+      (gens 22–28).
+    - Against Crazy, the average win has stayed at 21.1–22.0 turns at every generation.
+    - Nothing in the reward prefers a fast win, so self-play has drifted to long games.
+
+## S3b — S3 with fixed early opponents, the bot and a turn cost (pre-registered 2026-10-24, 10:20)
+Ben asked for three changes to S3 from the next generation (gen 30). It continues in the same run
+directory, so gens 0–29 are unchanged.
+- **Opponents in the training games:**
+
+  | Opponent | Share | Before (S3) |
+  |---|---|---|
+  | The learner itself | 40% | 50% |
+  | Crazy, the game's AI (`--bot_share 0.1`) | 10% | — |
+  | Gens 0, 1, 2 (always in the pool, `--fixed 0,1,2`) | 6.25% each | gen 0 only |
+  | The last 5 generations before the learner (`--recent 5`) | 6.25% each | the last 7 |
+
+  - In games against the bot, only the network's seat is recorded, as with checkpoints.
+- **Turn cost (`--turn_cost 0.005`):**
+  - A win at turn T counts as max(0.5, 1 − 0.005 T) in the advantage, instead of 1. For example,
+    0.90 at turn 20, 0.85 at turn 30 and 0.80 at turn 40. A loss is still 0.
+  - So winning 20 turns sooner is worth about 10% of a win: speed is a tiebreaker, not the goal.
+  - The value head still learns win or loss, so its estimate stays a probability of winning; it
+    is used as the baseline.
+- **Everything else as S3:** 1,500 games, temperature 0.5, lr 3e-5, target KL 0.05, no BC anchor;
+  evaluations unchanged (seeds, greedy play, 200 games each).
+- **Expected, by gen 36:**
+  - Won evaluation games are faster: against gen 0, ≤ 30 turns on average (gens 20–27: 32–35);
+    against Crazy, ≤ 20.5 turns (gens 0–28: 21.1–22.0).
+  - Strength holds: ≥ 60% against gen 0 (gens 19–27: 60–70%) and ≥ 94% against Crazy.
+- **Falsifier:** two consecutive generations below 58% against gen 0, or a Crazy result paired-
+  significantly worse than gen 29's on the same games. Either means the turn cost is costing
+  strength, and I'd halve it.

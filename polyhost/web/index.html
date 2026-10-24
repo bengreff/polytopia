@@ -65,6 +65,9 @@
   select { font: inherit; padding: 6px; border-radius: 8px; background: #1d2330; color: #fff; border: 1px solid #39435a; }
   .btn { font: inherit; padding: 10px 18px; border-radius: 12px; border: 0; background: #2b8be0; color: #fff; cursor: pointer; margin-top: 14px; }
   .muted { color: var(--dim); font-size: 13px; }
+  table.stats { border-collapse: collapse; margin: 4px 0 6px; font-size: 14px; }
+  table.stats td, table.stats th { padding: 3px 10px 3px 0; text-align: left; }
+  table.stats th { color: var(--dim); font-weight: normal; }
   #log { font-size: 14px; color: var(--dim); max-height: 50vh; overflow: auto; min-width: 320px; }
   #watchbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--card); border-radius: 18px;
               padding: 8px 12px; display: none; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 96vw; }
@@ -131,13 +134,13 @@
   <span class="wbtn" id="wlist" title="Other games">☰</span><span class="wbtn" id="wexit" title="Leave watch mode">✕</span>
   <div id="winfo"></div>
 </div>
-<div class="overlay" id="menuview"><div class="panel"><h2>New game</h2>
+<div class="overlay" id="menuview"><div class="panel"><div id="menustats"></div><h2>New game</h2>
   <div class="form">
     <label>Your tribe</label><select id="tribe"></select>
     <label>Bot tribe</label><select id="opponent"></select>
     <label>Bot difficulty</label><select id="difficulty"><option value="-1" selected>Our network</option><option value="0">Easy</option><option value="1">Normal</option><option value="2">Hard</option><option value="3">Crazy</option></select>
     <label>Game mode</label><select id="mode"><option value="4" selected>Might</option><option value="2">Domination</option><option value="1">Perfection</option></select>
-    <label>Map type</label><select id="map"><option value="2" selected>Lakes</option><option value="1">Drylands</option><option value="3">Continents</option><option value="6">Pangea</option><option value="4">Archipelago</option><option value="5">Water world</option></select>
+    <label>Map type</label><select id="mapType"><option value="2" selected>Lakes</option><option value="1">Drylands</option><option value="3">Continents</option><option value="6">Pangea</option><option value="4">Archipelago</option><option value="5">Water world</option></select>
     <label>Map size</label><select id="size"><option value="14" selected>Small 14×14</option><option value="11">Tiny 11×11</option><option value="16">Normal 16×16</option><option value="18">Large 18×18</option></select>
     <label>Fog</label><select id="reveal"><option value="0">On</option><option value="1">Reveal map</option></select>
   </div>

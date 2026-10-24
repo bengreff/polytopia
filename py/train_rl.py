@@ -2,18 +2,21 @@
 PPO's clipped objective with the game's outcome as the only reward, plus a behaviour-cloning anchor.
 
 - **Advantage:** every decision of a player in a game gets A = z - b, where z is 1 if that player won
-  and 0 if they lost (capped games are skipped). With `--baseline opponent` (the default), b is the
+  and 0 if they lost (capped games are skipped); with `--turn_cost c`, a win at turn T counts
+  max(0.5, 1 - c T) instead, so faster wins are worth a little more. With `--baseline opponent` (the default), b is the
   mean z of this batch's games against the same opponent (a bot difficulty, or self-play), and A is
   divided by its standard deviation over games. With `--baseline value`, b is the acting network's
   own value estimate before the move (`v_old`, recorded by py/selfplay.py), and A is centred and
   divided by its standard deviation over decisions: a baseline that depends only on the position
-  adds no bias.
+  adds no bias (v_old estimates the chance of winning, not the turn-discounted z; that's still a
+  function of the position only).
 - **Policy loss:** -min(r A, clip(r, 1 - eps, 1 + eps) A) with r = pi(played) / pi_old(played),
   pi_old from the recorded `logp` (the sampling policy). pi is softmax(logits / --temperature), the
   same temperature the actors sampled at.
 - **Anchor:** cross-entropy on batches of supervised data (--bc, train_bc.py's source syntax), weight
   --bc_weight, so the policy doesn't drift from what it learned by imitation.
-- **Value:** BCE of the value head against z on the RL games (weight --value_weight).
+- **Value:** BCE of the value head against the outcome (1 for a win, however long it took) on the RL
+  games (weight --value_weight): the value head stays a probability of winning.
 - Entropy bonus --entropy.
 
     python train_rl.py <init.pt> <rl_dir[,rl_dir2...]> <out_dir> --bc human1:0.5,m1v2:0.5 [--epochs 2]
@@ -35,27 +38,30 @@ import train_bc
 MAX_LEGAL = 1024  # train_bc.collate's default max_legal
 
 
-def game_targets(files):
-    """Per file: {player id: z} for the agent seats of finished games, and the opponent; then the
-    per-opponent baseline and the advantage per (file, player)."""
+def game_targets(files, turn_cost=0.0):
+    """Per (file, player) of the agent seats of finished games: (advantage with the per-opponent
+    baseline, outcome, reward z); and the per-opponent baseline. The reward of a win at turn T is
+    max(0.5, 1 - turn_cost T), of a loss 0."""
     rows = []
     for f in files:
         z = np.load(f)
         if not bool(z['ended']) or int(z['winner']) not in (1, 2):
             continue
-        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner'])))
+        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner']), int(z['turns'])))
+    win_z = lambda turns: max(0.5, 1.0 - turn_cost * turns)
     by_opp = {}
-    for f, opp, seats, w in rows:
+    for f, opp, seats, w, turns in rows:
         for p in seats:
-            by_opp.setdefault(opp, []).append(1.0 if p == w else 0.0)
+            by_opp.setdefault(opp, []).append(win_z(turns) if p == w else 0.0)
     base = {o: float(np.mean(v)) for o, v in by_opp.items()}
-    adv, won = {}, {}
-    for f, opp, seats, w in rows:
+    adv, won, reward = {}, {}, {}
+    for f, opp, seats, w, turns in rows:
         for p in seats:
             won[(f, p)] = 1.0 if p == w else 0.0
-            adv[(f, p)] = won[(f, p)] - base[opp]
+            reward[(f, p)] = win_z(turns) if p == w else 0.0
+            adv[(f, p)] = reward[(f, p)] - base[opp]
     sd = float(np.std(list(adv.values()))) or 1.0
-    return {k: (v / sd, won[k]) for k, v in adv.items()}, base, {o: len(v) for o, v in by_opp.items()}
+    return {k: (v / sd, won[k], reward[k]) for k, v in adv.items()}, base, {o: len(v) for o, v in by_opp.items()}
 
 
 class RLStream(torch.utils.data.IterableDataset):
@@ -79,10 +85,10 @@ class RLStream(torch.utils.data.IterableDataset):
                     g = train_bc.load_game(f)
                     z = np.load(f)
                     player = z['player'].astype(np.int64)
-                    a = np.array([self.adv.get((f, int(p)), (np.nan, np.nan)) for p in player], np.float32).reshape(-1, 2)
+                    a = np.array([self.adv.get((f, int(p)), (np.nan,) * 3) for p in player], np.float32).reshape(-1, 3)
                     if self.value_norm:
                         mean, sd = self.value_norm
-                        a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (a[:, 1] - z['v_old'] - mean) / sd)
+                        a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (a[:, 2] - z['v_old'] - mean) / sd)
                     games.append(g)
                     extra.append(dict(played=z['played'].astype(np.int64), logp=z['logp'].astype(np.float32),
                                       adv=a[:, 0], won=a[:, 1]))
@@ -120,6 +126,8 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--target_kl', type=float, default=0.0,
                     help='stop early once the mean KL to the acting policy over the last 50 steps passes this (0: never)')
+    ap.add_argument('--turn_cost', type=float, default=0.0,
+                    help='a win at turn T is worth max(0.5, 1 - turn_cost T) in the advantage (the value head still learns win/loss)')
     ap.add_argument('--baseline', choices=['opponent', 'value'], default='opponent',
                     help='opponent: per-opponent mean outcome; value: the acting network\'s v_old (py/selfplay.py games)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
@@ -135,7 +143,7 @@ def main():
 
     files = [os.path.join(d, f) for d in args.rl_dirs.split(',') for f in os.listdir(d)
              if f.endswith('.npz') and not f.endswith('.tmp.npz')]
-    adv, base, counts = game_targets(files)
+    adv, base, counts = game_targets(files, args.turn_cost)
     value_norm = None
     if args.baseline == 'value':
         res = []
@@ -143,11 +151,15 @@ def main():
             z = np.load(f)
             for p, v in zip(z['player'], z['v_old']):
                 if (f, int(p)) in adv:
-                    res.append(adv[(f, int(p))][1] - float(v))
+                    res.append(adv[(f, int(p))][2] - float(v))
         value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
         print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
-              f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w in adv.values()]):.3f} per game)',
+              f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w, _ in adv.values()]):.3f} per game)',
               flush=True)
+    if args.turn_cost:
+        wins = [r for _, w, r in adv.values() if w]
+        print(f'turn cost {args.turn_cost}: {len(wins)} wins, mean reward of a win {np.mean(wins):.3f} '
+              f'(range {min(wins):.3f}-{max(wins):.3f})', flush=True)
     decisions = sum(len(np.load(f)['played']) for f in files)
     print(f'{len(files)} RL games, {decisions} decisions; baseline (win rate) by opponent: '
           + ', '.join(f"{'self' if o < 0 else o}: {base[o]:.3f} over {counts[o]}" for o in sorted(base)), flush=True)

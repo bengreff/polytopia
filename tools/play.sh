@@ -10,4 +10,4 @@ agent=$!
 trap 'kill $agent 2>/dev/null' EXIT INT TERM
 sleep 3
 echo "open http://localhost:$port and choose Bot difficulty: Our network"
-POLY_AGENT_PORT=8131 build/polyhost-mac serve "$port"
+POLY_AGENT_PORT=8131 POLY_AGENT_NAME=$(basename "$ck") build/polyhost-mac serve "$port"

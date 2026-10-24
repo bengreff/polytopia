@@ -228,7 +228,9 @@ struct Session {
         playName = now("%Y-%m-%d_%H%M%S");
         playTribes[0] = tribe, playTribes[1] = opponent;
         const char* level[] = {"bot, Easy", "bot, Normal", "bot, Hard", "bot, Crazy"};
-        playOpponent = netOpponent ? "our network" : difficulty >= 0 && difficulty <= 3 ? level[difficulty] : "bot";
+        const char* net = std::getenv("POLY_AGENT_NAME");  // the checkpoint, from tools/play.sh
+        playOpponent = netOpponent ? std::string("our network") + (net ? std::string(" (") + net + ")" : "")
+                     : difficulty >= 0 && difficulty <= 3 ? level[difficulty] : "bot";
         playRecorded = false;
         agentMoves();
     }
@@ -315,10 +317,11 @@ struct Session {
         return true;
     }
 
-    // Star price of a research, build or train command, from the game's own pricing.
+    // Star price of a research, build, train or upgrade command, from the game's own pricing (an
+    // upgrade costs the new unit type's price, e.g. 5 for a Rammer).
     int cost(Object* cmd) {
         std::string name = class_get_name(object_get_class(cmd));
-        if (name != "ResearchCommand" && name != "BuildCommand" && name != "TrainCommand") return -1;
+        if (name != "ResearchCommand" && name != "BuildCommand" && name != "TrainCommand" && name != "UpgradeCommand") return -1;
         int type = get<int32_t>(cmd, "<Type>k__BackingField");
         Object* data = call(gameLogicData, state());
         Object* r = nullptr;
@@ -354,6 +357,7 @@ struct Session {
         j.key("currentPlayer").num(g.get<uint8_t>(g.currentPlayer, state));
         j.key("state").num(g.state(state));
         j.key("human").num(watching ? (viewer ? viewer : 1) : human());
+        if (!watching) j.key("opponent").str(playOpponent);
         if (watching) {
             j.key("watch").open('{').key("path").str(watchPath).key("at").num(watchAt).key("base").num(watchBase)
                 .key("total").num(watchTotal).key("viewer").num(viewer).key("turnStarts").open('[');
@@ -499,7 +503,9 @@ inline const char* contentType(const std::string& path) {
 inline void serve(int port) {
     Game g;
     Session session(g);
-    session.start(7, 13, 1, 4, 2, 14);  // Imperius vs a Normal Xin-xi bot, Might, Lakes, Small
+    // Imperius vs Xin-xi, Might, Lakes, Small: against our network when py/agent_server.py is
+    // configured (tools/play.sh), else against a Normal bot
+    session.start(7, 13, std::getenv("POLY_AGENT_PORT") ? -1 : 1, 4, 2, 14);
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
@@ -531,7 +537,9 @@ inline void serve(int port) {
             respond(fd, 200, "application/json", session.stateJson());
         } else if (r.path == "/new" && r.method == "POST") {
             session.reveal = false;
-            session.start(arg("tribe", 7), arg("opponent", 13), arg("difficulty", 1), arg("mode", 4), arg("map", 2), arg("size", 14));
+            int map = arg("map", 2);
+            if (map < 1 || map > 6) map = 2;  // MapPreset.None (0) would give the generator's default, not Lakes
+            session.start(arg("tribe", 7), arg("opponent", 13), arg("difficulty", 1), arg("mode", 4), map, arg("size", 14));
             respond(fd, 200, "application/json", session.stateJson());
         } else if (r.path == "/reveal" && r.method == "POST") {
             session.reveal = arg("on", 0);

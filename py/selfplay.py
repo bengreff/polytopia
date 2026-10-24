@@ -2,10 +2,11 @@
 with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
 
 - **Training games** (`--out_dir`): the learner policy (`--net`) plays at `--temperature` against an
-  opponent drawn per game from `--pool`: `self` (the same policy on both seats, both recorded) or a
-  checkpoint (an earlier generation; only the learner's seat is recorded). Files are py/dagger.py's
+  opponent drawn per game from `--pool`: `self` (the same policy on both seats, both recorded), a
+  checkpoint (an earlier generation) or `bot:<difficulty>` (the game's own AI); against those only the
+  learner's seat is recorded. Files are py/dagger.py's
   layout, so py/train_rl.py reads them: `opponent` is -1 for self and 100 + the checkpoint's index
-  in the pool otherwise, `played`/`logp` are the learner's sampled rows, `v_old` the learner's own
+  in the pool otherwise (checkpoint or bot), `played`/`logp` are the learner's sampled rows, `v_old` the learner's own
   value estimate (probability of winning) before each of its moves, for py/train_rl.py --baseline
   value, `label` = `played` (there is no teacher), `source` = 'selfplay'.
 - **Matches** (`--match B`): `--net` against B, both greedy (`--temperature` 0), each seed played
@@ -17,7 +18,7 @@ Every game process has its own worker thread that steps its slots; one inference
 the workers' requests per network on the GPU. Tribes are drawn from the seed as in eval_vs_bot.py.
 
     POLYHOST=qemu python selfplay.py gen004.pt --out_dir games/g005 --games 2000 \
-        --pool self:0.5,gen003.pt:0.25,gen002.pt:0.25 --temperature 0.5 --first_seed 50500000
+        --pool self:0.4,gen003.pt:0.25,gen002.pt:0.25,bot:3:0.1 --temperature 0.5 --first_seed 50500000
     POLYHOST=qemu python selfplay.py gen005.pt --match gen004.pt --seeds 100 --first_seed 13000000 --results h2h.tsv
     POLYHOST=qemu python selfplay.py gen005.pt --match bot:3 --seeds 100 --first_seed 10000000 --results crazy.tsv
 """
@@ -140,7 +141,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('net', help='the learner policy (training games) or side A (matches)')
     ap.add_argument('--out_dir', default=None, help='training games: write them here')
-    ap.add_argument('--pool', default='self', help='training games: opponents with shares, "self:0.5,a.pt:0.25,b.pt:0.25"')
+    ap.add_argument('--pool', default='self', help='training games: opponents with shares, "self:0.5,a.pt:0.25,bot:3:0.25"')
     ap.add_argument('--games', type=int, default=1000)
     ap.add_argument('--match', default=None, help='side B: a checkpoint, or bot:<difficulty>')
     ap.add_argument('--seeds', type=int, default=100, help='matches: games = 2 x seeds, seats swapped')
@@ -174,7 +175,7 @@ def main():
             opponents.append((name, float(share)))
         shares = np.array([s for _, s in opponents]) / sum(s for _, s in opponents)
         for i, (name, _) in enumerate(opponents):
-            if name != 'self':
+            if name != 'self' and not name.startswith('bot:'):
                 nets[f'P{i}'] = load_net(name, args.device)
         have = set(os.listdir(args.out_dir))
         jobs = [(s, None) for s in range(args.first_seed, args.first_seed + args.games) if f'g{s:08d}.npz' not in have]
@@ -220,11 +221,16 @@ def main():
         else:
             o = int(np.random.default_rng([seed, 1]).choice(len(opponents), p=shares))
             seat = int(np.random.default_rng([seed, 2]).integers(2))
-            if opponents[o][0] == 'self':
+            name = opponents[o][0]
+            bots = (None, None)
+            if name == 'self':
                 seats, record, opp = {1: 'A', 2: 'A'}, (1, 2), -1
+            elif name.startswith('bot:'):  # the game's AI plays its seat inside polyhost, as in matches
+                seats, record, opp = {seat + 1: 'A', 2 - seat: None}, (seat + 1,), 100 + o
+                d = int(name.split(':')[1])
+                bots = (None, d) if seat == 0 else (d, None)
             else:
                 seats, record, opp = {seat + 1: 'A', 2 - seat: f'P{o}'}, (seat + 1,), 100 + o
-            bots = (None, None)
             g = dict(seed=seed, seat=seat, tribes=tribes, seats=seats, record=record, opp=opp)
         spec = polyenv.Spec(tribes=tribes, bots=bots, seed=seed)
         if not match:

@@ -289,12 +289,17 @@ function renderCard() {
       return actButton(icon, m.cmd === 'Disband' ? `Disband ${title(uname)}` : label, i,
         { cls: m.cmd === 'Disband' ? 'danger' : 'unit', ok: m.ok });
     }) : [];
+    // upgrades (a boat into a Scout, Rammer or Bomber) name the tile and the new type, not the unit
+    if (mine) for (const [m, i] of legalWith(m => m.cmd === 'Upgrade' && same(where(m), [t.x, t.y]))) {
+      const n = nameOf('unitData', m.args.Type);
+      buttons.push(actButton(UNIT_ICON[n] || '⬆️', `Upgrade to ${title(n)}`, i, { cost: m.cost, ok: m.ok, cls: 'unit' }));
+    }
     showCard(`${tribeName(u.owner)} ${title(uname)}`, text, buttons);
     return;
   }
   const imp = t.improvement && nameOf('improvementData', t.improvement.type);
   const res = t.resource && nameOf('resourceData', t.resource);
-  const here = legalWith(m => !['CityReward', 'Move', 'Attack', 'Research', 'EndTurn', 'PeaceRequestResponse'].includes(m.cmd)
+  const here = legalWith(m => !['CityReward', 'Move', 'Attack', 'Research', 'EndTurn', 'PeaceRequestResponse', 'Upgrade'].includes(m.cmd)
     && m.args.UnitId === undefined && same(where(m), [t.x, t.y]));
   const buttons = here.map(([m, i]) => {
     if (m.cmd === 'Train') { const n = nameOf('unitData', m.args.Type); return actButton(UNIT_ICON[n] || '❓', title(n), i, { cost: m.cost, ok: m.ok, cls: 'unit' }); }
@@ -648,7 +653,21 @@ addEventListener('keydown', e => {
 $('closecard').onclick = () => { sel = null; render(); };
 $('endbtn').onclick = () => { const k = state.legal.findIndex(m => m.cmd === 'EndTurn'); if (k >= 0) play(k); };
 $('techbtn').onclick = () => { renderTechTree(); $('techview').style.display = 'flex'; };
-$('menubtn').onclick = () => { if (window.siteMenu) window.siteMenu(); else $('menuview').style.display = 'flex'; };
+$('menubtn').onclick = () => {
+  if (window.siteMenu) return window.siteMenu();
+  renderMenuStats();
+  $('menuview').style.display = 'flex';
+};
+// This game's players in the menu: score and cities, as the game's own player list shows them.
+function renderMenuStats() {
+  const box = $('menustats');
+  const ps = state?.players?.filter(p => p.id !== 255) || [];
+  if (!ps.length || state.watch) { box.innerHTML = ''; return; }
+  const who = p => p.id === state.human ? 'You' : state.opponent ? title(state.opponent) : 'Opponent';
+  box.innerHTML = `<h2>This game</h2><table class="stats"><tr><th></th><th>Tribe</th><th>Score</th><th>Cities</th><th>Kills</th></tr>`
+    + ps.map(p => `<tr><td>${who(p)}</td><td>${tribeName(p.id)}</td><td>${p.score.toLocaleString()}</td><td>${p.cities}</td><td>${p.kills}</td></tr>`).join('')
+    + `</table><p class="muted">Turn ${state.turn}${state.state === 4 ? ' · game over' : ''}</p>`;
+}
 $('logbtn').onclick = () => {
   $('log').replaceChildren(...state.log.filter(l => l.p !== 255 && l.p !== state.human).map(l => {
     const d = document.createElement('div'); const a = l.c.args;
@@ -662,7 +681,9 @@ $('logbtn').onclick = () => {
 for (const o of ['techview', 'logview', 'menuview', 'watchview']) $(o).addEventListener('click', e => { if (e.target === $(o)) $(o).style.display = 'none'; });
 $('newgame').onclick = async () => {
   stopAutoplay();
-  const q = ['tribe', 'opponent', 'mode', 'difficulty', 'size', 'map'].map(k => `${k}=${$(k).value}`).join('&');
+  // (the map-type select isn't #map: that id is the board's canvas)
+  const q = [['tribe', 'tribe'], ['opponent', 'opponent'], ['mode', 'mode'], ['difficulty', 'difficulty'], ['size', 'size'], ['map', 'mapType']]
+    .map(([k, id]) => `${k}=${$(id).value}`).join('&');
   $('menuview').style.display = 'none'; sel = null; centeredFor = null;
   state = await api(`/new?${q}`, 'POST');
   state = await api(`/reveal?on=${$('reveal').value}`, 'POST');
