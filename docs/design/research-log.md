@@ -789,3 +789,46 @@ directory, so gens 0–29 are unchanged.
 - **Falsifier:** two consecutive generations below 58% against gen 0, or a Crazy result paired-
   significantly worse than gen 29's on the same games. Either means the turn cost is costing
   strength, and I'd halve it.
+
+## Ben vs gen 24 (2026-10-24, 10:48; `runs/games/play_2026-10-24/104827`)
+Ben (Imperius) beat gen 24 (Xin-xi) at turn 29, 10 cities to 1, "pretty easily". Gen 24 wins 96% of
+its games against Crazy, and Ben plays at about Crazy's level, so beating the bot doesn't mean
+playing well against a person.
+- **What gen 24 did** (counted from the recording):
+
+  | | Gen 24 | Ben |
+  |---|---|---|
+  | Techs in 29 turns | 6: Mining, Smithery, Hunting, Forestry, Mathematics, Fishing (turn 20) | 14, incl. Sailing (9), Ramming, Chivalry, Navigation |
+  | Units trained | 20 catapults, 12 swordsmen, 10 warriors | 21 warriors, 8 catapults, 4 knights |
+  | Navy | no ports, no boats | 4 ports, 16 boat upgrades |
+  | Attacks | 38 | 105 |
+  | Cities (turns 6 / 12 / 18 / 24 / 29) | 3 / 5 / 5 / 4 / 1 | 3 / 4 / 6 / 7 / 10 |
+
+- **Ben's reading:**
+  - It left itself open to knight chains.
+  - It had no navy on Lakes, where water control lets you pick off catapults.
+  - It fielded a catapult-heavy army without enough front-line units.
+  - It expanded suboptimally and didn't exploit new techs.
+- **Mine:** it researched very few techs (6 vs 14) and banked into catapults and monuments. Next:
+  - measure techs by turn 20, ports and army mix across generations and in the human games (the
+    strategy book's indicators);
+  - check whether self-play drifted here, or whether it never learned this from the human games.
+- **Indicators across generations** (`py/indicators.py`; 400 games each: 400 human championship games
+  and the training games played by gens 0, 9, 19, 24 and 29; turn-based figures count only
+  player-games that reached that turn):
+
+  | | Human | Gen 0 | Gen 9 | Gen 19 | Gen 24 | Gen 29 |
+  |---|---|---|---|---|---|---|
+  | Techs by turn 10 / 20 | **4.2 / 9.2** | 3.6 / 7.1 | 3.6 / 7.3 | 3.7 / 7.6 | 3.6 / 7.4 | 3.5 / 7.2 |
+  | Cities at turns 5 / 10 / 20 | 2.2 / 3.9 / 5.8 | 2.3 / 3.9 / 5.7 | 2.3 / 3.9 / 5.7 | 2.3 / 3.9 / 5.6 | 2.3 / 3.9 / 5.6 | 2.3 / 4.0 / 5.7 |
+  | Stars left at End Turn (turns 3–20) | **3.1** | 4.8 | 5.2 | 5.0 | 5.5 | 5.9 |
+  | Port by turn 20 | 88% | 83% | 83% | 83% | 81% | 82% |
+  | Front line / ranged share of units | 85% / 13% | 87% / 12% | 79% / 19% | 74% / 24% | 75% / 23% | 73% / 25% |
+  | Catapults | 5% | 8% | 13% | 16% | 16% | 17% |
+  | Riders | 20% | 16% | 9% | 6% | ~5% | 6% |
+
+  - **Tech pace is inherited, not a self-play drift:** gen 0 was already two techs behind humans by
+    turn 20 (R3 imitated the game's AI first), and self-play hasn't closed the gap.
+  - **Banked stars grow each generation** (4.8 → 5.9; humans 3.1).
+  - **The catapult-heavy army is a self-play drift:** catapults 8% → 17%, riders 16% → 6%.
+  - **Expansion and ports match humans.** Ben's game was a bad case for ports, not the norm.
