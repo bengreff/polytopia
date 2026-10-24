@@ -892,3 +892,29 @@ playing well against a person.
   ≥ 23%, techs by turn 20 ≤ 7.4), meaning human midgames don't transfer to new-map play. Or two
   consecutive generations below 58% against gen 0.
 - **Also:** Ben plays the gen-43 network.
+
+## Self-play speed (2026-10-24, 13:00–13:30)
+- **Before:**
+  - About 440 decisions/s with 20 game processes (QEMU) plus 8 for evaluations, so ~1,800 games an
+    hour and ~65 min per generation (49 min of games, 16 of learning).
+  - The limit was the one self-play Python process: one core (the GIL), 79% of it spent running
+    the networks.
+  - That time was mostly per-call overhead: several networks per step, a few positions each,
+    hundreds of kernel launches per pass, and a GPU sync in the legal-row selection.
+  - The 27 QEMU processes used about 13 of the 28 threads; the GPU was ~51% busy.
+- **Changes:**
+  - `selfplay --shards`: one child process per 10 game processes.
+  - `py/fast_infer.py`: legal rows scored densely, the whole pass captured as CUDA graphs per
+    (batch, rows) bucket. Same choices as `Net.forward`: 100% argmax agreement in a benchmark on
+    gen-30 games, and checked on the first batch of each network at run time.
+  - Per call, 2–8 positions: 15–17 ms → 2.6–3.0 ms. An A/B on 48 games with 8 processes:
+    195 → 313 decisions/s.
+- **After (gen 32):**
+  - About 650 decisions/s with the same 20 + 8 processes (2 shards × ~320).
+  - QEMU now uses all 28 threads (load 29), so emulation is the limit.
+  - A larger QEMU translation cache (`QEMU_TB_SIZE=1024`) made no difference (57 vs 57
+    decisions/s per process). The cost is the emulation itself.
+- **Next levers:**
+  - A native Windows build of polyhost; it needs the game's Windows files.
+  - Less game-logic work per decision (profile polyhost natively on the Mac).
+  - A faster learner: it is now ~35% of a generation and runs while the CPU is idle.
