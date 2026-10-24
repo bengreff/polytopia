@@ -18,6 +18,7 @@
 //   GET  /gamedata       the game's GameLogicData JSON, for names and stats
 
 #include <arpa/inet.h>
+#include <csignal>
 #include <dirent.h>
 
 #include <chrono>
@@ -533,6 +534,7 @@ inline const char* contentType(const std::string& path) {
 }
 
 inline void serve(int port) {
+    std::signal(SIGPIPE, SIG_IGN);  // a browser that closed its connection must not kill the server
     Game g;
     Session session(g);
     // Imperius vs Xin-xi, Might, Lakes, Small: against our network when py/agent_server.py is

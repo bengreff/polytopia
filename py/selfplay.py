@@ -18,6 +18,9 @@ with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
 
 Every game process has its own worker thread that steps its slots; one inference thread batches
 the workers' requests per network on the GPU. Tribes are drawn from the seed as in eval_vs_bot.py.
+One Python process tops out at about one core (the GIL), so with many game processes the games are
+split across `--shards` child processes (default: one per 10 game processes), each with its own
+networks, game processes and ports; the parent combines their results.
 
     POLYHOST=qemu python selfplay.py gen004.pt --out_dir games/g005 --games 2000 \
         --pool self:0.4,gen003.pt:0.25,gen002.pt:0.25,bot:3:0.1 --temperature 0.5 --first_seed 50500000
@@ -30,6 +33,8 @@ import json
 import os
 import queue
 import struct
+import subprocess
+import sys
 import threading
 import time
 
@@ -38,6 +43,7 @@ import torch
 
 import dagger
 import eval_vs_bot
+import fast_infer
 import gen_data
 import model as M
 import polyenv
@@ -77,6 +83,9 @@ class Inference:
 
     def __init__(self, nets, device, bf16, max_wait=0.004):
         self.nets, self.device, self.bf16, self.max_wait = nets, device, bf16, max_wait
+        # the same networks, run as CUDA graphs with densely scored legal rows (py/fast_infer.py)
+        self.fast = {k: fast_infer.FastPolicy(net, device, bf16=bf16) for k, net in nets.items()}
+        self.checked = set()
         self.q = queue.Queue()
         self.busy = 0.0
         self.batches = 0
@@ -127,10 +136,16 @@ class Inference:
     @torch.no_grad()
     def run(self, key, obs, statuses, temperature):
         inputs = eval_vs_bot.batch_inputs(obs, statuses)
-        t = {k: torch.from_numpy(v).to(self.device, non_blocking=True) for k, v in inputs.items()}
-        with torch.autocast('cuda', dtype=torch.bfloat16, enabled=self.bf16 and self.device == 'cuda'):
-            logits, v, _ = self.nets[key](t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'])
-        logits = logits.float().masked_fill(~t['mask'], float('-inf'))
+        logits, v = self.fast[key](inputs)
+        if key not in self.checked:  # once per network: the same choices as the plain forward pass
+            self.checked.add(key)
+            t = {k: torch.from_numpy(x).to(self.device) for k, x in inputs.items()}
+            with torch.autocast('cuda', dtype=torch.bfloat16, enabled=self.bf16 and self.device == 'cuda'):
+                ref, _, _ = self.nets[key](t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'])
+            ref = ref.float().masked_fill(~t['mask'], float('-inf'))
+            if not torch.equal(ref.argmax(1), logits.argmax(1)):
+                print(f'warning: fast inference for {key} chose differently from Net.forward on '
+                      f'{int((ref.argmax(1) != logits.argmax(1)).sum())} of {len(obs)} positions', flush=True)
         value = torch.sigmoid(v.float()).cpu().numpy()
         if temperature <= 0:
             return logits.argmax(1).cpu().numpy(), np.zeros(len(obs), np.float32), value
@@ -158,7 +173,12 @@ def main():
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--save_games', default=None, help='matches: keep the games for the web app\'s watch mode, '
                                                        'as py/eval_vs_bot.py --save_games')
+    ap.add_argument('--shards', type=int, default=0, help='child processes to split the games across (0: one per 10 game processes)')
+    ap.add_argument('--shard', default=None, help=argparse.SUPPRESS)  # i/K: this child's share (set by the parent)
     args = ap.parse_args()
+    shards = args.shards or -(-args.procs // 10)
+    if shards > 1 and args.shard is None:
+        return run_shards(args, shards)
     match = args.match is not None
     if match == (args.out_dir is not None):
         ap.error('give exactly one of --out_dir (training games) and --match')
@@ -188,6 +208,9 @@ def main():
             print(f'{len(starts)} human midgame starts, share {args.start_share}', flush=True)
         have = set(os.listdir(args.out_dir))
         jobs = [(s, None) for s in range(args.first_seed, args.first_seed + args.games) if f'g{s:08d}.npz' not in have]
+    if args.shard:
+        i, k = map(int, args.shard.split('/'))
+        jobs = jobs[i::k]
     jobs.reverse()
     jobs_lock = threading.Lock()
     infer = Inference(nets, args.device, bf16=not match)
@@ -395,6 +418,10 @@ def main():
     if errors:
         raise errors[0]
     report()
+    if args.shard:  # for the parent (run_shards)
+        print('SHARD ' + json.dumps(dict(results=results, decisions=counters['decisions'], busy=infer.busy,
+                                         batches=infer.batches, positions=infer.positions)), flush=True)
+        return
     if match:
         n = len(results)
         w = sum(r['res'] == 'win' for r in results)
@@ -406,6 +433,63 @@ def main():
                        mean_turns=float(np.mean(turns)) if turns else None, first_seed=args.first_seed,
                        seconds=round(time.time() - t0))
         print('SUMMARY ' + json.dumps(summary), flush=True)
+
+
+def run_shards(args, k):
+    """Runs the games as k child processes of this script (each with its share of the jobs, game
+    processes and ports), forwards their output, and reports their combined results as one run."""
+    t0 = time.time()
+    sizes = [args.procs // k + (i < args.procs % k) for i in range(k)]
+    procs, port = [], args.port
+    for i, n in enumerate(sizes):
+        cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:] + [
+            '--procs', str(n), '--port', str(port), '--shards', str(k), '--shard', f'{i}/{k}']
+        port += n
+        procs.append(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1))
+    parts, lock = [], threading.Lock()
+
+    def forward(i, p):
+        for line in p.stdout:
+            if line.startswith('SHARD '):
+                with lock:
+                    parts.append(json.loads(line[6:]))
+            else:
+                print(f'[{i}] {line}', end='', flush=True)
+
+    readers = [threading.Thread(target=forward, args=(i, p)) for i, p in enumerate(procs)]
+    for r in readers:
+        r.start()
+    codes = [p.wait() for p in procs]
+    for r in readers:
+        r.join()
+    if any(codes):
+        raise SystemExit(f'shard exit codes {codes}')
+    results = [r for part in parts for r in part['results']]
+    decisions = sum(part['decisions'] for part in parts)
+    el = time.time() - t0
+    n = len(results)
+    if args.match is None:
+        by = {}
+        for r in results:
+            by.setdefault(r['opp'], []).append(r['res'])
+        pool = [part.rsplit(':', 1)[0] for part in args.pool.split(',')]
+        summary = ', '.join(f"{'self' if o < 0 else pool[o - 100].split('/')[-1]}: "
+                            f"{sum(x == 'win' for x in v) if o >= 0 else len(v)}{'/' + str(len(v)) if o >= 0 else ' games'}"
+                            for o, v in sorted(by.items()))
+        print(f'{n} games ({summary}), {decisions} decisions, {el:.0f} s, {decisions / el:.0f} decisions/s, '
+              f'{k} shards, GPU busy {np.mean([p["busy"] for p in parts]) / el:.0%} per shard, '
+              f'{sum(p["positions"] for p in parts) / max(sum(p["batches"] for p in parts), 1):.0f} positions/batch', flush=True)
+        return
+    w = sum(r['res'] == 'win' for r in results)
+    lo, hi = eval_vs_bot.wilson(w, n)
+    turns = [r['turns'] for r in results if r['res'] != 'cap']
+    print(f'{n} games: A won {w} ({w / max(n, 1):.1%}, 95% CI {lo:.1%}-{hi:.1%}), {decisions / el:.0f} decisions/s, {k} shards',
+          flush=True)
+    summary = dict(a=args.net, b=args.match, games=n, a_wins=w, a_rate=w / max(n, 1), ci=[lo, hi],
+                   capped=sum(r['res'] == 'cap' for r in results),
+                   a_wins_by_seat=[sum(r['res'] == 'win' for r in results if r['seat'] == s) for s in (0, 1)],
+                   mean_turns=float(np.mean(turns)) if turns else None, first_seed=args.first_seed, seconds=round(el))
+    print('SUMMARY ' + json.dumps(summary), flush=True)
 
 
 if __name__ == '__main__':
