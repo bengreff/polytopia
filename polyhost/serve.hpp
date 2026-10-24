@@ -184,6 +184,7 @@ struct Session {
 
     const Method* explored = method(api.tile, "GetExplored", 1);
     const Method* tileUnit = method(api.tile, "get_unit", 0);
+    const Method* battleResults = method(cls("GameLogicAssembly", "", "BattleHelpers"), "GetBattleResults", 5);
     const Method* income = api.income;
     const Method* maxHealth = api.maxHealth;
     const Method* winner = api.winner;
@@ -336,6 +337,26 @@ struct Session {
         return get<int32_t>(call(unitData, data, {&type}), "cost");
     }
 
+    // An attack's damage to its target and the target's health, by the game's own battle
+    // calculation (BattleHelpers.GetBattleResults, as the game's attack preview uses it); the main
+    // target only, without splash or other side effects.
+    bool attackDamage(Object* cmd, const std::map<std::pair<int, int>, Object*>& tileAt, int* dmg, int* hp) {
+        if (std::string(class_get_name(object_get_class(cmd))) != "AttackCommand") return false;
+        struct Coords { int32_t x, y; };
+        Coords o = get<Coords>(cmd, "<Origin>k__BackingField"), t = get<Coords>(cmd, "<Target>k__BackingField");
+        auto a = tileAt.find({o.x, o.y}), d = tileAt.find({t.x, t.y});
+        if (a == tileAt.end() || d == tileAt.end()) return false;
+        Object* attacker = call(tileUnit, a->second);
+        Object* defender = call(tileUnit, d->second);
+        if (!attacker || !defender) return false;
+        bool accountForPeace = true, simpleData = false;
+        Object* r = nullptr;
+        if (!tryCall(battleResults, nullptr, {state(), attacker, defender, &accountForPeace, &simpleData}, &r) || !r) return false;
+        *dmg = unbox<int32_t>(r);  // BattleResults.attackDamage, at offset 0
+        *hp = get<uint16_t>(defender, "health");
+        return true;
+    }
+
     void unitJson(Json& j, Object* u) {
         Object* r = nullptr;
         int maxHp = tryCall(maxHealth, nullptr, {u, state()}, &r) && r ? unbox<int>(r) : 0;
@@ -358,6 +379,8 @@ struct Session {
         j.key("state").num(g.state(state));
         j.key("human").num(watching ? (viewer ? viewer : 1) : human());
         if (!watching) j.key("opponent").str(playOpponent);
+        if (const char* sp = std::getenv("POLY_AGENT_STATS"); sp && !watching && netOpponent)
+            j.key("agentStats").num(std::atoi(sp));  // py/agent_server.py's network panel JSON
         if (watching) {
             j.key("watch").open('{').key("path").str(watchPath).key("at").num(watchAt).key("base").num(watchBase)
                 .key("total").num(watchTotal).key("viewer").num(viewer).key("turnStarts").open('[');
@@ -418,6 +441,11 @@ struct Session {
         j.close(']');
 
         j.key("legal").open('[');
+        std::map<std::pair<int, int>, Object*> tileAt;
+        for (Object* t : tiles()) {
+            const int32_t* c = reinterpret_cast<const int32_t*>(reinterpret_cast<char*>(t) + 0x10);
+            tileAt[{c[0], c[1]}] = t;
+        }
         for (size_t i = 0; i < (watching ? 0 : match->legal.size()); ++i) {
             Object* cmd = match->legalCmds[i].get();
             Reflect::command(j, cmd);
@@ -425,6 +453,8 @@ struct Session {
             j.first = false;
             int c = cost(cmd);
             if (c >= 0) j.key("cost").num(c);
+            int dmg = -1, hp = 0;
+            if (attackDamage(cmd, tileAt, &dmg, &hp)) j.key("damage").num(dmg).key("kills").boolean(dmg >= hp);
             j.key("ok").boolean(true).close('}');
         }
         j.close(']');

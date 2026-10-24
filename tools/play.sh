@@ -5,9 +5,9 @@
 cd "$(dirname "$0")/.."
 ck=${1:?checkpoint}; port=${2:-8123}
 [ -x build/polyhost-mac ] || ./polyhost/run.sh mac
-.venv/bin/python py/agent_server.py "$ck" --port 8131 &
+.venv/bin/python py/agent_server.py "$ck" --port 8131 --stats_port 8132 &
 agent=$!
 trap 'kill $agent 2>/dev/null' EXIT INT TERM
 sleep 3
 echo "open http://localhost:$port and choose Bot difficulty: Our network"
-POLY_AGENT_PORT=8131 POLY_AGENT_NAME=$(basename "$ck") build/polyhost-mac serve "$port"
+POLY_AGENT_PORT=8131 POLY_AGENT_STATS=8132 POLY_AGENT_NAME=$(basename "$ck") build/polyhost-mac serve "$port"

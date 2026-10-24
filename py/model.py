@@ -75,6 +75,10 @@ class Net(nn.Module):
 
     def encode(self, tiles, glob, techs):
         """tiles int16 [B, 196, 32], glob int32 [B, 20], techs uint8 [B, 64] -> tokens [B, 197, d]."""
+        return self.norm(self.trunk(self.embed(tiles, glob, techs)))
+
+    def embed(self, tiles, glob, techs):
+        """The trunk's input tokens [B, 197, d]: the global token, then the 196 tiles."""
         B = tiles.shape[0]
         t = tiles.long()
         cat = torch.minimum(t[..., self.cat_idx].clamp(min=0), self.cat_max) + self.cat_off
@@ -99,12 +103,15 @@ class Net(nn.Module):
                         torch.stack([torch.log1p(stars), torch.log1p(glob[:, G['income']].float().clamp(min=0))], -1),
                         techs.float()], -1)
         gx = gx + self.g_dense(gd)
-        return self.norm(self.trunk(torch.cat([gx.unsqueeze(1), x], 1)))
+        return torch.cat([gx.unsqueeze(1), x], 1)
 
     def forward(self, tiles, glob, techs, legal, legal_mask):
         """legal int16 [B, N, 4] padded, legal_mask bool [B, N]. Returns policy logits [B, N] (padding
         at -inf), value logit [B], ownership logits [B, 196, 3]. Only the real rows are scored."""
-        h = self.encode(tiles, glob, techs)
+        return self.heads(self.encode(tiles, glob, techs), legal, legal_mask)
+
+    def heads(self, h, legal, legal_mask):
+        """The policy, value and ownership heads on the encoded tokens h [B, 197, d]."""
         hg, ht = h[:, 0], h[:, 1:]
         bi, ni = legal_mask.nonzero(as_tuple=True)
         L = legal[bi, ni].long()

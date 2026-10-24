@@ -132,6 +132,7 @@ function textOutlined(text, x, y, size, color = '#fff', weight = 600) {
   ctx.font = `italic ${weight} ${size}px "Avenir Next", Avenir, system-ui`; ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,.75)';
   ctx.strokeText(text, x, y); ctx.fillStyle = color; ctx.fillText(text, x, y);
 }
+const KILL_COLOUR = '#ffd400';  // an attack that kills its target in one hit
 function rings(cx, cy, color) {
   ctx.lineWidth = 3;
   for (const k of [1, 0.66, 0.33]) { diamondPath(cx, cy, TW * 0.78 * k, TH * 0.78 * k); ctx.strokeStyle = color; ctx.stroke(); }
@@ -163,10 +164,10 @@ function draw() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
   const selUnit = sel?.layer === 'unit' ? tileAt(sel.x, sel.y)?.unit : null;
-  const moveMarks = new Set(), attackMarks = new Set();
+  const moveMarks = new Set(), attackMarks = new Map();  // attack target -> kills in one hit
   if (selUnit && selUnit.owner === state.human) for (const m of state.legal) {
     if (!same(origin(m), [sel.x, sel.y])) continue;
-    (m.cmd === 'Attack' ? attackMarks : moveMarks).add(target(m) + '');
+    if (m.cmd === 'Attack') attackMarks.set(target(m) + '', !!m.kills); else moveMarks.add(target(m) + '');
   }
   const active = activeUnits();
   const tiles = [...state.tiles].sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x);
@@ -177,6 +178,7 @@ function draw() {
     if (t.fog) {
       const shade = (t.x * 7 + t.y * 13) % 3;
       block(cx, cy, [['#e8eef8', '#dce5f3', '#cfdaee'][shade], '#b7c4dc', '#a6b5d1']);
+      netOverlayTile(t, cx, cy);
       continue;
     }
     const terr = nameOf('terrainData', t.terrain);
@@ -198,6 +200,7 @@ function draw() {
       }
       ctx.setLineDash([]);
     }
+    netOverlayTile(t, cx, cy);
     if (terr === 'mountain') mountain(cx, cy);
     if (terr === 'forest' || terr === 'mangrove') trees(cx, cy);
     if (t.road) { ctx.fillStyle = '#c9a46a'; diamondPath(cx, cy, 26, 13); ctx.fill(); }
@@ -213,7 +216,7 @@ function draw() {
 
     const key = [t.x, t.y] + '';
     if (moveMarks.has(key)) rings(cx, cy, '#3aa0ff');
-    if (attackMarks.has(key)) rings(cx, cy, '#ff4b3a');
+    if (attackMarks.has(key)) rings(cx, cy, attackMarks.get(key) ? KILL_COLOUR : '#ff4b3a');
     if (sel && sel.x === t.x && sel.y === t.y) {
       diamondPath(cx, cy); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 12; ctx.stroke(); ctx.shadowBlur = 0;
     }
@@ -283,6 +286,8 @@ function renderCard() {
       ? (moves && attacks ? 'Select a blue mark to move or a red mark to attack.' : moves ? 'Select a blue mark to move.'
         : attacks ? 'Select a red mark to attack.' : myTurn() ? 'This unit has no moves left this turn.' : 'Waiting for your turn.')
       : `${tribeName(u.owner)} unit.`;
+    if (mine && legalWith(m => m.cmd === 'Attack' && m.kills && same(origin(m), [t.x, t.y])).length)
+      text += ' Yellow marks: the attack kills in one hit.';
     text += `   ❤️ ${u.hp / 10}/${u.maxHp / 10}  ⚔️ ${ud.attack / 10}  🛡️ ${ud.defence / 10}  👣 ${ud.movement}  🎯 ${ud.range}`;
     const buttons = mine ? legalWith(m => m.args.UnitId === u.id && m.cmd !== 'Move' && m.cmd !== 'Attack').map(([m, i]) => {
       const [icon, label] = UNIT_ACTION[m.cmd] || ['•', m.cmd.replace(/([a-z])([A-Z])/g, '$1 $2')];
@@ -441,9 +446,139 @@ function toast(text) {
 }
 
 function render() {
-  draw(); renderHud(); renderCard(); renderChoices(); renderWatch();
+  draw(); renderHud(); renderCard(); renderChoices(); renderWatch(); renderNetTab();
   if ($('techview').style.display === 'flex') renderTechTree();
 }
+
+// ---------- the network panel: what the network is and what it is thinking (py/agent_server.py) ----------
+
+const net = { info: null, stats: null, open: false, overlay: '', timer: null, error: '' };
+const netUrl = what => `http://127.0.0.1:${state.agentStats}/${what}`;
+const pct = x => `${(100 * x).toFixed(1)}%`;
+async function netFetch() {
+  if (!state?.agentStats) return;
+  try {
+    if (!net.info) net.info = await (await fetch(netUrl('info'))).json();
+    net.stats = await (await fetch(netUrl('stats'))).json();
+    net.error = '';
+  } catch (e) { net.error = `The network's stats server (port ${state.agentStats}) isn't answering.`; }
+  if (net.open) renderNetBody();
+  if (net.overlay) draw();
+  renderNetTab();
+}
+function netPoll() {
+  clearInterval(net.timer); net.timer = null;
+  if (state?.agentStats && (net.open || net.overlay)) { netFetch(); net.timer = setInterval(netFetch, 1500); }
+}
+function renderNetTab() {
+  const on = !!state?.agentStats && !state.watch;
+  $('netdrawer').style.display = on ? 'block' : 'none';
+  if (!on) return;
+  if (!net.info && !net.asked) { net.asked = true; netFetch(); }  // the tab names the checkpoint from the start
+  const i = net.info, v = net.stats?.last?.value;
+  const who = i ? (i.generation != null ? `generation ${i.generation} of run ${i.run.toUpperCase()}` : i.file) : state.opponent || 'our network';
+  $('nettab').innerHTML = `🧠 Playing against <b>${who}</b>${i ? ` · ${i.file} · ${i.sha1}` : ''}`
+    + `${v != null ? ` · it gives itself <b>${pct(v)}</b>` : ''} ${net.open ? '▼' : '▲'}`;
+}
+const CITY_REWARD = { 1: 'City wall', 2: 'Park', 3: 'Workshop', 4: 'Explorer', 5: 'Border growth', 6: 'Super unit', 7: 'Resources',
+  8: 'Population growth', 11: 'Rebellion', 13: 'Poison' };  // the game's CityReward values
+// A legal-list row from the agent (cmd, at, to, arg) as text.
+function rowText(r) {
+  const xy = c => c ? `(${c[0]},${c[1]})` : '';
+  const named = { Train: 'unitData', Upgrade: 'unitData', Build: 'improvementData', Research: 'techData' }[r.cmd];
+  const what = named ? `${r.cmd} ${title(nameOf(named, r.arg))}` : r.cmd === 'CityReward' ? `City reward: ${CITY_REWARD[r.arg] || r.arg}` : r.cmd;
+  return `${what} ${xy(r.at)}${r.to ? ' → ' + xy(r.to) : ''}`.trim();
+}
+function netSpark(values, w = 300, h = 60, lo = 0, hi = 1, colour = '#7fdc7f') {
+  if (values.length < 2) return '<span class="muted">(after a few decisions)</span>';
+  const x = i => (w * i / (values.length - 1)).toFixed(1), y = v => (h - 2 - (h - 4) * (v - lo) / (hi - lo || 1)).toFixed(1);
+  const mid = lo < 0.5 && hi > 0.5 ? `<line x1="0" x2="${w}" y1="${y(0.5)}" y2="${y(0.5)}" stroke="#39435a" stroke-dasharray="4 3"/>` : '';
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">${mid}<polyline fill="none" stroke="${colour}" stroke-width="1.6" `
+    + `points="${values.map((v, i) => `${x(i)},${y(v)}`).join(' ')}"/></svg>`;
+}
+function renderNetBody() {
+  const body = $('netbody'), i = net.info, s = net.stats, d = s?.choice;
+  if (net.error) { body.innerHTML = `<div class="ncard">${net.error}</div>`; return; }
+  if (!i) { body.innerHTML = '<div class="ncard">Loading…</div>'; return; }
+  const cards = [];
+  const evals = (i.evaluations || []).map(e => `<tr><td>vs ${e.vs === 'crazy' ? 'Crazy bot' : e.vs.replace('gen', 'generation ').replace(/ 0+(\d)/, ' $1')}</td>`
+    + `<td>${e.wins}/${e.games} (${pct(e.rate)}, ${pct(e.ci[0])}–${pct(e.ci[1])})</td><td>${e.mean_turns.toFixed(1)} turns</td></tr>`).join('');
+  const L = i.learning;
+  cards.push(`<div class="ncard"><h4>WHICH NETWORK</h4><table>
+    <tr><th>Checkpoint</th><td>${i.path} (sha1 ${i.sha1}${i.trained ? `, trained ${i.trained}` : ''})</td></tr>
+    ${i.generation != null ? `<tr><th>Generation</th><td>${i.generation} of self-play run ${i.run.toUpperCase()}${i.rl_from ? `, trained from ${i.rl_from}` : ''}</td></tr>` : ''}
+    <tr><th>Network</th><td>${i.parameters.toLocaleString()} parameters: transformer, width ${i.config.d}, ${i.config.layers} layers, ${i.config.heads} heads</td></tr>
+    <tr><th>Plays</th><td>${i.temperature > 0 ? `sampled at temperature ${i.temperature}` : 'greedily (its top move)'}, on ${i.device}, seeing only its own fog of war</td></tr>
+    ${i.selfcheck_max_logit_diff != null ? `<tr><th>Check</th><td>layer-by-layer pass matches the network within ${i.selfcheck_max_logit_diff.toExponential(1)}</td></tr>` : ''}
+    </table>${evals ? `<h4 style="margin-top:8px">ITS EVALUATIONS (200 GAMES EACH, GREEDY)</h4><table>${evals}</table>` : ''}
+    ${L ? `<p class="muted">Its learning step: ${L.step} of ${L.of} steps, KL ${L.kl}, entropy ${L.ent}, clip fraction ${L.clipfrac}, value loss ${L.value}.</p>` : ''}
+    ${i.pool ? `<p class="muted">Its training games' opponents: ${i.pool.split(',').map(x => x.replace(/:(\d.*)$/, (m, v) => ` ${pct(+v)}`)).join(', ')}.</p>` : ''}
+    ${i.run_settings ? `<p class="muted">Settings then: ${Object.entries(i.run_settings).map(([k, v]) => `${k} ${v}`).join(', ')}.</p>` : ''}</div>`);
+  if (!d) cards.push('<div class="ncard"><h4>ITS LAST DECISION</h4>No decisions yet in this session: end your turn.</div>');
+  else {
+    const top = d.top.map(r => `<tr><td>${rowText(r)}</td><td style="width:42%"><span class="bar" style="width:${Math.max(2, 100 * r.p)}%"></span> ${pct(r.p)}</td></tr>`).join('');
+    cards.push(`<div class="ncard"><h4>ITS LAST REAL CHOICE (TURN ${d.turn}, DECISION ${d.n + 1} THIS GAME)</h4>
+      <div><span class="big">${pct(d.value)}</span> <span class="muted">its own estimate that it wins (value head)</span></div>
+      <p>Chose <b>${rowText(d.chosen)}</b> (${pct(d.chosen.p)}) out of ${d.legal} legal moves · policy entropy ${d.entropy} nats · ${d.ms} ms</p>
+      <table>${top}</table>
+      <p class="muted">Lone End Turns and other forced moves are skipped here.</p></div>`);
+    const log = (s.turn_log || []).map(r => `<tr><td>${r.n + 1}</td><td>${rowText(r.move)}</td><td>${pct(r.move.p)}</td>`
+      + `<td>${r.legal}</td><td>${pct(r.value)}</td></tr>`).join('');
+    cards.push(`<div class="ncard"><h4>ITS LAST TURN, MOVE BY MOVE (TURN ${s.turn_log?.[0] ? s.last.turn : ''})</h4>
+      <table><tr><th>#</th><th>Move</th><th>Its probability</th><th>Legal</th><th>Win estimate</th></tr>${log}</table></div>`);
+    const h = s.history;
+    cards.push(`<div class="ncard"><h4>THIS GAME, DECISION BY DECISION</h4>
+      <div class="muted">Win estimate (dashed line: 50%)</div>${netSpark(h.map(x => x.value))}
+      <div class="muted">Probability of the move it played</div>${netSpark(h.map(x => x.p), 300, 40, 0, 1, '#6fa8ff')}
+      <div class="muted">Policy entropy (nats; high = unsure)</div>${netSpark(h.map(x => x.entropy), 300, 40, 0, Math.max(1, ...h.map(x => x.entropy)), '#e8c45a')}
+      <p class="muted">${h.length} decisions, ${h.length ? (h.reduce((a, x) => a + x.ms, 0) / h.length).toFixed(0) : 0} ms each on average.</p></div>`);
+    const me = playerColor(state.players.find(p => p.id !== state.human && p.id !== 255)?.id), you = playerColor(state.human);
+    cards.push(`<div class="ncard"><h4>WHAT IT EXPECTS THE MAP TO LOOK LIKE AT THE END</h4>
+      <div class="seg"><div style="width:${100 * d.own.mine}%;background:${me}"></div><div style="width:${100 * d.own.none}%;background:#3a4252"></div>
+      <div style="width:${100 * d.own.theirs}%;background:${you}"></div></div>
+      <p class="muted">Ownership head, averaged over the 196 tiles: itself ${pct(d.own.mine)}, nobody ${pct(d.own.none)}, you ${pct(d.own.theirs)}.
+      Caution: self-play trains only the policy and value heads, so this head was last trained at generation 0 and drifts as the trunk changes.</p>
+      <h4>BOARD OVERLAY</h4>
+      ${[['', 'none'], ['owner', 'predicted final owner of each tile'], ['attn', 'where it looks (global token\'s attention)']]
+        .map(([k, t]) => `<label><input type="radio" name="netov" value="${k}" ${net.overlay === k ? 'checked' : ''}> ${t}</label>`).join('<br>')}
+      <p class="muted">Key N opens and closes this panel.</p></div>`);
+    const rows = d.layers.map((l, k) => `<tr><td>${k + 1}</td><td>${l.resid}</td><td>${pct(l.attn)}</td><td>${pct(l.ffn)}</td>`
+      + `<td><span class="bar" style="width:${50 * l.active}px;background:#7fdc7f"></span> ${pct(l.active)}</td>`
+      + `<td><span class="bar" style="width:${50 * l.focus}px;background:#e8c45a"></span> ${pct(l.focus)}</td></tr>`).join('');
+    cards.push(`<div class="ncard"><h4>ACTIVATIONS, LAYER BY LAYER (THIS DECISION)</h4>
+      <table><tr><th>Layer</th><th>Stream size</th><th>Attention adds</th><th>FFN adds</th><th>FFN units on</th><th>Attention focus</th></tr>${rows}</table>
+      <p class="muted">Stream size: mean length of the 197 token vectors after the layer. "Adds": how big the attention and
+      feed-forward updates are, relative to the stream. FFN units on: share of the 1,024 hidden units per token with a positive
+      input to the GELU. Attention focus: 0% = attention spread evenly over all tokens, 100% = on one token.</p></div>`);
+  }
+  const groups = (i.parameter_groups || []).map(g => `<tr><td>${g.name}</td><td>${g.count.toLocaleString()}</td><td>${g.rms}</td></tr>`).join('');
+  cards.push(`<div class="ncard"><h4>PARAMETERS</h4><table><tr><th>Part</th><th>Count</th><th>RMS value</th></tr>${groups}</table></div>`);
+  body.innerHTML = cards.join('');
+  for (const r of body.querySelectorAll('input[name=netov]')) r.onchange = () => { net.overlay = r.value; netPoll(); draw(); };
+}
+// Draws the chosen overlay on one tile (tiles are y * width + x in the network's maps).
+function netOverlayTile(t, cx, cy) {
+  const d = net.overlay && net.stats?.last;
+  if (!d) return;
+  const k = t.y * state.width + t.x;
+  if (net.overlay === 'owner') {
+    const v = d.ownMap[k];
+    if (Math.abs(v) < 0.05) return;
+    ctx.globalAlpha = 0.6 * Math.abs(v);
+    ctx.fillStyle = playerColor(v > 0 ? state.players.find(p => p.id !== state.human && p.id !== 255)?.id : state.human);
+  } else {
+    const v = d.attnMap[k];
+    if (v < 0.04) return;
+    ctx.globalAlpha = 0.7 * v; ctx.fillStyle = '#ffe14a';
+  }
+  diamondPath(cx, cy); ctx.fill(); ctx.globalAlpha = 1;
+}
+$('nettab').onclick = () => {
+  net.open = !net.open;
+  $('netdrawer').classList.toggle('open', net.open);
+  if (net.open) renderNetBody();
+  renderNetTab(); netPoll();
+};
 
 // ---------- watch mode: replaying a recorded game ----------
 
@@ -645,6 +780,7 @@ canvas.addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.clientX, e.
 addEventListener('resize', resize);
 addEventListener('keydown', e => {
   if (e.key === 'Escape') { sel = null; for (const o of ['techview', 'logview', 'menuview', 'watchview']) $(o).style.display = 'none'; render(); }
+  if (e.key === 'n' && state?.agentStats && !e.metaKey && !e.ctrlKey) $('nettab').click();
   if ((e.key === 'e' || e.key === 'Enter') && myTurn() && $('choiceview').style.display !== 'flex') {
     const k = state.legal.findIndex(m => m.cmd === 'EndTurn'); if (k >= 0) play(k);
   }
