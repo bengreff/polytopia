@@ -340,7 +340,7 @@ struct Session {
     // An attack's damage to its target and the target's health, by the game's own battle
     // calculation (BattleHelpers.GetBattleResults, as the game's attack preview uses it); the main
     // target only, without splash or other side effects.
-    bool attackDamage(Object* cmd, const std::map<std::pair<int, int>, Object*>& tileAt, int* dmg, int* hp) {
+    bool attackDamage(Object* cmd, const std::map<std::pair<int, int>, Object*>& tileAt, int* dmg, int* hp, int* ret = nullptr) {
         if (std::string(class_get_name(object_get_class(cmd))) != "AttackCommand") return false;
         struct Coords { int32_t x, y; };
         Coords o = get<Coords>(cmd, "<Origin>k__BackingField"), t = get<Coords>(cmd, "<Target>k__BackingField");
@@ -353,6 +353,7 @@ struct Session {
         Object* r = nullptr;
         if (!tryCall(battleResults, nullptr, {state(), attacker, defender, &accountForPeace, &simpleData}, &r) || !r) return false;
         *dmg = unbox<int32_t>(r);  // BattleResults.attackDamage, at offset 0
+        if (ret) *ret = static_cast<int32_t*>(object_unbox(r))[1];  // retaliationDamage, at offset 4
         *hp = get<uint16_t>(defender, "health");
         return true;
     }
@@ -453,8 +454,9 @@ struct Session {
             j.first = false;
             int c = cost(cmd);
             if (c >= 0) j.key("cost").num(c);
-            int dmg = -1, hp = 0;
-            if (attackDamage(cmd, tileAt, &dmg, &hp)) j.key("damage").num(dmg).key("kills").boolean(dmg >= hp);
+            int dmg = -1, hp = 0, ret = 0;
+            if (attackDamage(cmd, tileAt, &dmg, &hp, &ret))
+                j.key("damage").num(dmg).key("retaliation").num(dmg >= hp ? 0 : ret).key("kills").boolean(dmg >= hp);
             j.key("ok").boolean(true).close('}');
         }
         j.close(']');
