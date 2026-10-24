@@ -21,6 +21,9 @@
 //   op 12 RSTEP   u32 slot                                -> u8 player, i32 label, i16 type, a, b, arg,
 //                                                            u8 ok, u32 commands left, status block
 //                 (plays the next recorded command; label as env::Match::replayStep)
+//   op 13 LOADCUR u32 slot, spec, u32 size, i32 version + state -> status block: loads a state saved
+//                 in an older game version, then marks it as the current version, so play goes on
+//                 under the current rules (human midgame starts, py/human_starts.py)
 //
 //   spec          i32 tribe0, i32 bot0, i32 tribe1, i32 bot1, i32 mode, i32 mapPreset, i32 mapSize, u64 seed
 //   status block  u8 current player, u8 ended, u8 winner, u32 turn, u16 n, n x (i16 type, a, b, arg)
@@ -209,6 +212,13 @@ struct Server {
             env::Match& m = fresh(id);
             m.loadReplay(spec, start, final);
             w.put<uint32_t>(uint32_t(m.replayCount - m.replayAt));
+            status(w, m);
+        } else if (op == 13) {
+            uint32_t id = r.get<uint32_t>();
+            env::Spec spec = readSpec(r);
+            std::string bytes = r.bytes(r.get<uint32_t>());
+            env::Match& m = fresh(id);
+            m.loadAsCurrent(spec, bytes);
             status(w, m);
         } else if (op == 12) {
             env::Match& m = slot(r.get<uint32_t>());

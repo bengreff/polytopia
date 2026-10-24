@@ -194,6 +194,12 @@ class Env:
     def load(self, slot, spec, state):
         return self._status(self.request(6, struct.pack('<I', slot) + spec.pack() + struct.pack('<I', len(state)) + state), 0)[0]
 
+    def load_current(self, slot, spec, version, state):
+        """Loads a state saved in game version `version` and marks it as the current version, so
+        play goes on under the current rules."""
+        blob = struct.pack('<i', version) + state
+        return self._status(self.request(13, struct.pack('<I', slot) + spec.pack() + struct.pack('<I', len(blob)) + blob), 0)[0]
+
     def dump(self, slot):
         return json.loads(self.request(7, struct.pack('<I', slot)))
 

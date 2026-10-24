@@ -11,7 +11,8 @@
 Opponents in the training games: the policy itself (--self_share), the game's AI (--bot_share, at
 difficulty --bot), else an earlier generation drawn uniformly from the --fixed ones (always there,
 e.g. 0,1,2) and the last --recent ones before gen(g-1). With --turn_cost, faster wins are worth a
-little more (py/train_rl.py --turn_cost).
+little more (py/train_rl.py --turn_cost). With --starts and --start_share, that share of the games
+(not those against the bot) begin from human midgame positions (py/human_starts.py).
 
 Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training games); learn/gNNN
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
@@ -164,6 +165,8 @@ def main():
     ap.add_argument('--bot_share', type=float, default=0.0, help='training games against the game\'s AI')
     ap.add_argument('--bot', type=int, default=3, help='its difficulty (3 = Crazy)')
     ap.add_argument('--turn_cost', type=float, default=0.0, help='py/train_rl.py --turn_cost')
+    ap.add_argument('--starts', default='', help='human midgame states (py/human_starts.py) for py/selfplay.py --starts')
+    ap.add_argument('--start_share', type=float, default=0.0, help='share of training games that begin from one')
     ap.add_argument('--temperature', type=float, default=0.5)
     ap.add_argument('--lr', type=float, default=3e-5)
     ap.add_argument('--bc', default='/home/greff/polydata/human_full:1')
@@ -223,7 +226,8 @@ def main():
         run_cmd(run, [PY, os.path.join(HERE, 'selfplay.py'), prev, '--out_dir', games_dir, '--games', str(args.games),
                       '--pool', ','.join(pool), '--temperature', str(args.temperature),
                       '--first_seed', str(50_000_000 + g * 100_000), '--procs', str(procs),
-                      '--slots', str(args.slots), '--port', str(args.port)],
+                      '--slots', str(args.slots), '--port', str(args.port)]
+                + (['--starts', args.starts, '--start_share', str(args.start_share)] if args.starts and args.start_share > 0 else []),
                 os.path.join(run, 'games', f'g{g:03d}.log'))
         tail = (open(os.path.join(run, 'games', f'g{g:03d}.log')).read().strip().splitlines() or [''])[-1]
         log(run, f'gen {g:03d}: games done in {time.time() - t0:.0f} s: {tail}')

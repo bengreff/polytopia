@@ -33,6 +33,8 @@ PORT = 8
 
 def player_games(path):
     z = np.load(path)
+    if 'start_turn' in z.files and int(z['start_turn']) > 0:  # began from a human midgame position
+        return []
     rows = z['played'] if 'played' in z.files else z['label']
     legal, off, player, glob = z['legal'], z['legal_offsets'], z['player'], z['globals']
     turn = glob[:, G_TURN]

@@ -832,3 +832,63 @@ playing well against a person.
   - **Banked stars grow each generation** (4.8 → 5.9; humans 3.1).
   - **The catapult-heavy army is a self-play drift:** catapults 8% → 17%, riders 16% → 6%.
   - **Expansion and ports match humans.** Ben's game was a bad case for ports, not the norm.
+
+## Human midgames (2026-10-24, afternoon; Ben: "find the most interesting, close, complex midgames")
+- **`py/human_midgames.py`** scores the start of every player-turn in the 7,732 human championship
+  games, from each player's own observation:
+  - **closeness:** scores within 20%, cities within 2, the smaller army at least half the larger;
+  - **complexity:** units on the board, units in contact, legal moves, attacks available;
+  - **openness:** score-lead changes later in the game.
+  - Results: 6,072 games replay exactly to the server's final state. 2,909 of them reach a close,
+    contested midgame (turn ≥ 8, both sides with 3+ cities and 4+ units, some contact), giving
+    17,836 positions.
+- **Training starts:** the best 2,000 by complexity + closeness, at most two per game and 4+ turns
+  apart, from 1,515 games.
+  - Median turn 15 (10–22), 23 units on the board, 5 in contact.
+  - The player to move went on to win 47% of the time, so the starts don't favour either side.
+  - Who won the human game isn't part of the ranking, so the set isn't biased toward upsets.
+- **`py/human_starts.py`** saves each position as a game state:
+  - It replays the game to just before the player's first decision of that turn.
+  - Most human games are versions 121–122, so it loads the state marked as the current version
+    (new polyhost op 13, `load_current`): play continues under the pinned v123 rules.
+  - It checks that the observation and legal list equal the recorded ones, both after the
+    conversion and after a plain reload.
+  - Games before v121 are skipped.
+- **Showcase** (`py/human_showcase.py` → the local watch list, `human_showcase`):
+  - 12 games ranked for watching (back-and-forth plus a close, complex position), each opening at
+    that position (`#watch=…&turn=…&player=…`).
+  - They are other players' games, so they stay local: never on the public site.
+- **Finding: 92% of the human championship games are mirror matches** (7,092 of 7,732: both
+  players on the same tribe).
+  - Our self-play and evaluations draw the two tribes independently, so only ~1 in 12 games is a
+    mirror.
+  - The web app now draws player 2 in the opposite hue when both tribes match.
+- **Ben's decisions:**
+  - Keep independent tribe draws ("what tribe you are doesn't make a huge difference anyways").
+  - 30% human starts, after seeing a sample: 12 random starts rendered whole-map in a local
+    gallery, `runs/human_starts_preview/index.html`.
+- **Saved:** 1,715 of the 2,000 positions (285 were from versions before 121), 0 failed checks.
+  Tested from these starts: 4 self-play games on the Mac and 6 on the PC under QEMU, all played to
+  a finish.
+
+## S3c — S3b plus human midgame starts (pre-registered 2026-10-24, 12:45)
+- **Change from gen 37** (after S3b's pre-registered window, gens 30–36):
+  - 30% of the training games not against the bot begin from one of the 1,715 human midgame
+    states instead of a new map, then play on under the pinned rules.
+  - Opponents are drawn as in S3b.
+  - The learner sees only how its own games end, never the humans' moves, so the human set isn't
+    memorized.
+  - The turn cost counts turns from the start position.
+- **Unchanged:** everything else as S3b. Evaluations still start from new maps with the same seeds,
+  so they measure play from turn 0.
+- **Hypothesis:** facing human-style midgames teaches what self-play alone doesn't (a front line,
+  boats, faster research) and transfers to games from turn 0.
+- **Expected, by gen 43** (in the network's own new-map training games, `py/indicators.py` skips
+  human-start games):
+  - ranged share of units ≤ 20% (gen 29: 25%), riders ≥ 8% (6%), techs by turn 20 ≥ 7.8 (7.2),
+    stars banked ≤ 5.0 (5.9);
+  - strength holds: ≥ 60% against gen 0 and ≥ 94% against Crazy.
+- **Falsifier:** by gen 43 no indicator has moved halfway to its target (ranged share still
+  ≥ 23%, techs by turn 20 ≤ 7.4), meaning human midgames don't transfer to new-map play. Or two
+  consecutive generations below 58% against gen 0.
+- **Also:** Ben plays the gen-43 network.

@@ -3,7 +3,8 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
 
 - **Advantage:** every decision of a player in a game gets A = z - b, where z is 1 if that player won
   and 0 if they lost (capped games are skipped); with `--turn_cost c`, a win at turn T counts
-  max(0.5, 1 - c T) instead, so faster wins are worth a little more. With `--baseline opponent` (the default), b is the
+  max(0.5, 1 - c T) instead, so faster wins are worth a little more (T counted from the game's
+  `start_turn` for games that began from a human midgame position). With `--baseline opponent` (the default), b is the
   mean z of this batch's games against the same opponent (a bot difficulty, or self-play), and A is
   divided by its standard deviation over games. With `--baseline value`, b is the acting network's
   own value estimate before the move (`v_old`, recorded by py/selfplay.py), and A is centred and
@@ -47,7 +48,8 @@ def game_targets(files, turn_cost=0.0):
         z = np.load(f)
         if not bool(z['ended']) or int(z['winner']) not in (1, 2):
             continue
-        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner']), int(z['turns'])))
+        start = int(z['start_turn']) if 'start_turn' in z.files else 0
+        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner']), int(z['turns']) - start))
     win_z = lambda turns: max(0.5, 1.0 - turn_cost * turns)
     by_opp = {}
     for f, opp, seats, w, turns in rows:

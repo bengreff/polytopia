@@ -8,7 +8,9 @@ with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
   layout, so py/train_rl.py reads them: `opponent` is -1 for self and 100 + the checkpoint's index
   in the pool otherwise (checkpoint or bot), `played`/`logp` are the learner's sampled rows, `v_old` the learner's own
   value estimate (probability of winning) before each of its moves, for py/train_rl.py --baseline
-  value, `label` = `played` (there is no teacher), `source` = 'selfplay'.
+  value, `label` = `played` (there is no teacher), `source` = 'selfplay'. With `--starts`, a
+  `--start_share` of the games (not those against bots) begin from a human midgame position
+  (py/human_starts.py) instead of a new map; `start_turn` is the turn they began at (0 otherwise).
 - **Matches** (`--match B`): `--net` against B, both greedy (`--temperature` 0), each seed played
   twice with the seats swapped. B is a checkpoint or `bot:<difficulty>` (the game's own AI on the
   other seat, as py/eval_vs_bot.py; the same seeds and tribe draws give the same games). Writes one
@@ -143,6 +145,8 @@ def main():
     ap.add_argument('--out_dir', default=None, help='training games: write them here')
     ap.add_argument('--pool', default='self', help='training games: opponents with shares, "self:0.5,a.pt:0.25,bot:3:0.25"')
     ap.add_argument('--games', type=int, default=1000)
+    ap.add_argument('--starts', default=None, help='training games: a directory of human midgame states (py/human_starts.py)')
+    ap.add_argument('--start_share', type=float, default=0.0, help='share of training games that begin from one of them')
     ap.add_argument('--match', default=None, help='side B: a checkpoint, or bot:<difficulty>')
     ap.add_argument('--seeds', type=int, default=100, help='matches: games = 2 x seeds, seats swapped')
     ap.add_argument('--results', default=None, help='matches: one line per game')
@@ -177,6 +181,11 @@ def main():
         for i, (name, _) in enumerate(opponents):
             if name != 'self' and not name.startswith('bot:'):
                 nets[f'P{i}'] = load_net(name, args.device)
+        starts = []
+        if args.starts and args.start_share > 0:
+            rows = [l.rstrip('\n').split('\t') for l in open(os.path.join(args.starts, 'index.tsv'))][1:]
+            starts = [dict(file=os.path.join(args.starts, r[0]), tribes=tuple(int(x) for x in r[4].split(','))) for r in rows]
+            print(f'{len(starts)} human midgame starts, share {args.start_share}', flush=True)
         have = set(os.listdir(args.out_dir))
         jobs = [(s, None) for s in range(args.first_seed, args.first_seed + args.games) if f'g{s:08d}.npz' not in have]
     jobs.reverse()
@@ -223,6 +232,10 @@ def main():
             seat = int(np.random.default_rng([seed, 2]).integers(2))
             name = opponents[o][0]
             bots = (None, None)
+            start = None
+            if starts and not name.startswith('bot:') and np.random.default_rng([seed, 3]).random() < args.start_share:
+                start = starts[int(np.random.default_rng([seed, 4]).integers(len(starts)))]
+                tribes = start['tribes']
             if name == 'self':
                 seats, record, opp = {1: 'A', 2: 'A'}, (1, 2), -1
             elif name.startswith('bot:'):  # the game's AI plays its seat inside polyhost, as in matches
@@ -231,12 +244,17 @@ def main():
                 bots = (None, d) if seat == 0 else (d, None)
             else:
                 seats, record, opp = {seat + 1: 'A', 2 - seat: f'P{o}'}, (seat + 1,), 100 + o
-            g = dict(seed=seed, seat=seat, tribes=tribes, seats=seats, record=record, opp=opp)
+            g = dict(seed=seed, seat=seat, tribes=tribes, seats=seats, record=record, opp=opp, human_start=start)
         spec = polyenv.Spec(tribes=tribes, bots=bots, seed=seed)
         if not match:
             g['rec'] = dagger.Recorder(seed, spec)
             g['rec'].value = []
-        g['st'] = env.new(slot, spec)
+        if not match and g['human_start']:
+            with open(g['human_start']['file'], 'rb') as f:
+                g['st'] = env.load(slot, spec, f.read())
+        else:
+            g['st'] = env.new(slot, spec)
+        g['start_turn'] = g['st'].turn if not match and g['human_start'] else 0
         g['turn'], g['n'] = g['st'].turn, 0
         if match and args.save_games:
             g['start'] = blob_prefix[0] + env.save(slot)
@@ -275,12 +293,13 @@ def main():
         else:
             owner, capital = env.owners(slot)
             dagger.save(args.out_dir, g['rec'], st, owner, capital, g['opp'], g['record'], source='selfplay',
-                        extra=dict(v_old=np.asarray(g['rec'].value, np.float32)))
+                        extra=dict(v_old=np.asarray(g['rec'].value, np.float32), start_turn=np.int32(g['start_turn']),
+                                   start=np.str_(os.path.basename(g['human_start']['file']) if g['human_start'] else '')))
             res = 'cap' if not st.ended else 'win' if st.winner in g['record'] else 'loss'
             with log_lock:
                 results.append(dict(opp=g['opp'], res=res))
                 games_log.write(f"{g['seed']}\t{g['opp']}\t{','.join(map(str, g['record']))}\t"
-                                f"{g['tribes'][0]},{g['tribes'][1]}\t{res}\t{st.turn}\t{len(g['rec'].played)}\n")
+                                f"{g['tribes'][0]},{g['tribes'][1]}\t{res}\t{st.turn}\t{len(g['rec'].played)}\t{g['start_turn']}\n")
                 games_log.flush()
                 if len(results) % 50 == 0:
                     report()

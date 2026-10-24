@@ -54,7 +54,22 @@ function tribeColor(tribe) {
   return t && t.color ? '#' + t.color.toString(16).padStart(6, '0') : '#999';
 }
 const playerOf = id => state.players.find(p => p.id === id);
-const playerColor = id => id === 255 ? '#cfcfcf' : (playerOf(id) ? tribeColor(playerOf(id).tribe) : '#999');
+// In a mirror match (92% of the human championship games) both players have the tribe's colour:
+// player 2 gets the opposite hue so the sides stay apart.
+function oppositeHue(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return `hsl(${(h * 60 + 540) % 360}, 75%, ${Math.round(Math.min(0.6, Math.max(0.42, l)) * 100)}%)`;
+}
+const playerColor = id => {
+  if (id === 255) return '#cfcfcf';
+  const p = playerOf(id);
+  if (!p) return '#999';
+  const c = tribeColor(p.tribe), other = state.players.find(q => q.id !== id && q.id !== 255);
+  return id === 2 && other && other.tribe === p.tribe ? oppositeHue(c) : c;
+};
 const tribeName = id => playerOf(id) ? title(nameOf('tribeData', playerOf(id).tribe)) : '';
 
 function legalWith(pred) { return state.legal.map((m, i) => [m, i]).filter(([m]) => pred(m)); }
@@ -673,9 +688,18 @@ for (const id of ['gsort', 'gfilter', 'gtag']) $(id).onchange = renderGameList;
 async function watchGame(g) {
   stopAutoplay(); sel = null; centeredFor = null; watchMeta = g;
   state = await api(`/watch?path=${encodeURIComponent(g.path)}`, 'POST');
+  if (g.jump) await jumpTo(g.jump.turn, g.jump.player);
   $('watchview').style.display = 'none';
   fitBoard();
   resize(); render();
+}
+// Seeks a watched game to the start of `player`'s turn `turn` (the turn starts the server found).
+async function jumpTo(turn, player) {
+  for (const ts of state.watch.turnStarts) {
+    const s = await api(`/wstep?to=${ts}`, 'POST');
+    if (s.turn > turn || (s.turn === turn && (!player || s.currentPlayer === player))) { state = s; return; }
+    state = s;
+  }
 }
 $('watchgames').onclick = openWatchList;
 $('wlist').onclick = openWatchList;
@@ -845,15 +869,17 @@ function start() {
   if (window.siteInit) { await window.siteInit(); return; }
   state = await api('/state');
   start();
-  // #watch=<path>&speed=2.5&view=0 opens a recorded game and starts autoplay (speed in moves/s or "turn")
+  // #watch=<path>&speed=2.5&view=0 opens a recorded game and starts autoplay (speed in moves/s or "turn");
+  // &turn=22&player=1 opens it at that player's turn (paused unless a speed is given)
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get('watch')) {
     const d = await api('/games');
     const g = [...d.sent, ...d.games].find(x => x.path === h.get('watch')) || { path: h.get('watch') };
+    if (h.get('turn')) g.jump = { turn: +h.get('turn'), player: +h.get('player') || 0 };  // &turn=22&player=1
     if (h.get('speed')) $('wspeed').value = h.get('speed');
     await watchGame(g);
     if (h.get('view')) { $('wview').value = h.get('view'); state = await api(`/wview?v=${h.get('view')}`, 'POST'); render(); }
     $('menuview').style.display = 'none';
-    toggleAutoplay();
+    if (!h.get('turn') || h.get('speed')) toggleAutoplay();
   }
 })();

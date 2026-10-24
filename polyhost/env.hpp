@@ -386,6 +386,16 @@ public:
         computeLegal();
     }
 
+    // A state saved in another game version (blob: i32 version, then the state), marked as the
+    // current version after loading, so the game's version checks follow the current rules.
+    void loadAsCurrent(const Spec& s, const std::string& blob) {
+        load(s, blob.substr(4), blobVersion(blob));
+        Class* versions = cls("GameLogicAssembly", "", "VersionManager");
+        int current = unbox<int>(call(method(versions, "get_GameVersion", 0), nullptr));
+        call(method(object_get_class(state()), "set_Version", 1), state(), {&current});
+        computeLegal();
+    }
+
     bool exploredBy(Object* tile, uint8_t player) {
         Object* explorers = at<Object*>(tile, api.tExplorers);
         for (int i = 0, n = listCount(explorers); i < n; ++i)
