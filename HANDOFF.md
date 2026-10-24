@@ -30,6 +30,23 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
+## Update (2026-10-24, 12:45)
+
+- **S3b from gen 30:** fixed opponents (gens 0–2), the last 5 generations, Crazy at 10%, and a turn
+  cost on wins (0.005 per turn). Settings live in `~/runs/sp/s3/override.json`.
+- **S3c armed for gen 37:** `~/runs/sp/s3c_switch.sh` waits for gen036.pt, then restarts the loop
+  with 30% of non-bot games starting from human midgame states (`~/polydata/human_starts`, 1,715
+  states). See the research log for the pre-registrations.
+- **Strategy book:** `docs/strategy/universal-book.md` is the reference for training decisions;
+  read Part 0 first. Indicators: `py/indicators.py`.
+- **Play app** (`tools/play.sh runs/sp/s3/gen024.pt`):
+  - a network panel (key N) and yellow one-hit-kill marks;
+  - watch lists `human_showcase` and `human_starts_preview`, which open at their midgame turn.
+- **Ben beat gen 24 easily** (2026-10-24). Its weaknesses: a catapult-heavy army, slow research,
+  banked stars, no navy in that game.
+- **92% of the human championship games are mirror matches.** Ben chose to keep drawing tribes
+  independently.
+
 ## Now (2026-10-22, 19:00): S3 self-play running on the PC; public replay site live
 
 - **S3** (`/home/greff/runs/sp/s3/`, research-log S3): self-play generations from R7, which is
