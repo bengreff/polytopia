@@ -30,6 +30,18 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
+## Update (2026-10-25, 10:15): S3 stopped; S4 branches running
+
+- **S3 regressed after gen 30 and is stopped** (`~/runs/sp/s3/STOP`). See the research log.
+- **Two branches from S3 gen 29 run side by side:**
+  - `~/runs/sp/s4a`: the control, plain S3 settings;
+  - `~/runs/sp/s4b`: plus 30% human starts, evaluated against s4a's same generation.
+  - Settings are in each run's `override.json`.
+- **Watchdog:** the Mac runs `WATCH_RUNS="s4a s4b" tools/site_update.sh s3 loop`. The site still
+  shows S3.
+- **Self-play is sharded with CUDA-graph inference** (`py/fast_infer.py`). Emulation (QEMU) is now
+  the bottleneck.
+
 ## Update (2026-10-24, 12:45)
 
 - **S3b from gen 30:** fixed opponents (gens 0–2), the last 5 generations, Crazy at 10%, and a turn
