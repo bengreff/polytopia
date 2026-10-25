@@ -90,10 +90,10 @@ def apply_overrides(run, args):
             setattr(args, k, v)
 
 
-def free_procs(cap):
+def free_procs(cap, floor=8):
     """Game processes for the next step. The PC is shared: Ben's other projects (crucible) run only
     10pm-6am, so the loop takes up to `cap` in the daytime and half of it at night."""
-    return cap if 6 <= time.localtime().tm_hour < 22 else max(8, cap // 2)
+    return cap if 6 <= time.localtime().tm_hour < 22 else max(floor, cap // 2)
 
 
 def eval_jobs(run, g, args):
@@ -103,8 +103,11 @@ def eval_jobs(run, g, args):
         jobs.append(('prev', gen_path(run, g - 1), args.h2h_seeds, 13_000_000))
     if g % args.crazy_every == 0 or g == 0:
         jobs.append(('crazy', 'bot:3', args.crazy_seeds, 10_000_000))
-        if g > 0:
-            jobs.append(('gen0', gen_path(run, 0), args.h2h_seeds, 14_000_000))
+    if g > 0:
+        jobs.append(('gen0', gen_path(run, 0), args.h2h_seeds, 14_000_000))
+    rival = gen_path(args.rival, g) if args.rival else ''
+    if rival and g > 0 and os.path.exists(rival) and not os.path.samefile(rival, gen_path(run, g)):
+        jobs.append(('rival', rival, args.h2h_seeds, 15_000_000))  # the same generation of another run (after they diverge)
     return jobs
 
 
@@ -141,7 +144,8 @@ def record_evals(run, g, args):
             f.write('gen\tvs\tgames\twins\trate\tci_low\tci_high\twins_seat1\twins_seat2\tcapped\tmean_turns\tfinished\n')
     for kind, opp, _, _ in eval_jobs(run, g, args):
         j = os.path.join(run, 'evals', f'{kind}_g{g:03d}.json')
-        label = {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000'}[kind]
+        label = {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000',
+                 'rival': f'{os.path.basename(os.path.normpath(args.rival or "-"))}_gen{g:03d}'}[kind]
         if not os.path.exists(j) or (f'{g:03d}', label) in have:
             continue
         s = json.load(open(j))
@@ -182,11 +186,14 @@ def main():
     ap.add_argument('--crazy_every', type=int, default=1)
     ap.add_argument('--procs', type=int, default=28, help='game processes in the daytime (half at night, when other projects run)')
     ap.add_argument('--slots', type=int, default=6)
+    ap.add_argument('--min_procs', type=int, default=8, help='never fewer game processes than this')
     ap.add_argument('--eval_procs', type=int, default=8, help='game processes for the evaluations, which run beside the next generation\'s games')
     ap.add_argument('--eval_slots', type=int, default=4)
     ap.add_argument('--port', type=int, default=9200)
+    ap.add_argument('--rival', default='', help='another run directory: also evaluate each generation against its same generation')
     args = ap.parse_args()
     run = args.run
+    apply_overrides(run, args)  # before anything uses the settings (ports, processes, the evaluations below)
     for d in ('games', 'learn', 'evals', 'watch'):
         os.makedirs(os.path.join(run, d), exist_ok=True)
     if not os.path.exists(gen_path(run, 0)):
@@ -218,8 +225,8 @@ def main():
             share = (1 - args.self_share - (args.bot_share if args.bot_share > 0 else 0)) / len(past)
             pool += [f'{gen_path(run, p)}:{share:.4f}' for p in past]
         status(run, generation=g, step='games', pool=pool)
-        procs = free_procs(args.procs) - (args.eval_procs if evals and evals[1].poll() is None else 0)
-        procs = max(8, procs)
+        procs = free_procs(args.procs, args.min_procs) - (args.eval_procs if evals and evals[1].poll() is None else 0)
+        procs = max(args.min_procs, procs)
         log(run, f'gen {g:03d}: playing {args.games} games with gen {g - 1:03d} on {procs} game processes, '
                  f'pool {",".join(os.path.basename(p) for p in pool)}')
         t0 = time.time()

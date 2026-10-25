@@ -941,3 +941,44 @@ playing well against a person.
 
   - Every indicator is moving away from the human values.
   - The pre-registered read is at gen 43.
+
+## S3 to gen 48: regression and instability (2026-10-25 morning)
+- **Evaluations:**
+  - vs previous, gens 39–47: 48, 47.5, 48.5, 47.5, 42, 47.5, 39.5, 48, 39%.
+  - vs gen 0: 58.5, 58.5, 59.5, 61, 60, 59.5, 59.5, 61.5, 56.5%.
+  - vs Crazy: 93.5–97%.
+- **Learning became unstable from gen 40:**
+  - The KL limit stopped generations after 250–1,350 of ~8,000 steps (earlier generations ran all
+    their steps at KL ~0.015).
+  - Policy entropy rose from 1.74 to 2.2–2.3; clip fraction ~0.3.
+- **Games turned into grinds:** the mean length went 29 → 42 turns, games of 100+ turns 1 → 114 of
+  1,500, units trained per game 57 → 117, and a generation's games took ~85 min instead of ~42.
+- **S3c at its read (gen 43):**
+  - Ranged share 24 → 20% (met).
+  - Riders 6 → 7%. Techs by turn 20 7.2 → 6.3 and stars banked 6.0 → 8.2 (both worse).
+  - vs gen 0 60% at gen 43, 56.5% at gen 47.
+- **Attribution:** four changes went in within two generations (bot opponents, fixed early
+  generations, the turn cost, human starts), so the cause can't be separated. Gen 24 is still the
+  best checkpoint.
+- **Ben's decision:** stop S3 (`STOP` file set) and branch from gen 29.
+
+## S4 — two branches from S3 gen 29 (pre-registered 2026-10-25, 10:15)
+- **Runs:** `~/runs/sp/s4a` and `~/runs/sp/s4b`. Each links S3's gens 0–29 and continues at gen 30
+  on half the PC (13 game processes, 4 for evaluations; at night at least 5).
+- **S4a (control):** S3's settings. Half the games against itself, half against gen 0 (R7) and the
+  last 7 generations; no bot opponents, no turn cost, no human starts.
+- **S4b:** S4a plus 30% of the training games starting from the 1,715 human midgame states.
+- **Unchanged:** both use the faster self-play (shards, CUDA-graph inference), so S4a also tests
+  whether the speed changes play any part in the instability.
+- **Evaluations each generation** (200 games each): vs previous, vs gen 0, vs Crazy, and for S4b
+  vs S4a's same generation (seeds from 15,000,000; only once the two differ).
+- **Expected:**
+  - S4a behaves like S3 did up to gen 29: few or no KL early stops, entropy ~1.7–1.8, vs previous
+    ~50%, vs gen 0 60–68%.
+  - If human starts help, S4b beats S4a's same generation more than 50% of the time from ~gen 34
+    and ≥ 55% by gen 38, with indicators closer to the human ones.
+- **Falsifiers:**
+  - S4b vs S4a ≤ 50% over gens 35–38 (800 games) means human starts don't help; drop them.
+  - If S4a also becomes unstable (KL early stops on most generations, rising entropy), the cause
+    isn't the S3b/S3c settings. Then look at the shared changes (inference precision, the logp the
+    actors record).

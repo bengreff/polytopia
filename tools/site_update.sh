@@ -7,11 +7,13 @@
 #   3. export replays of the best wins, the biggest comebacks and a loss, plus the results
 #      (py/export_site.py),
 #   4. commit and push the site.
-# It is also the self-play loop's watchdog: if py/sp_loop.py isn't running on the PC (e.g. after
-# someone restarted Windows) and <run>/STOP doesn't exist, it starts it again (the loop resumes).
+# It is also the self-play loops' watchdog: for each run in $WATCH_RUNS (default: the published run),
+# if its py/sp_loop.py isn't running on the PC (e.g. after someone restarted Windows) and <run>/STOP
+# doesn't exist, it starts it again (the loop resumes; its settings are in <run>/override.json).
 #
 #   tools/site_update.sh s3            once
 #   tools/site_update.sh s3 loop       every 30 minutes
+#   WATCH_RUNS="s4a s4b" tools/site_update.sh s3 loop
 set -u
 cd "$(dirname "$0")/.."
 run=$1
@@ -20,15 +22,18 @@ remote=/home/greff/runs/sp/$run
 pc() { ssh -o ConnectTimeout=30 -o BatchMode=yes backhouse "wsl -d Ubuntu-22.04 -- $1" 2>/dev/null; }
 
 ensure_running() {
-    pc "bash -s" <<EOF2
-if ! pgrep -f '[s]p_loop.py $remote' > /dev/null && [ ! -f $remote/STOP ]; then
-    echo "\$(date '+%Y-%m-%d %H:%M:%S') restarted by the Mac's watchdog (loop not running)" >> $remote/loop.log
+    for w in ${WATCH_RUNS:-$run}; do
+        r=/home/greff/runs/sp/$w
+        pc "bash -s" <<EOF2
+if ! pgrep -f '[s]p_loop.py $r ' > /dev/null && [ ! -f $r/STOP ]; then
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') restarted by the Mac's watchdog (loop not running)" >> $r/loop.log
     cd /home/greff/poly/py_sp
-    POLYHOST=qemu setsid nohup /home/greff/polyvenv/bin/python sp_loop.py $remote --init /home/greff/runs/r7_human_full/step020000.pt >> $remote.out 2>&1 < /dev/null &
+    POLYHOST=qemu setsid nohup /home/greff/polyvenv/bin/python sp_loop.py $r --init /home/greff/runs/r7_human_full/step020000.pt >> $r.out 2>&1 < /dev/null &
     sleep 8
-    echo restarted
+    echo "restarted $w"
 fi
 EOF2
+    done
 }
 
 once() {
