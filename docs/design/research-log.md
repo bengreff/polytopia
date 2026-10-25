@@ -918,3 +918,26 @@ playing well against a person.
   - A native Windows build of polyhost; it needs the game's Windows files.
   - Less game-logic work per decision (profile polyhost natively on the Mac).
   - A faster learner: it is now ~35% of a generation and runs while the CPU is idle.
+
+### S3b results (window gens 30–36) and S3c so far (2026-10-24, 20:30)
+- **Evaluations, gens 30–38** (200 games each):
+  - vs previous: 51.5, 50, 45, 48, 46.5, 49, 44.5, 46, 46.5%. Every generation from gen 32 on is
+    below 50%, ~46.5% on average: each step loses slightly to its predecessor.
+  - vs gen 0: 62.5, 62.5, 62.5, 64, 63.5, 61, 59, 61, 59.5% (gens 22–29 averaged ~65%).
+  - vs Crazy: 95–98%.
+- **S3b against its pre-registration:** failed.
+  - Wins didn't get faster: won games vs Crazy took 21.8 → 23.3 turns (gen 36), 24.1 (gen 38);
+    vs gen 0, 31–38 turns.
+  - Strength slipped slightly.
+  - The falsifier (two consecutive generations below 58% vs gen 0) did not fire.
+- **S3c indicators so far** (new-map training games of gens 29 / 33 / 38; human 400–1,200 games):
+
+  | | Human | Gen 29 | Gen 33 | Gen 38 |
+  |---|---|---|---|---|
+  | Techs by turn 20 | 9.2 | 7.2 | 7.2 | 6.6 |
+  | Stars left at End Turn | 3.0 | 6.0 | 6.6 | 7.4 |
+  | Port by turn 20 | 88% | 82% | 77% | 56% |
+  | Ranged / catapults | 13% / 4% | 24% / 16% | 25% / 19% | 27% / 20% |
+
+  - Every indicator is moving away from the human values.
+  - The pre-registered read is at gen 43.
