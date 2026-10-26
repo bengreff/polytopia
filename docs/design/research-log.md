@@ -1034,3 +1034,20 @@ playing well against a person.
 - **Falsifier:** S5 vs S4a ≤ 50% over gens 44–47 (800 games). Then per-move credit from this value
   head doesn't help; the estimate is too noisy to bootstrap from (it explains only ~14% of outcome
   variance in self-play).
+
+## S6 — does turn planning beat the raw network? (pre-registered 2026-10-26, 16:50)
+- **`py/turn_search.py`:** at the start of each of its turns, the planner copies the game into 8
+  scratch slots (the engine's save/load).
+  - Each slot plays a complete turn with the policy: one plan takes the top move, seven sample at
+    temperature 1.
+  - Each plan is scored by the value head at the moment the policy chooses End Turn (the position
+    after the plan, from the planner's view).
+  - The best plan's position is loaded into the real game and its End Turn played.
+  - No training: the same network (S4a gen 47) plans for side A and plays raw for side B.
+- **Measurement:** 30 seeds × 2 seats = 60 games, planner vs raw gen 47.
+- **Expected:** the planner wins ≥ 60%. The value head then ranks whole-turn plans well enough to
+  act as a teacher, and the next step is training the policy toward the chosen plans (expert
+  iteration).
+- **Falsifier:** ≤ 55%. Then the value head is too weak to rank plans. Next would be better
+  position evaluation (the opponent's best reply, short rollouts, or more value training) before
+  any planning-based training.
