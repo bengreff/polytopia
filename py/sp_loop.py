@@ -99,31 +99,40 @@ def free_procs(cap, floor=8):
 def eval_jobs(run, g, args):
     """The evaluations of generation g: [(kind, opponent, seeds, first seed)]."""
     jobs = []
+    rival = gen_path(args.rival, g) if args.rival else ''
+    if rival and g > 0 and os.path.exists(rival) and not os.path.samefile(rival, gen_path(run, g)):
+        jobs.append(('rival', rival, args.h2h_seeds, 15_000_000))  # the same generation of another run (after they diverge)
     if g > 0:
         jobs.append(('prev', gen_path(run, g - 1), args.h2h_seeds, 13_000_000))
     if g % args.crazy_every == 0 or g == 0:
         jobs.append(('crazy', 'bot:3', args.crazy_seeds, 10_000_000))
     if g > 0:
         jobs.append(('gen0', gen_path(run, 0), args.h2h_seeds, 14_000_000))
-    rival = gen_path(args.rival, g) if args.rival else ''
-    if rival and g > 0 and os.path.exists(rival) and not os.path.samefile(rival, gen_path(run, g)):
-        jobs.append(('rival', rival, args.h2h_seeds, 15_000_000))  # the same generation of another run (after they diverge)
     return jobs
 
 
-def start_evals(run, g, args):
-    """Starts generation g's missing evaluations one after another in a background process."""
-    todo = [j for j in eval_jobs(run, g, args) if not os.path.exists(os.path.join(run, 'evals', f'{j[0]}_g{g:03d}.json'))]
+def missing(run, g, kind):
+    return not os.path.exists(os.path.join(run, 'evals', f'{kind}_g{g:03d}.json'))
+
+
+def start_evals(run, g, args, rival=True):
+    """Starts generation g's missing evaluations one after another in a background process. Also
+    catches up on up to two rival evaluations of recent generations: the rival run's generation may
+    not have existed yet when they were evaluated."""
+    catchup = [(e, j) for e in range(max(1, g - 6), g) for j in eval_jobs(run, e, args)
+               if j[0] == 'rival' and missing(run, e, 'rival')][:2] if rival else []
+    todo = catchup + [(g, j) for j in eval_jobs(run, g, args) if missing(run, g, j[0]) and (rival or j[0] != 'rival')]
     if not todo:
         return None
     procs = args.eval_procs
-    log(run, f'gen {g:03d}: evaluating ({", ".join(j[0] for j in todo)}) with {procs} game processes')
+    log(run, f'gen {g:03d}: evaluating ({", ".join(j[0] + (f" of gen {e:03d}" if e != g else "") for e, j in todo)}) '
+             f'with {procs} game processes')
     os.makedirs(os.path.join(run, 'evals'), exist_ok=True)
     script = []
-    for kind, opp, seeds, first in todo:
-        name = f'{kind}_g{g:03d}'
+    for e, (kind, opp, seeds, first) in todo:
+        name = f'{kind}_g{e:03d}'
         base = os.path.join(run, 'evals', name)
-        cmd = [PY, os.path.join(HERE, 'selfplay.py'), gen_path(run, g), '--match', opp, '--seeds', str(seeds),
+        cmd = [PY, os.path.join(HERE, 'selfplay.py'), gen_path(run, e), '--match', opp, '--seeds', str(seeds),
                '--first_seed', str(first), '--results', base + '.tsv', '--procs', str(procs),
                '--slots', str(args.eval_slots), '--port', str(args.port + 100),
                '--save_games', os.path.join(run, 'watch', f'sp_{os.path.basename(run)}_{name}')]
@@ -142,7 +151,9 @@ def record_evals(run, g, args):
     else:
         with open(path, 'w') as f:
             f.write('gen\tvs\tgames\twins\trate\tci_low\tci_high\twins_seat1\twins_seat2\tcapped\tmean_turns\tfinished\n')
-    for kind, opp, _, _ in eval_jobs(run, g, args):
+    gens = [(g, job) for job in eval_jobs(run, g, args)]
+    gens = [(e, job) for e in range(max(1, g - 8), g) for job in eval_jobs(run, e, args) if job[0] == 'rival'] + gens
+    for g, (kind, opp, _, _) in gens:
         j = os.path.join(run, 'evals', f'{kind}_g{g:03d}.json')
         label = {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000',
                  'rival': f'{os.path.basename(os.path.normpath(args.rival or "-"))}_gen{g:03d}'}[kind]
@@ -205,7 +216,7 @@ def main():
         g += 1
     log(run, f'starting at generation {g} (pid {os.getpid()})')
     for e in range(max(0, g - 3), g - 1):  # older evaluations a restart left unfinished
-        p = start_evals(run, e, args)
+        p = start_evals(run, e, args, rival=False)  # waited for: no rival catch-up here
         if p:
             log(run, f'evaluating gen {e:03d} (left over)')
             p.wait()
