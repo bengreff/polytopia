@@ -9,7 +9,11 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
   divided by its standard deviation over games. With `--baseline value`, b is the acting network's
   own value estimate before the move (`v_old`, recorded by py/selfplay.py), and A is centred and
   divided by its standard deviation over decisions: a baseline that depends only on the position
-  adds no bias (v_old estimates the chance of winning, not the turn-discounted z; that's still a
+  adds no bias. With `--gae_lambda l` < 1 (value baseline only), credit goes move by move instead:
+  each of a player's moves is judged by how its win estimate changed by the player's next move
+  (delta = v_next - v, the outcome z after the last move), and A = sum_k l^k delta_{t+k}
+  (generalized advantage estimation over the player's own decisions; l = 1 is the outcome-only
+  advantage z - v_old above) (v_old estimates the chance of winning, not the turn-discounted z; that's still a
   function of the position only).
 - **Policy loss:** -min(r A, clip(r, 1 - eps, 1 + eps) A) with r = pi(played) / pi_old(played),
   pi_old from the recorded `logp` (the sampling policy). pi is softmax(logits / --temperature), the
@@ -66,13 +70,32 @@ def game_targets(files, turn_cost=0.0):
     return {k: (v / sd, won[k], reward[k]) for k, v in adv.items()}, base, {o: len(v) for o, v in by_opp.items()}
 
 
+def gae(f, player, v_old, adv, lam):
+    """Per decision of the file's agent seats: the generalized advantage over that player's own
+    decisions (NaN for other decisions and unfinished games)."""
+    out = np.full(len(player), np.nan, np.float32)
+    for p in np.unique(player):
+        if (f, int(p)) not in adv:
+            continue
+        idx = np.nonzero(player == p)[0]
+        v = v_old[idx].astype(np.float64)
+        delta = np.append(v[1:], adv[(f, int(p))][2]) - v  # the next own move's estimate; the outcome after the last
+        a, run = np.empty(len(idx)), 0.0
+        for k in range(len(idx) - 1, -1, -1):
+            run = delta[k] + lam * run
+            a[k] = run
+        out[idx] = a
+    return out
+
+
 class RLStream(torch.utils.data.IterableDataset):
     """Epochs over the RL games: each worker takes its share of the files, loads them a window at a
     time, shuffles the decisions and yields batches with played, logp, advantage and value target."""
 
-    def __init__(self, files, adv, batch, window, epochs, seed, value_norm=None):
+    def __init__(self, files, adv, batch, window, epochs, seed, value_norm=None, lam=1.0):
         self.files, self.adv, self.batch, self.window, self.epochs, self.seed = files, adv, batch, window, epochs, seed
-        self.value_norm = value_norm  # --baseline value: A = (z - v_old - mean) / sd
+        self.value_norm = value_norm  # --baseline value: A = (z - v_old - mean) / sd, or (GAE - mean) / sd
+        self.lam = lam
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -90,7 +113,8 @@ class RLStream(torch.utils.data.IterableDataset):
                     a = np.array([self.adv.get((f, int(p)), (np.nan,) * 3) for p in player], np.float32).reshape(-1, 3)
                     if self.value_norm:
                         mean, sd = self.value_norm
-                        a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (a[:, 2] - z['v_old'] - mean) / sd)
+                        raw = a[:, 2] - z['v_old'] if self.lam >= 1 else gae(f, player, z['v_old'], self.adv, self.lam)
+                        a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (raw - mean) / sd)
                     games.append(g)
                     extra.append(dict(played=z['played'].astype(np.int64), logp=z['logp'].astype(np.float32),
                                       adv=a[:, 0], won=a[:, 1]))
@@ -128,6 +152,8 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--target_kl', type=float, default=0.0,
                     help='stop early once the mean KL to the acting policy over the last 50 steps passes this (0: never)')
+    ap.add_argument('--gae_lambda', type=float, default=1.0,
+                    help='with --baseline value: credit per move from changes in the win estimate (1: outcome only)')
     ap.add_argument('--turn_cost', type=float, default=0.0,
                     help='a win at turn T is worth max(0.5, 1 - turn_cost T) in the advantage (the value head still learns win/loss)')
     ap.add_argument('--baseline', choices=['opponent', 'value'], default='opponent',
@@ -148,16 +174,22 @@ def main():
     adv, base, counts = game_targets(files, args.turn_cost)
     value_norm = None
     if args.baseline == 'value':
-        res = []
+        res, gres = [], []
         for f in files:
             z = np.load(f)
             for p, v in zip(z['player'], z['v_old']):
                 if (f, int(p)) in adv:
                     res.append(adv[(f, int(p))][2] - float(v))
+            if args.gae_lambda < 1:
+                g = gae(f, z['player'].astype(np.int64), z['v_old'], adv, args.gae_lambda)
+                gres.extend(g[~np.isnan(g)].tolist())
         value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
         print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
               f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w, _ in adv.values()]):.3f} per game)',
               flush=True)
+        if args.gae_lambda < 1:
+            value_norm = (float(np.mean(gres)), float(np.std(gres)) or 1.0)
+            print(f'GAE lambda {args.gae_lambda}: advantage mean {value_norm[0]:.3f}, sd {value_norm[1]:.3f}', flush=True)
     if args.turn_cost:
         wins = [r for _, w, r in adv.values() if w]
         print(f'turn cost {args.turn_cost}: {len(wins)} wins, mean reward of a win {np.mean(wins):.3f} '
@@ -166,7 +198,8 @@ def main():
     print(f'{len(files)} RL games, {decisions} decisions; baseline (win rate) by opponent: '
           + ', '.join(f"{'self' if o < 0 else o}: {base[o]:.3f} over {counts[o]}" for o in sorted(base)), flush=True)
     steps_total = max(1, args.epochs * decisions // args.batch)
-    rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed, value_norm),
+    rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed, value_norm,
+                                              args.gae_lambda),
                                      batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda', prefetch_factor=4)
     bc_iter = None
     if args.bc:

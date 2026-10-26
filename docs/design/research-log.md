@@ -1004,3 +1004,33 @@ playing well against a person.
   - vs previous: ~48% on average.
   - Plain self-play has not improved on R7 by more than ~+90 Elo (64%) since about gen 19, and gen
     24's 70% is still the best single result.
+
+## Architecture review (2026-10-26; Ben: "you obviously are doing this fundamentally wrong")
+- **The network makes every decision** one command at a time from the game's legal list (~450 per
+  side per game), from a single forward pass.
+  - No search or lookahead: it never tries a move in the engine before playing it.
+  - Scripted: only the input encoding, the training setup, the 400-commands-per-turn and
+    150-turn caps.
+- **Self-play reward:** only the final result (1 win, 0 loss). Each of a side's ~450 moves gets the
+  same advantage, z − v_old, so per-move credit is very noisy.
+- **Plan, in order:**
+  1. Credit per move from changes in the win estimate (GAE, S5 below).
+  2. Turn planning with the engine: sample several whole turns, judge their end positions with the
+     value head, play and learn from the best (proved small first).
+  3. A native engine for speed. Steam has a Linux build (depot 874393, ~300 MB) that could run in
+     WSL without emulation; Ben has to download it, and its game version must match.
+
+## S5 — credit per move (GAE), branch from S4a gen 41 (pre-registered 2026-10-26, 16:20)
+- **Change:** `train_rl --gae_lambda 0.97`, over each player's own decisions.
+  - Each move is judged by the change in the acting network's win estimate up to the player's next
+    move (the outcome after the last), and A = Σ 0.97^k δ_{t+k}: about a turn of look-back credit.
+  - λ = 1 is S4a's outcome-only advantage (unit-checked).
+  - On 40 gen-40 games the advantage's sd fell from 0.329 to 0.118: most of the outcome noise is
+    explained by the estimate's trajectory.
+- **Everything else as S4a;** half the PC each.
+- **Evaluations as S4a,** plus S5 vs S4a's same generation (200 games, seeds from 15,000,000).
+- **Expected:** S5 beats S4a's same generation ≥ 55% by gen 46 and vs gen 0 rises above S4a's
+  ~62%, with stability unchanged (no KL early stops, entropy not rising faster than S4a's).
+- **Falsifier:** S5 vs S4a ≤ 50% over gens 44–47 (800 games). Then per-move credit from this value
+  head doesn't help; the estimate is too noisy to bootstrap from (it explains only ~14% of outcome
+  variance in self-play).
