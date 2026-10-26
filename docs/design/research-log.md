@@ -982,3 +982,25 @@ playing well against a person.
   - If S4a also becomes unstable (KL early stops on most generations, rising entropy), the cause
     isn't the S3b/S3c settings. Then look at the shared changes (inference precision, the logp the
     actors record).
+
+### S4 results (2026-10-26, 09:00)
+- **S4b vs S4a, same generation** (200 games each):
+
+  | Gen | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | S4b wins | 99 | 103 | 107 | 102 | 107 | 99 | 94 | 86 | 86 |
+
+  - **Gens 35–38: 365/800 = 45.6% (95% CI ~42–49%).** The pre-registered falsifier fired: human
+    starts don't help, and late in the window they hurt a little. S4b is stopped (`STOP`).
+  - S4a gets S3's full allocation again (28 game processes, 8 for evaluations).
+- **Stability:** both branches stayed stable through gen 40.
+  - Every generation ran nearly all its steps, at KL 0.010–0.019 and with no early stops.
+  - Games average 32–33 turns, with ~1 game of 100+ turns per 1,500.
+  - So S3's collapse after gen 40 came from the S3b/S3c settings (Crazy, fixed early generations,
+    turn cost, human starts together), not from the speed changes, which S4a shares.
+  - Entropy is drifting up in both (S4a 1.55–1.75 at gens 30–36, 1.97–2.00 at gens 39–40); watch it.
+- **Plateau:**
+  - vs gen 0 (R7): S4a gens 30–40 averaged ~62.6% (59–66.5%); S3 gens 19–29 ~64%.
+  - vs previous: ~48% on average.
+  - Plain self-play has not improved on R7 by more than ~+90 Elo (64%) since about gen 19, and gen
+    24's 70% is still the best single result.
