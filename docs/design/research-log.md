@@ -1101,3 +1101,29 @@ playing well against a person.
 - **Falsifier:** entropy still rising (above 3.0 by gen 54) or vs gen 0 below 58% twice in a
   row. Then the bonus isn't the cause; next suspects are the noise-normalized advantages and
   actor/learner precision.
+
+## S7 — four tracks in rotation from S5 gen 49 (pre-registered 2026-10-27, 18:45)
+- **Ben:** "run a few tracks to experiment with what works best … you may switch off
+  periodically."
+- **Rotation:** `tools/tracks.sh` runs one generation at a time (games, learning, evaluations) of
+  whichever track has the fewest, so the tracks share the GPU in turn and stay in step. All four on
+  the native engine with the whole PC; ~1 h per track-generation, so each track gains ~6
+  generations a day.
+- **Tracks** (all with credit per move and no entropy bonus):
+
+  | Track | Change |
+  |---|---|
+  | A `s5` | the base: GAE λ 0.97, entropy 0 (continues S5b) |
+  | B `s5v` | value weight 1.0 (was 0.25): a better win estimate, for credit and later for planning |
+  | C `s5l` | GAE λ 0.9: credit ~10 decisions back instead of ~30 |
+  | D `s5k` | KL anchor to gen 0 (R7), weight 0.03, on the RL batch's own positions |
+
+  - D's anchor replays no human games.
+  - At weight 0.1 the anchor pulled too hard in a test (KL to gen 0 1.10 → 0.95 within 100 steps),
+    hence 0.03.
+- **Evaluations each generation:** vs previous and vs gen 0 (and Crazy every third). B, C and D
+  also play A's same generation (200 games).
+- **Read at gen 56** (7 generations after the branch):
+  - A track is better than A if it wins > 55% of its games against A over gens 53–56 (800 games),
+    worse if < 45%.
+  - Also compared: entropy trends (S5b's falsifier: entropy above 3.0 by gen 54) and vs gen 0.

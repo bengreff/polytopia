@@ -23,6 +23,9 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
 - **Value:** BCE of the value head against the outcome (1 for a win, however long it took) on the RL
   games (weight --value_weight): the value head stays a probability of winning.
 - Entropy bonus --entropy.
+- **Anchor** (--anchor ckpt, --anchor_weight w): w KL(pi_ref || pi) over the legal rows of the RL
+  batch's own positions, pi_ref the reference checkpoint's policy at the same temperature: a pull
+  toward the reference (e.g. gen 0, trained on the human games) that replays no supervised data.
 
     python train_rl.py <init.pt> <rl_dir[,rl_dir2...]> <out_dir> --bc human1:0.5,m1v2:0.5 [--epochs 2]
 """
@@ -140,6 +143,8 @@ def main():
     ap.add_argument('--bc', default=None, help='supervised anchor data, train_bc.py source syntax')
     ap.add_argument('--bc_weight', type=float, default=0.5)
     ap.add_argument('--value_weight', type=float, default=0.25)
+    ap.add_argument('--anchor', default=None, help='reference checkpoint for the KL anchor')
+    ap.add_argument('--anchor_weight', type=float, default=0.0)
     ap.add_argument('--entropy', type=float, default=0.003)
     ap.add_argument('--clip', type=float, default=0.2)
     ap.add_argument('--temperature', type=float, default=1.0,
@@ -167,6 +172,13 @@ def main():
     cfg = ck.get('config', dict(d=256, layers=6))
     net = M.Net(**cfg).to(dev)
     net.load_state_dict(ck['model'])
+    ref = None
+    if args.anchor and args.anchor_weight > 0:
+        rk = torch.load(args.anchor, map_location='cpu')
+        ref = M.Net(**rk.get('config', cfg)).to(dev).eval()
+        ref.load_state_dict(rk['model'])
+        for prm in ref.parameters():
+            prm.requires_grad_(False)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.01, betas=(0.9, 0.95), fused=dev == 'cuda')
 
     files = [os.path.join(d, f) for d in args.rl_dirs.split(',') for f in os.listdir(d)
@@ -227,6 +239,13 @@ def main():
         ent = -(p * logp_all.masked_fill(~b['mask'], 0)).sum(1).mean()  # padding is -inf: keep NaN out of the gradient
         val = F.binary_cross_entropy_with_logits(v.float(), b['won'])
         loss = pg - args.entropy * ent + args.value_weight * val
+        anc = torch.zeros((), device=dev)
+        if ref is not None:  # KL(pi_ref || pi) on these positions
+            with torch.no_grad(), train_bc.autocast(dev):
+                rlogits, _, _ = ref(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
+            rlogp = torch.log_softmax(rlogits.float() / args.temperature, 1)
+            anc = (rlogp.exp() * (rlogp - logp_all).masked_fill(~b['mask'], 0)).sum(1).mean()
+            loss = loss + args.anchor_weight * anc
         bcl = torch.zeros((), device=dev)
         if bc_iter is not None:
             bb = train_bc.to_device(next(bc_iter), dev)
@@ -241,7 +260,7 @@ def main():
         step += 1
         with torch.no_grad():
             m = dict(pg=pg, ent=ent, value=val, bc=bcl, ratio=ratio.mean(), clipfrac=((ratio - 1).abs() > args.clip).float().mean(),
-                     kl=(b['logp'] - logp).mean())
+                     kl=(b['logp'] - logp).mean(), anchor=anc)
         for k, x in m.items():
             acc[k] = acc.get(k, 0.0) + float(x.detach())
         if step % 50 == 0:

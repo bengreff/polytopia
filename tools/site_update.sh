@@ -14,6 +14,7 @@
 #   tools/site_update.sh s3            once
 #   tools/site_update.sh s3 loop       every 30 minutes
 #   WATCH_RUNS="s4a s4b" tools/site_update.sh s3 loop
+#   WATCH_RUNS=tracks tools/site_update.sh s3 loop     (the rotation scheduler, tools/tracks.sh)
 set -u
 cd "$(dirname "$0")/.."
 run=$1
@@ -23,6 +24,17 @@ pc() { ssh -o ConnectTimeout=30 -o BatchMode=yes backhouse "wsl -d Ubuntu-22.04 
 
 ensure_running() {
     for w in ${WATCH_RUNS:-$run}; do
+        if [ "$w" = tracks ]; then  # the rotation scheduler (tools/tracks.sh) instead of one loop
+            pc "bash -s" <<EOF3
+if ! pgrep -f '[t]racks.sh' > /dev/null && [ ! -f /home/greff/runs/sp/TRACKS_STOP ]; then
+    echo "\$(date '+%F %T') restarted by the Mac's watchdog" >> /home/greff/runs/sp/tracks.log
+    setsid nohup /home/greff/poly/py_sp/tracks.sh >> /home/greff/runs/sp/tracks.out 2>&1 < /dev/null &
+    sleep 5
+    echo "restarted tracks"
+fi
+EOF3
+            continue
+        fi
         r=/home/greff/runs/sp/$w
         pc "bash -s" <<EOF2
 if ! pgrep -f '[s]p_loop.py $r ' > /dev/null && [ ! -f $r/STOP ]; then
