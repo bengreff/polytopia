@@ -1051,3 +1051,53 @@ playing well against a person.
 - **Falsifier:** ≤ 55%. Then the value head is too weak to rank plans. Next would be better
   position evaluation (the opponent's best reply, short rollouts, or more value training) before
   any planning-based training.
+
+### S6 result: turn planning loses (2026-10-27)
+- **Planner (8 plans, value-head scoring) vs raw gen 47: 18/60 = 30% (95% CI 20–43%).**
+  Falsifier fired.
+  - The value head preferred a sampled plan over the top-move plan on 73% of turns (mean estimated
+    gain +0.04), and those plans were worse.
+  - The search finds positions the value head overrates (sampled at temperature 1, they are off the
+    policy's own distribution).
+  - The value head can't rank plans as it is. Before trying planning again: plans sampled closer to
+    the policy (lower temperature), evaluation after the opponent's reply, and a better-trained
+    value head.
+
+### S5 result: credit per move helps (2026-10-27)
+- **S5 vs S4a, same generation:** gens 42–47: 97, 104, 106, 117, 118, 124 of 200. Over gens
+  44–47: 465/800 = 58.1%; the falsifier (≤ 50%) did not fire, and the expectation (≥ 55% by gen 46)
+  was met.
+- **vs gen 0:** S5 63, 64.5, 65, 63, 67.5, 66% (gens 42–47); S4a 58, 60.5, 63, 63, 56, 63%.
+
+### S4a collapsed too; the entropy bonus suspected (2026-10-27)
+- **S4a (plain S3 settings):**
+  - vs gen 0: 56, 54.5, 54, 49.5, 51, 44% at gens 48–53.
+  - KL early stops at gens 50, 51, 52, 54, 56.
+  - Entropy 2.0 → 2.8.
+  - Stopped (`STOP`).
+- **S5's entropy also rose** (1.84 → 3.13 at gen 46, then 2.5–2.9). Its training games grew
+  slower (gen 48's took 3.6 h on 7 processes). Greedy evaluations hide this.
+- **Hypothesis:**
+  - Once the self-play signal averages to noise (a policy about as strong as its opponents), the
+    normalized policy-gradient term cancels on average.
+  - The entropy bonus (0.003) doesn't cancel, so entropy climbs every generation.
+  - This fits every branch going bad 10–15 generations after its progress stalls.
+
+## Native engine on the PC (2026-10-27)
+- **The Steam Linux build** (depot 874393, build 2.17.3.16375; Ben downloaded it on the Mac) runs
+  polyhost natively in WSL: `tools/setup_pc_linux.sh`, `POLYHOST=linux`. Built with Zig's C++
+  compiler from the PC's Python environment (WSL has no g++).
+- **Parity:** `py/parity_hosts.py` (12 games, 25 turns, half against Crazy) gives output identical
+  to QEMU's: every legal list and final state.
+- **Speed:** the same 12 games took 5 s natively vs 38 s under QEMU, on a loaded PC.
+
+## S5b — S5 on the native engine, entropy bonus 0 (pre-registered 2026-10-27, 17:30)
+- **Change:** from gen 48's learning step, `train_rl --entropy 0` (was 0.003). Speed only: the
+  native engine, the whole PC.
+- **Expected:**
+  - Entropy stops rising: ≤ 2.5 at every generation from gen 50, trending down.
+  - Strength holds or improves: vs gen 0 ≥ 63% (gens 49–54).
+  - KL early stops stay rare.
+- **Falsifier:** entropy still rising (above 3.0 by gen 54) or vs gen 0 below 58% twice in a
+  row. Then the bonus isn't the cause; next suspects are the noise-normalized advantages and
+  actor/learner precision.

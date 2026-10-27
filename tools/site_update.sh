@@ -28,7 +28,7 @@ ensure_running() {
 if ! pgrep -f '[s]p_loop.py $r ' > /dev/null && [ ! -f $r/STOP ]; then
     echo "\$(date '+%Y-%m-%d %H:%M:%S') restarted by the Mac's watchdog (loop not running)" >> $r/loop.log
     cd /home/greff/poly/py_sp
-    POLYHOST=qemu setsid nohup /home/greff/polyvenv/bin/python sp_loop.py $r --init /home/greff/runs/r7_human_full/step020000.pt >> $r.out 2>&1 < /dev/null &
+    POLYHOST=linux setsid nohup /home/greff/polyvenv/bin/python sp_loop.py $r --init /home/greff/runs/r7_human_full/step020000.pt >> $r.out 2>&1 < /dev/null &
     sleep 8
     echo "restarted $w"
 fi
