@@ -252,11 +252,15 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # POLYHOST=mac runs polyhost natively on macOS against the Steam build's GameAssembly.dylib (the
 # same game build as the Android oracle, verified against the real app). POLYHOST=qemu runs the
 # Android build (the oracle's own libil2cpp.so) under QEMU user-mode emulation on an x86-64 Linux
-# host, e.g. the PC's WSL; POLYARM is its directory (tools/setup_pc_games.sh). Otherwise polyhost runs
-# in the Android emulator through adb.
+# host, e.g. the PC's WSL; POLYARM is its directory (tools/setup_pc_games.sh). POLYHOST=linux runs
+# polyhost natively on x86-64 Linux against the Steam Linux build's GameAssembly.so (the same game
+# build; POLYLINUX is its directory, tools/setup_pc_linux.sh). Otherwise polyhost runs in the Android
+# emulator through adb.
 NATIVE = os.environ.get('POLYHOST', 'emulator') == 'mac'
 QEMU = os.environ.get('POLYHOST', 'emulator') == 'qemu'
+LINUX = os.environ.get('POLYHOST', 'emulator') == 'linux'
 POLYARM = os.environ.get('POLYARM', os.path.expanduser('~/polyarm'))
+POLYLINUX = os.environ.get('POLYLINUX', os.path.expanduser('~/polylinux'))
 
 
 @contextlib.contextmanager
@@ -265,7 +269,7 @@ def launch(port=8200, connect_timeout=60, binary='polyhost'):
     (build/polyhost-mac, built by ./polyhost/run.sh mac), else on the emulator with the port
     forwarded (./polyhost/run.sh build pushes it). On the emulator, `binary` names another build in
     the device directory, so a test build can run beside a live one."""
-    if NATIVE or QEMU:
+    if NATIVE or QEMU or LINUX:
         with _launch_native(port, connect_timeout) as env:
             yield env
         return
@@ -307,6 +311,12 @@ def _launch_native(port, connect_timeout):
                os.path.join(POLYARM, 'poly', 'polyhost'), 'env', str(port)]
         proc = subprocess.Popen(cmd, cwd=os.path.join(POLYARM, 'poly'), stdout=log, stderr=subprocess.STDOUT,
                                 env=dict(os.environ, POLY_ROOT=os.path.join(POLYARM, 'poly')), preexec_fn=_die_with_parent)
+    elif LINUX:  # natively: the game's own x86-64 build
+        os.makedirs(os.path.join(POLYLINUX, 'logs'), exist_ok=True)
+        log = open(os.path.join(POLYLINUX, 'logs', f'env{port}.log'), 'w')
+        proc = subprocess.Popen([os.path.join(POLYLINUX, 'polyhost'), 'env', str(port)], cwd=POLYLINUX,
+                                stdout=log, stderr=subprocess.STDOUT, preexec_fn=_die_with_parent,
+                                env=dict(os.environ, POLY_ROOT=POLYLINUX, POLY_GAME_DIR=os.path.join(POLYLINUX, 'game')))
     else:
         log = open(os.path.join(REPO, 'build', f'env{port}.log'), 'w')
         proc = subprocess.Popen([os.environ.get('POLYHOST_BIN', os.path.join(REPO, 'build', 'polyhost-mac')), 'env', str(port)], cwd=REPO,

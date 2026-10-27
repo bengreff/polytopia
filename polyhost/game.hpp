@@ -11,9 +11,11 @@
 
 using namespace il2;
 
-// Where polyhost finds the game. On Android (the emulator): libil2cpp.so and Managed/Metadata under
-// /data/local/tmp/poly. On macOS: the Steam build's GameAssembly.dylib and il2cpp_data, the same
-// game build (2.17.3.16375). POLY_ROOT holds our own files: gamedata/, web/, outputs.
+// Where polyhost finds the game. On Android (the emulator, or QEMU on the PC): libil2cpp.so and
+// Managed/Metadata under /data/local/tmp/poly. On macOS: the Steam build's GameAssembly.dylib and
+// il2cpp_data. On x86-64 Linux (the PC's WSL, natively): the Steam Linux build's GameAssembly.so and
+// Polytopia_Data/il2cpp_data under POLY_GAME_DIR (depot 874393). All the same game build
+// (2.17.3.16375). POLY_ROOT holds our own files: gamedata/, web/, outputs.
 inline std::string envOr(const char* name, const std::string& fallback) {
     const char* v = std::getenv(name);
     return v && *v ? v : fallback;
@@ -24,6 +26,11 @@ inline const std::string kGameApp = envOr("POLY_GAME_APP", std::string(std::gete
 inline const std::string kGameLib = kGameApp + "/Contents/Frameworks/GameAssembly.dylib";
 inline const std::string kGameData = kGameApp + "/Contents/Resources/Data/il2cpp_data";
 inline const std::string kRoot = envOr("POLY_ROOT", "game/mac");
+#elif defined(__linux__) && !defined(__ANDROID__)
+inline const std::string kGameDir = envOr("POLY_GAME_DIR", "game/linux");
+inline const std::string kGameLib = kGameDir + "/GameAssembly.so";
+inline const std::string kGameData = kGameDir + "/Polytopia_Data/il2cpp_data";
+inline const std::string kRoot = envOr("POLY_ROOT", ".");
 #else
 inline const std::string kRoot = envOr("POLY_ROOT", "/data/local/tmp/poly");
 inline const std::string kGameLib = kRoot + "/libil2cpp.so";
