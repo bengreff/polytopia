@@ -1127,3 +1127,34 @@ playing well against a person.
   - A track is better than A if it wins > 55% of its games against A over gens 53–56 (800 games),
     worse if < 45%.
   - Also compared: entropy trends (S5b's falsifier: entropy above 3.0 by gen 54) and vs gen 0.
+
+## S8 — track E: varied human starts, tens of thousands (pre-registered 2026-10-27, 19:40)
+- **Ben:** human-position starts should stay in training, varied carefully: not a small set, at
+  least tens of thousands, so none is memorized.
+- **`py/human_positions.py`:**
+  - Up to 16 positions per exactly-replaying human game, any version.
+  - Positions spread over the game's early, middle and late thirds, at least a turn apart.
+  - Left out: decided positions (a player without cities, or a score below 40% of the other).
+  - Result: 69,645 positions from 5,994 games (median turn 9; early 21%, middle 41%, late 38%).
+- **`py/human_starts.py` on the PC's native engine:** 14 shards, ~10 minutes.
+  - 53,272 states saved from 4,926 games, each checked to show the same observation and legal list
+    as the recording under the current rules.
+  - ~16k positions dropped, mostly older versions whose legal lists differ now; 4 games crashed the
+    engine (a null reference in GetMovement) and were skipped.
+  - Location: `~/polydata/human_starts_big` (769 MB).
+- **Track E `s5h`:** the base track plus 30% of non-bot training games from these states.
+  - Same share as S4b, so the comparison isolates the set: 1,715 close midgames there, 53,272
+    varied positions here.
+  - Each position comes up about once in ~170 generations.
+- **Read with S7 at gen 56:** better than A if > 55% vs A over gens 53–56, worse if < 45%.
+
+## The human game with the most kills (2026-10-27, for Ben)
+- **Candidates:** 6,072 exactly replaying games, kills per game median 15.
+- **Evenly matched:** mean score ratio ≥ 0.8 from turn 5, and the fewer kills at least 60% of the
+  more.
+- **Most kills: game 5da0cb57** (Zebasi mirror, v122).
+  - 403 units killed (239–164) in 49 turns.
+  - Scores within 15% on average (never below a 0.71 ratio); 3 city captures.
+  - Player 1 won when player 2 resigned.
+  - Kills by turns 20/30/40: 45, 139, 277; the busiest five turns, from turn 32, had 88.
+- Local watch list `human_most_kills`, opening at turn 26. Other players' game: not published.
