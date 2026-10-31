@@ -57,8 +57,18 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - It checks the viewer's observation is unchanged, idempotence, no leak under perturbation, AI
     playouts, and that the rules don't read the stripped history.
   - Known leak: enemy cities on unexplored tiles are kept in place.
-  - The PC's Linux polyhost doesn't have op 14 yet. Build it as a new file next to the running one
-    before the S9 read's planner re-test.
+  - On the PC it is `~/polylinux/polyhost-det` (sources in `~/polylinux/src_det`; its detertest passed).
+    The S9 tracks still run `~/polylinux/polyhost`. Use `POLYHOST=linux POLYHOST_BIN=~/polylinux/polyhost-det`.
+- **To do before the S9 read (gen 83, about 2 days out):**
+  1. The exploitability runner: per track, a run dir with gen000 = that track's gen 83.
+     - Override: `self_share 0`, `fixed ""`, `recent 0`, `league "<gen083.pt>:1.0"`,
+       `eval_kinds gen0`, no anchor, no human starts, `LAST 4`.
+     - Add them to tracks.list.
+  2. A value check: the critic vs `s9c`'s value head, on held-out games and 150 held-out human games.
+  3. The planner re-test (`py/turn_search.py`):
+     - plans at temperature 0.5, scored after the opponent's reply;
+     - played in determinized samples;
+     - once with `s9v`'s critic, once with `s9c`'s head.
 - **Network:**
   - Tailscale was stopped on the Mac on 2026-10-30. On the home LAN, use `ssh -o HostKeyAlias=100.81.254.12 ben@10.0.4.44`.
   - The Mac's watchdog (`tools/site_update.sh`, `ssh backhouse`) is offline until Tailscale runs.

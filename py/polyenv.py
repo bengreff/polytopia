@@ -320,7 +320,7 @@ def _launch_native(port, connect_timeout):
     elif LINUX:  # natively: the game's own x86-64 build
         os.makedirs(os.path.join(POLYLINUX, 'logs'), exist_ok=True)
         log = open(os.path.join(POLYLINUX, 'logs', f'env{port}.log'), 'w')
-        proc = subprocess.Popen([os.path.join(POLYLINUX, 'polyhost'), 'env', str(port)], cwd=POLYLINUX,
+        proc = subprocess.Popen([os.environ.get('POLYHOST_BIN', os.path.join(POLYLINUX, 'polyhost')), 'env', str(port)], cwd=POLYLINUX,
                                 stdout=log, stderr=subprocess.STDOUT, preexec_fn=_die_with_parent,
                                 env=dict(os.environ, POLY_ROOT=POLYLINUX, POLY_GAME_DIR=os.path.join(POLYLINUX, 'game')))
     else:
