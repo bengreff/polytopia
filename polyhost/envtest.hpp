@@ -13,6 +13,7 @@
 #include <random>
 #include <set>
 
+#include "determinize.hpp"
 #include "env.hpp"
 
 namespace envtest {
@@ -223,6 +224,7 @@ struct Perturb {
     uint8_t viewer;
     std::mt19937_64& rng;
     bool consistentOnly;
+    bool keepCities = false;  // leave owned cities on unexplored tiles alone (env::Determinizer keeps them)
 
     void apply(env::Match& b, FogStats& st) {
         Game& g = api.g;
@@ -231,6 +233,10 @@ struct Perturb {
         for (Object* t : b.tiles()) {
             Object* u = env::at<Object*>(t, api.tUnit);
             if (!b.exploredBy(t, viewer)) {
+                Object* city = env::at<Object*>(t, api.tImprovement);
+                if (keepCities && city && env::at<int32_t>(city, api.iType) == env::Determinizer::kCity &&
+                    env::at<uint8_t>(t, api.tOwner) != 0)
+                    continue;
                 if (!consistentOnly) ++st.hiddenTiles;
                 env::put<int32_t>(t, api.tTerrain, int32_t(1 + rng() % 5));
                 env::put<int32_t>(t, api.tClimate, int32_t(2 + rng() % 14));
@@ -259,6 +265,7 @@ struct Perturb {
         for (int i = 0, n = env::listCount(ps); i < n; ++i) {
             Object* p = env::listAt<Object*>(ps, i);
             if (env::at<uint8_t>(p, api.pId) == viewer) continue;
+            if (keepCities && env::at<uint8_t>(p, api.pId) == 255) continue;  // the nature player's state is public and constant
             int stars = int(rng() % 200);
             call(method(g.player, "set_Currency", 1), p, {&stars});
             if (Object* techs = env::at<Object*>(p, api.pTech)) {
@@ -351,6 +358,215 @@ inline int fogTest(int games, uint64_t seed, int every) {
                 "unexplored tile (must be 0). Changed rows by CommandType:\n", st.legalChanged, st.checks, st.fogRows);
     for (auto& [k, n] : st.changedRows) std::printf("  type %-45s %d\n", k.c_str(), n);
     return st.leaks || st.fogRows ? 1 : st.controlFailures ? 2 : 0;
+}
+
+struct DeterStats {
+    int checks = 0, obsMismatch = 0, notIdempotent = 0, perturbed = 0, leaks = 0, withHiddenCities = 0, cityLeaks = 0;
+    int playouts = 0, playoutFailures = 0, historyChecks = 0, historyMismatch = 0;
+    long hiddenUnits = 0, fogUnits = 0, fogTiles = 0, keptCities = 0, techs = 0, trueTechs = 0, wrongTechs = 0, stars = 0, trueStars = 0;
+};
+
+inline bool sameObs(env::Match& a, env::Match& b, uint8_t viewer, std::string* where = nullptr) {
+    std::vector<int16_t> ta(size_t(a.width) * a.height * env::T_COUNT), tb(ta.size());
+    int32_t ga[env::G_COUNT], gb[env::G_COUNT];
+    uint8_t ka[env::kTechSlots], kb[env::kTechSlots];
+    a.observe(viewer, ta.data(), ga, ka);
+    b.observe(viewer, tb.data(), gb, kb);
+    for (size_t i = 0; i < ta.size(); ++i)
+        if (ta[i] != tb[i]) {
+            if (where) *where = "tile " + std::to_string(i / env::T_COUNT) + " feature " + std::to_string(i % env::T_COUNT) + ": " +
+                                std::to_string(ta[i]) + " -> " + std::to_string(tb[i]);
+            return false;
+        }
+    for (int i = 0; i < env::G_COUNT; ++i)
+        if (ga[i] != gb[i]) {
+            if (where) *where = "global " + std::to_string(i) + ": " + std::to_string(ga[i]) + " -> " + std::to_string(gb[i]);
+            return false;
+        }
+    if (std::memcmp(ka, kb, sizeof ka)) {
+        if (where) *where = "techs";
+        return false;
+    }
+    return true;
+}
+
+// Where two states' JSON dumps first differ, with some context.
+inline std::string firstDiff(Object* a, Object* b) {
+    Dumper da, db;
+    da.object(a, 0);
+    db.object(b, 0);
+    const std::string &x = da.j.s, &y = db.j.s;
+    size_t i = 0;
+    while (i < x.size() && i < y.size() && x[i] == y[i]) ++i;
+    size_t from = i > 160 ? i - 160 : 0;
+    return "..." + x.substr(from, 240) + "\n   vs ..." + y.substr(from, 240);
+}
+
+// The determinized-state builder (determinize.hpp) on one state, for the current player.
+inline void checkDeter(env::Api& api, env::Determinizer& det, env::Match& m, DeterStats& st, std::mt19937_64& rng) {
+    uint8_t viewer = m.currentPlayer();
+    if (std::getenv("DETER_DEBUG")) {
+        int owned = 0, hidden = 0;
+        for (Object* t : m.tiles())
+            if (Object* imp = env::at<Object*>(t, api.tImprovement))
+                if (env::at<int32_t>(imp, api.iType) == env::Determinizer::kCity && env::at<uint8_t>(t, api.tOwner) != 0 &&
+                    env::at<uint8_t>(t, api.tOwner) != viewer) {
+                    ++owned;
+                    hidden += !m.exploredBy(t, viewer);
+                }
+        std::printf("  debug turn %u viewer %d: %d enemy cities, %d unexplored\n", m.turn(), viewer, owned, hidden);
+        std::map<std::pair<int, int>, int> kinds;
+        for (Object* t : m.tiles())
+            if (Object* imp = env::at<Object*>(t, api.tImprovement))
+                ++kinds[{env::at<int32_t>(imp, api.iType), int(env::at<uint8_t>(imp, env::off(api.improvement, "founder"))) * 1000 + env::at<uint8_t>(t, api.tOwner)}];
+        for (auto& [k, n] : kinds) std::printf("    improvement type %d, founder %d, tile owner %d: %d\n", k.first, k.second / 1000, k.second % 1000, n);
+    }
+    env::Match d1(api);
+    env::Determinizer::Report rep = det.build(m, d1, viewer, 7);
+    ++st.checks;
+    st.hiddenUnits += rep.hiddenUnits;
+    st.fogUnits += rep.fogUnits;
+    st.fogTiles += rep.fogTiles;
+    st.keptCities += rep.keptCities;
+    st.techs += rep.techs;
+    st.trueTechs += rep.trueTechs;
+    st.wrongTechs += rep.wrongTechs;
+    st.stars += rep.stars;
+    st.trueStars += rep.trueStars;
+
+    // 1. The viewer sees exactly what it saw.
+    std::string where;
+    if (!sameObs(m, d1, viewer, &where) && st.obsMismatch++ < 5) std::printf("  OBSERVATION CHANGED (turn %u): %s\n", m.turn(), where.c_str());
+    // 2. The output is a fixed point of the game's serializer.
+    std::string s1 = d1.save();
+    env::Match d1b(api);
+    d1b.load(m.spec, s1);
+    if (d1b.save() != s1) ++st.notIdempotent;
+    // 3. Hidden changes (all but owned cities in the fog) don't reach the output.
+    FogStats fs;
+    env::Match b(api);
+    b.load(m.spec, m.save());
+    Perturb{api, viewer, rng, true, true}.apply(b, fs);
+    if (sameObs(m, b, viewer)) {
+        ++st.perturbed;
+        env::Match d2(api);
+        det.build(b, d2, viewer, 7);
+        if (d2.save() != s1 && st.leaks++ < 5) std::printf("  LEAK (turn %u):\n   %s\n", m.turn(), firstDiff(d1.state(), d2.state()).c_str());
+    }
+    // 4. The known leak: owned cities in the fog are kept, so changing them shows.
+    if (rep.keptCities) {
+        ++st.withHiddenCities;
+        env::Match c(api), d3(api);
+        c.load(m.spec, m.save());
+        Perturb{api, viewer, rng, true, false}.apply(c, fs);
+        det.build(c, d3, viewer, 7);
+        st.cityLeaks += d3.save() != s1;
+    }
+    // 5. The sample is a playable game: the built-in AI plays both seats for two turns.
+    ++st.playouts;
+    uint32_t until = d1.turn() + 2;
+    for (int n = 0; !d1.ended() && d1.turn() < until && n < 4000; ++n) {
+        Object* cmd = nullptr;  // the AI's move, as Game::botCommand but reporting an exception
+        int none = 0;
+        uint8_t cur = d1.currentPlayer();
+        Object* trig = nullptr;
+        std::string err;
+        if (!(unbox<bool>(call(api.g.tryTrigger, nullptr, {d1.state(), &trig})) && trig) &&
+            !tryCall(api.g.getMove, nullptr, {d1.state(), d1.player(cur), &none}, &cmd, &err)) {
+            if (st.playoutFailures++ < 5) std::printf("  AI FAILED ON THE SAMPLE (turn %u, player %d): %.900s\n", d1.turn(), cur, err.c_str());
+            break;
+        }
+        int bot = d1.botChoice();
+        if (!d1.step(bot >= 0 ? bot : env::Match::kBotOwn)) {
+            if (st.playoutFailures++ < 5) std::printf("  PLAYOUT FAILED (turn %u): %s\n", d1.turn(), d1.lastError.c_str());
+            break;
+        }
+    }
+}
+
+// The rules never read the command history: the same commands from a state and from its copy with
+// the history emptied give the same legal lists, and the same state apart from the history.
+inline void checkHistory(env::Api& api, env::Match& m, DeterStats& st, std::mt19937_64& rng) {
+    env::Match a(api), h(api);
+    a.load(m.spec, m.save());
+    h.load(m.spec, m.save());
+    env::Determinizer::stripHistory(api.g, h.state(), m.currentPlayer());
+    h.computeLegal();
+    ++st.historyChecks;
+    std::mt19937_64 r(rng());
+    auto stripped = [&](env::Match& x) {  // the state without its history
+        env::Match y(api);
+        y.load(x.spec, x.save());
+        env::Determinizer::stripHistory(api.g, y.state(), m.currentPlayer());
+        return y.save();
+    };
+    bool diverged = false;
+    for (int i = 0; i < 80 && !a.ended(); ++i) {
+        if (!(a.legal == h.legal)) { ++st.historyMismatch; return; }
+        int k = r() % 8 == 0 ? int(a.legal.size()) - 1 : int(r() % a.legal.size());  // the last row is usually End Turn
+        env::Cmd c = a.legal[k];
+        if (a.step(k) != h.step(k)) { ++st.historyMismatch; return; }
+        if (!diverged && stripped(a) != stripped(h)) {
+            diverged = true;
+            Object* acts = get<Object*>(m.state(), "<ActionStack>k__BackingField");
+            size_t pid = env::off(cls("GameLogicAssembly", "", "ActionBase"), "<PlayerId>k__BackingField");
+            int n = env::listCount(acts);
+            std::printf("  action stack tail (%d actions, viewer %d):", n, m.currentPlayer());
+            for (int j = std::max(0, n - 14); j < n; ++j) {
+                Object* x = env::listAt<Object*>(acts, j);
+                std::printf(" %s/%d", class_get_name(object_get_class(x)), env::at<uint8_t>(x, pid));
+            }
+            std::printf("\n");
+            std::printf("  history: states diverge after command type %d (%d -> %d, arg %d), turn %u, step %d\n", c.type, c.a, c.b,
+                        c.arg, a.turn(), i);
+        }
+    }
+    env::Determinizer::stripHistory(api.g, a.state(), m.currentPlayer());
+    env::Determinizer::stripHistory(api.g, h.state(), m.currentPlayer());
+    if (a.save() != h.save()) {
+        if (st.historyMismatch++ < 3) std::printf("  HISTORY READ:\n   %s\n", firstDiff(a.state(), h.state()).c_str());
+    }
+}
+
+inline int deterTest(int games, uint64_t seed, int every) {
+    Game g;
+    env::Api api(g);
+    env::Determinizer det(api);
+    DeterStats st;
+    std::mt19937_64 rng(seed);
+    for (int k = 0; k < games; ++k) {
+        env::Spec spec;
+        const int tribes[] = {2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+        spec.seats[0].tribe = tribes[rng() % 12];
+        spec.seats[1].tribe = tribes[rng() % 12];
+        spec.seed = rng();
+        env::Match m(api);
+        m.create(spec);
+        int decisions = 0;
+        while (!m.ended() && m.turn() < 60) {
+            if (++decisions % every == 0) {
+                checkDeter(api, det, m, st, rng);
+                if (decisions % (every * 4) == 0) checkHistory(api, m, st, rng);
+            }
+            int bot = m.botChoice();
+            if (!m.step(bot >= 0 ? bot : env::Match::kBotOwn)) die("step failed: " + m.lastError);
+        }
+        std::printf("game %d (turn %u): %d checks, %d observation changes, %d leaks, %d city leaks of %d with hidden cities, "
+                    "%d playout failures, %d history mismatches of %d\n", k, m.turn(), st.checks, st.obsMismatch, st.leaks,
+                    st.cityLeaks, st.withHiddenCities, st.playoutFailures, st.historyMismatch, st.historyChecks);
+        std::fflush(stdout);
+    }
+    double n = std::max(st.checks, 1);
+    std::printf("\ndeterminize: %d states; per state %.1f invisible units, %.1f units in the fog removed, %.1f fog tiles "
+                "resampled, %.2f enemy cities in the fog kept\n", st.checks, st.hiddenUnits / n, st.fogUnits / n, st.fogTiles / n,
+                st.keptCities / n);
+    std::printf("opponent techs: %.1f inferred vs %.1f true, %ld inferred but not held (must be 0); stars: %.1f set vs %.1f true\n",
+                st.techs / n, st.trueTechs / n, st.wrongTechs, st.stars / n, st.trueStars / n);
+    std::printf("checks: %d observation changes (must be 0), %d not idempotent (must be 0), %d leaks of %d perturbed (must be 0), "
+                "%d playout failures of %d (must be 0), history read in %d of %d (must be 0); known city leak in %d of %d\n",
+                st.obsMismatch, st.notIdempotent, st.leaks, st.perturbed, st.playoutFailures, st.playouts, st.historyMismatch,
+                st.historyChecks, st.cityLeaks, st.withHiddenCities);
+    return st.obsMismatch || st.notIdempotent || st.leaks || st.playoutFailures || st.historyMismatch || st.wrongTechs ? 1 : 0;
 }
 
 // Plays `games` games with both seats driven from outside: mostly the built-in AI's choice, with

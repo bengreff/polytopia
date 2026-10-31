@@ -8,6 +8,7 @@
 //   polyhost envtest <games> [seed] [every] [turn cap]   check the bot interface against the game
 //   polyhost envbench <games>    time the bot interface's parts on championship games
 //   polyhost fogtest <games> [seed] [every]   the fog-leak test: hidden changes must not reach the observation
+//   polyhost detertest <games> [seed] [every]   the determinized-state builder's tests (determinize.hpp)
 
 #include "envtest.hpp"
 #include "serve.hpp"
@@ -436,6 +437,9 @@ int main(int argc, char** argv) {
     else if (cmd == "fogtest")
         return envtest::fogTest(argc > 2 ? std::atoi(argv[2]) : 4, argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 1,
                                 argc > 4 ? std::atoi(argv[4]) : 20);
+    else if (cmd == "detertest")
+        return envtest::deterTest(argc > 2 ? std::atoi(argv[2]) : 4, argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 1,
+                                  argc > 4 ? std::atoi(argv[4]) : 20);
     else die("unknown command " + cmd);
     return 0;
 }

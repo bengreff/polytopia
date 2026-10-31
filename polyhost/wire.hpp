@@ -24,6 +24,8 @@
 //   op 13 LOADCUR u32 slot, spec, u32 size, i32 version + state -> status block: loads a state saved
 //                 in an older game version, then marks it as the current version, so play goes on
 //                 under the current rules (human midgame starts, py/human_starts.py)
+//   op 14 DETERM  u32 src slot, u32 dst slot, u8 viewer, u64 seed -> status block of dst: dst becomes a
+//                 fog-safe sample of src as `viewer` (0: src's current player) sees it (determinize.hpp)
 //
 //   spec          i32 tribe0, i32 bot0, i32 tribe1, i32 bot1, i32 mode, i32 mapPreset, i32 mapSize, u64 seed
 //   status block  u8 current player, u8 ended, u8 winner, u32 turn, u16 n, n x (i16 type, a, b, arg)
@@ -38,6 +40,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "determinize.hpp"
 #include "env.hpp"
 
 namespace wire {
@@ -113,6 +116,7 @@ inline bool writeAll(int fd, const std::string& s) {
 struct Server {
     Game g;
     env::Api api{g};
+    env::Determinizer determinizer{api};
     std::map<uint32_t, std::unique_ptr<env::Match>> slots;
 
     env::Match& slot(uint32_t id) {
@@ -232,6 +236,16 @@ struct Server {
             w.put<uint8_t>(ok);
             w.put<uint32_t>(uint32_t(m.replayCount - m.replayAt));
             status(w, m);
+        } else if (op == 14) {
+            env::Match& src = slot(r.get<uint32_t>());
+            uint32_t id = r.get<uint32_t>();
+            uint8_t viewer = r.get<uint8_t>();
+            uint64_t seed = r.get<uint64_t>();
+            if (!viewer) viewer = src.currentPlayer();
+            auto m = std::make_unique<env::Match>(api);
+            determinizer.build(src, *m, viewer, seed);
+            env::Match& dst = *(slots[id] = std::move(m));  // (src may be the same slot: replaced only now)
+            status(w, dst);
         } else {
             throw std::runtime_error("unknown op " + std::to_string(op));
         }

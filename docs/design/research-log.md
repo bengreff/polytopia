@@ -1258,3 +1258,45 @@ playing well against a person.
   - **Exploiter:**
     - Expected: > 60% vs `s9l` within a few generations of each reset, falling as `s9l` adapts.
     - If it never passes 55%, the exploiter finds nothing at this budget.
+
+## Determinized-state builder v1 (2026-10-30; Ben approved it with S9)
+- **What it is:** `polyhost/determinize.hpp`, wire op 14, `polyenv.Env.determinize(src, dst, viewer, seed)`.
+  - It writes a fog-safe sample of a match into another slot, so a search never uses what the
+    player can't see.
+  - Kept: what the viewer's client shows.
+  - Replaced or removed:
+    - **Units:** invisible enemy units and every unit on an unexplored tile are removed.
+    - **Unexplored tiles:** terrain, climate, resources and unowned villages and ruins come from a
+      map generated with the sample's seed.
+    - **History and randomness:** the command history is emptied, and a new random seed changes
+      ruins and every later draw.
+    - **Opponent techs:** inferred from visible evidence: the tribe's starting techs, the techs
+      behind units it trained and improvements it built, and their prerequisites.
+    - **Opponent stars:** a banked-stars prior of 3.
+    - **Enemy units:** xp and creation turn set to 0, and every unit renumbered.
+    - **AI memory:** reset.
+  - **Known leak:** enemy cities on unexplored tiles are kept where they are (0.7–1.3 per state in
+    bot games). Not yet sampled: units in the fog.
+- **Test** (`polyhost detertest`, bot-vs-bot games, the current player as viewer): 1,899 states
+  (8 games, seed 11) and 715 (6 games, seed 3).
+  - The viewer's observation is unchanged: 0 failures.
+  - The output is a fixed point of the serializer: 0 failures.
+  - Hidden changes (tiles, units, stars, techs, seed, unit ids; the kept cities aside) don't reach
+    the output: 0 of 1,899.
+  - The built-in AI plays both seats two turns on the sample: 0 failures of 1,899.
+  - No inferred tech the opponent doesn't hold: 0.
+  - The rules don't read the stripped history: 0 of 472 (80 random commands from the state and from
+    its stripped copy).
+  - Python: same observation and legal list, same seed → same bytes.
+- **Found while building it:**
+  - A city's owner is the tile's: `ImprovementState.owner` is always 0, and `founder` says who
+    built an improvement.
+  - The action stack is not a history. It holds the last command's actions, and a pending city
+    reward reads it for its score, so it is kept when the actions are the viewer's.
+  - Units obtained without their tech: swordsmen and ships from ruins, giants from city level-ups,
+    the starting unit, and converted units (which keep their birth tribe).
+  - The opponent's banked stars: one turn of income double-counted, since income arrives at its turn
+    start anyway, so the builder uses a prior.
+- **Next:**
+  - Build it into the PC's Linux polyhost, as a new binary, before the S9 read's planner re-test.
+  - Then expert iteration on samples (superhuman-plan.md pillar 3).

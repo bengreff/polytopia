@@ -200,6 +200,12 @@ class Env:
         blob = struct.pack('<i', version) + state
         return self._status(self.request(13, struct.pack('<I', slot) + spec.pack() + struct.pack('<I', len(blob)) + blob), 0)[0]
 
+    def determinize(self, src, dst, viewer=0, seed=0):
+        """Slot dst becomes a fog-safe sample of slot src as player `viewer` (0: src's current player)
+        sees it: hidden tiles, units, stars and techs drawn from `seed` (polyhost/determinize.hpp).
+        For search, so it never uses what the player can't see. Returns dst's status."""
+        return self._status(self.request(14, struct.pack('<IIBQ', src, dst, viewer, seed)), 0)[0]
+
     def dump(self, slot):
         return json.loads(self.request(7, struct.pack('<I', slot)))
 

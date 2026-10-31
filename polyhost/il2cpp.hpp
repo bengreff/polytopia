@@ -57,6 +57,7 @@ struct Type;
     X(void, field_get_value, (Object*, Field*, void*))                          \
     X(void, field_set_value, (Object*, Field*, void*))                          \
     X(void, format_exception, (const Exception*, char*, int))                   \
+    X(void, format_stack_trace, (const Exception*, char*, int))                 \
     X(Thread*, thread_attach, (Domain*))                                        \
     X(Field*, class_get_fields, (Class*, void**))                               \
     X(Class*, class_get_parent, (Class*))                                       \
@@ -206,9 +207,10 @@ inline bool tryCall(const Method* m, void* self, std::initializer_list<void*> ar
     Exception* exc = nullptr;
     *result = runtime_invoke(m, self, argv, &exc);
     if (exc && error) {
-        char buf[4096];
+        char buf[4096], trace[8192] = {};
         format_exception(exc, buf, sizeof buf);
-        *error = buf;
+        format_stack_trace(exc, trace, sizeof trace);
+        *error = std::string(buf) + (trace[0] ? std::string(" | at ") + trace : "");
     }
     return !exc;
 }

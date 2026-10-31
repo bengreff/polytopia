@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-10-22, evening: S3 self-play on the PC, public replay site)
+# Handoff: Polytopia AI (2026-10-30, night: S9 five tracks running; fog-safe state builder v1)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -29,6 +29,39 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     `tools/setup_pc_games.sh`). No Steam is needed. It's bit-identical to the Mac (`py/parity_hosts.py`)
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
+
+## Now (2026-10-30, 23:00): S9 running; the determinized-state builder v1 is done
+
+- **The plan:** `docs/design/superhuman-plan.md` (v6 restrategy). Ben approved it on 2026-10-30
+  ("Sounds good. Keep human starts in, they can't hurt. 3) yes. Go.").
+  - Human-position starts stay in every training track.
+  - Ben approved building the determinized-state builder.
+- **S9** (research log S9; settings in `tools/s9_setup.sh` and each run's `override.json`):
+  - Five tracks from track D (`s5k`) gen 71 rotate on the PC (`~/poly/py_sp/tracks.sh`,
+    `~/runs/sp/tracks.list`):
+    - `s9c` control;
+    - `s9v` separate critic (`train_rl.py --critic`);
+    - `s9m` magnet (`--anchor_every 6`);
+    - `s9l` league main (`--league`);
+    - `s9x` exploiter (`--reset_from`).
+  - Each track stops at gen 83 (`LAST`), then comes the read: exploitability (4-generation fresh
+    exploiters vs each track's gen 83), the critic's held-out quality, and the planner re-test.
+  - One round of five takes ~3.3–4 h, so the read is about 2 days out.
+- **Results so far** (S7/S8 in the research log):
+  - D (KL anchor) beat A 55.5% at gens 65–71; B (value weight 1.0) collapsed and was stopped.
+  - E crashed on a human start where the learner never moved (fixed).
+- **The policy's value head memorizes outcomes within a pass** (its stream holds ~16 positions
+  of every game per batch). The critic's own stream samples 25% of each game across 64 games.
+- **Fog-safe search state:** `polyhost/determinize.hpp`, wire op 14, `polyenv.Env.determinize(src, dst, viewer, seed)`.
+  - Test: `build/polyhost-mac-det detertest <games> [seed] [every]`.
+  - It checks the viewer's observation is unchanged, idempotence, no leak under perturbation, AI
+    playouts, and that the rules don't read the stripped history.
+  - Known leak: enemy cities on unexplored tiles are kept in place.
+  - The PC's Linux polyhost doesn't have op 14 yet. Build it as a new file next to the running one
+    before the S9 read's planner re-test.
+- **Network:**
+  - Tailscale was stopped on the Mac on 2026-10-30. On the home LAN, use `ssh -o HostKeyAlias=100.81.254.12 ben@10.0.4.44`.
+  - The Mac's watchdog (`tools/site_update.sh`, `ssh backhouse`) is offline until Tailscale runs.
 
 ## Update (2026-10-25, 10:15): S3 stopped; S4 branches running
 

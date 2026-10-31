@@ -54,7 +54,8 @@ Built in `polyhost/env.hpp` (C++), `polyhost/wire.hpp` (protocol) and `py/polyen
 | Seeding and setup | Done. Pass-and-play construction, byte-identical to the real app's Might/Lakes/Small game. Seats are outside-driven (handicap 1) or the game's AI at a difficulty (`AddAIOpponent`) |
 | Clone v1 (serialize) | Done, with the history kept. Save 0.14 ms, load ~0.4 ms. Idempotent after one round trip, and stepping a restored copy is byte-exact |
 | Observation builder (allowlist) | v1 done: 32 per-tile features, 20 globals, own techs. **The perturbation fog-leak test is not written yet** |
-| Canonical hash, determinized-state builder, history stripping | Not started (needed from M3) |
+| Determinized-state builder, history stripping | **v1 done (2026-10-30)**: `polyhost/determinize.hpp`, wire op 14 (`polyenv.Env.determinize`), tested by `polyhost detertest` (research log). Known leak: enemy cities on unexplored tiles are kept in place |
+| Canonical hash | Not started (needed from M3) |
 | Microbenchmarks | Done for the parts; dummy-network end to end is still to do |
 
 **Measured costs per decision, one emulator thread** (replacing the estimates below):
