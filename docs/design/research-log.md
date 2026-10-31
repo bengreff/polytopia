@@ -1158,3 +1158,103 @@ playing well against a person.
   - Player 1 won when player 2 resigned.
   - Kills by turns 20/30/40: 45, 139, 277; the busiest five turns, from turn 32, had 88.
 - Local watch list `human_most_kills`, opening at turn 26. Other players' game: not published.
+
+## S7 and S8 results (2026-10-30)
+- **The read at gen 56** (gens 53–56 vs track A's same generation, 800 games each):
+
+  | Track | vs A, 53–56 | vs A, 57–64 | vs A, 65–71 | vs gen 0, 65–72 | vs Crazy, 60–72 | Entropy at the end |
+  |---|---|---|---|---|---|---|
+  | A `s5` (base) | — | — | — | 68.5% | 97.3% | ~2.0, flat |
+  | B `s5v` value weight 1.0 | **35.5% (worse)** | 27.0% | **18.0%** | 53.5% | 93.6% | 1.83 |
+  | C `s5l` λ 0.9 | 49.8% (no difference) | 48.8% | 44.6% | **72.4%** | 97.8% | 1.56 |
+  | D `s5k` KL anchor 0.03 | 49.4% (no difference) | 46.8% | **55.5%** (59% at gen 71) | **72.9%** | 97.0% | 1.65 |
+  | E `s5h` 53k human starts | 49.0% (no difference) | 47.5% (gen 57 only) | stopped | — | — | 1.92 |
+
+  - At the pre-registered read, only B differed from A (worse). D pulled ahead later, the only
+    track still gaining on A. C beats gen 0 by the most but loses to A: a non-transitive result.
+  - B kept falling: a value weight of 1.0 on the shared trunk damages the policy.
+  - KL early stops: B at gens 51, 54, 55, 57; C at 54; D at 50–51 (the anchor's first
+    generations); E at 55; A none.
+- **S5b (entropy bonus 0), on track A:** entropy stayed ≤ 2.5 from gen 50 (2.2 → 1.9 by gen 56,
+  then 1.9–2.2), and vs gen 0 held at 64–73% (gens 49–72). Expectation met, falsifier not fired:
+  the bonus caused the rise. Strength held but didn't improve.
+- **E stopped at gen 58** (2026-10-29 03:26): a game from a human start ended before the learner
+  made a recorded move, and saving an empty game crashed (`np.stack` of nothing). The retries
+  replayed the same game, so three failures stopped the track. Fixed: such games are counted, not
+  saved.
+- **The policy's value head memorizes outcomes within a pass.** Its stream loads 16 games at a time
+  and yields their decisions in ~55 consecutive batches, each with ~16 positions of every game.
+  - On 24 test games its training loss fell 0.22 → 0.01 within 150 steps.
+  - A separate value network on a decorrelated stream (25% of each game's positions, 64 games
+    shuffled together) stayed at an honest 0.6–0.8 against the outcome on the same games.
+  - The base's recorded `v_old` is still out-of-sample (recorded before the games were learned
+    from), but what the head learns is fitted to memorized outcomes. That may explain why it
+    explains so little outcome variance and misled the planner (S6).
+- **B stopped** (`STOP`, 2026-10-30), and the S7 rotation ended after B's gen 72 for S9 (`TRACKS_STOP`).
+
+## S9 — five tracks from D gen 71 (pre-registered 2026-10-30, 21:30)
+- **Why:** the restrategy in [superhuman-plan.md](superhuman-plan.md).
+  - PPO tweaks have stopped paying.
+  - The value function is what blocks search.
+  - Nothing measures exploitability or play from human-style positions.
+  - Ben approved it: "Keep human starts in, they can't hurt."
+- **Base:**
+  - Track D (`s5k`) at gen 71: GAE λ 0.97, entropy 0, KL anchor to gen 0 (R7) at 0.03, value weight
+    0.25, lr 3e-5, KL limit 0.05, temperature 0.5, 1,500 games per generation.
+  - Pool: self 0.5, plus gen 0 and the last 7 generations.
+  - Plus 30% of non-bot games from `human_starts_big`, without the human held-out games
+    (`train_bc.is_val`, CRC32 % 10 == 0): 47,829 of 53,272 positions.
+  - Settings: `tools/s9_setup.sh` and each run's `override.json`.
+  - Rotation: `tools/tracks.sh`.
+  - Each track stops at gen 83 (`LAST`).
+
+  | Track | Run | Change from the base |
+  |---|---|---|
+  | 1 Control | `s9c` | none |
+  | 2 Critic | `s9v` | `train_rl.py --critic`: a separate value network, started from the gen-71 weights. Before each step it scores every decision, and those estimates replace `v_old` in the advantages. It learns on its own optimizer (lr 1e-4): BCE against the λ-return (λ 0.95) plus 0.2 × ownership. Its stream is decorrelated: 25% of each game's decisions per pass, 2 passes, 64 games shuffled together. The data is this generation's and the previous generation's games. The policy's own value head trains as before |
+  | 3 Magnet | `s9m` | `--anchor_every 6`: the anchor (weight 0.03) is the run's own generation at the last multiple of 6 below the one being learned (gen 66 for gen 72, gen 72 for gens 73–78, gen 78 for gens 79–83) instead of gen 0 |
+  | 4 League main | `s9l` | Pool: self 0.5, exploiter `s9x`'s 2 latest generations 0.25, gen 0 + the last 3 generations 0.25 |
+  | 5 Exploiter | `s9x` | Plays only `s9l`'s latest generation. No anchor, no human starts. Reset to `s9l`'s latest when it beats `s9l` ≥ 65% (same generation, 200 games) or 8 generations after the branch or the last reset (`resets.tsv`) |
+
+- **Deviations from superhuman-plan.md §4:**
+  - The branch is at gen 71, so the read is at gen 83.
+  - The critic's window is 1 earlier generation, not 4, to keep learning time down.
+  - The critic gets its own sampled stream, after the memorization finding above.
+  - The held-out human positions use the human data's own held-out split (10%, not 5%).
+  - Magnet: gen 71 isn't a multiple of 6, so gen 72's anchor is gen 66; from gen 73 on it is the track's own.
+- **Evaluations each generation:**
+  - 200 games each, seats swapped, greedy: vs previous and vs gen 0, Crazy every third
+    generation.
+  - Tracks 2–4: vs `s9c`'s same generation (seeds from 15,000,000).
+  - Track 5: vs `s9l`'s same generation.
+  - Every third generation, tracks 1–4: vs gen 0 from 100 held-out human positions (one per game,
+    `selfplay.py --starts … --starts_split val`, each from both seats, seeds from 17,000,000).
+    Tracks 2–4 also play `s9c` from them.
+  - Strategy indicators of every generation's training games: `indicators.tsv`.
+- **Read at gen 83:**
+  1. **Head-to-head** vs `s9c` over gens 80–83 (800 games): better > 55%, worse < 45%.
+  2. **Exploitability:** a fresh exploiter for 4 generations against each of tracks 1–4's gen 83
+     (initialized from it, playing only it, no anchor), then 200 games. A difference of ≥ 10
+     points between tracks counts.
+  3. **Human positions:** the h evaluations pooled over gens 72–83.
+  4. **Indicators** vs the 400 human games.
+  5. **Critic quality:** value log loss and accuracy by game phase, on held-out games of `s9c`
+     and on 150 held-out human games, the critic vs `s9c`'s value head.
+  6. **Planner re-test** (S6 protocol, 60 games, plans at temperature 0.5): `s9v` gen 83 with its
+     critic scoring plans, and the control's head on `s9c` gen 83, each vs its own raw network.
+- **Expected and falsifiers:**
+  - **Critic:**
+    - Expected: log loss ≥ 0.02 lower than the control's head on held-out games; ≥ 55% vs
+      `s9c`; planner ≥ 60%.
+    - Falsifier: log loss not lower, or planner ≤ 55%.
+  - **Magnet:**
+    - Expected (my guess): ≤ the control.
+    - Readings: ≥ 55% means a moving magnet beats the fixed human prior; ≤ 45% means keep the
+      fixed anchor; in between means keep the fixed anchor (simpler).
+  - **League:**
+    - Expected: ≥ 50% vs `s9c`, exploitability ≥ 10 points lower than `s9c`'s, and better from
+      human positions.
+    - Falsifier: exploitability not lower, or < 45% vs `s9c`.
+  - **Exploiter:**
+    - Expected: > 60% vs `s9l` within a few generations of each reset, falling as `s9l` adapts.
+    - If it never passes 55%, the exploiter finds nothing at this budget.

@@ -11,6 +11,7 @@ Reads py/selfplay.py games (`played`) and converted human games (`label`; rows o
 list are skipped). Turn-based indicators count only player-games that reached that turn.
 
     python indicators.py human=/home/greff/polydata/human_full g001=/home/greff/runs/sp/s3/games/g001 ... [--max_games 400]
+                         [--tsv indicators.tsv]   (also appends one line per set there)
 """
 import argparse
 import collections
@@ -93,6 +94,7 @@ def main():
     ap.add_argument('sets', nargs='+', help='name=directory of .npz games')
     ap.add_argument('--max_games', type=int, default=400)
     ap.add_argument('--procs', type=int, default=8)
+    ap.add_argument('--tsv', default=None, help='append one line per set to this file (with a header if it is new)')
     args = ap.parse_args()
     rows = []
     with mp.Pool(args.procs) as pool:
@@ -112,6 +114,13 @@ def main():
         print('| ' + ' | '.join(f.format(r[c]) for c, f in cols) + ' |')
     for r in rows:
         print(f"{r['name']}: {r['mix']}")
+    if args.tsv:
+        new = not os.path.exists(args.tsv)
+        with open(args.tsv, 'a') as f:
+            if new:
+                f.write('\t'.join(c for c, _ in cols) + '\n')
+            for r in rows:
+                f.write('\t'.join(str(r[c]) if c in ('name', 'player_games') else f'{r[c]:.4f}' for c, _ in cols) + '\n')
 
 
 if __name__ == '__main__':

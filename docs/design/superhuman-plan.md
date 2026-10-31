@@ -113,6 +113,9 @@ Reading:
 
 ## 4. S9: the five-track experiment (draft pre-registration)
 
+Approved by Ben on 2026-10-30 and launched from track D's gen 71 (read at gen 83). The final
+settings and the deviations from this draft are in the research log's S9 entry.
+
 **Base:**
 - Track D (`s5k`) at its latest generation (gen 72 if launched tonight):
   - GAE λ 0.97, entropy 0;

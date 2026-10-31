@@ -4,7 +4,8 @@
 # the track with the fewest generations, so the tracks stay in step and a track's rival generation
 # exists before the track is evaluated against it. Tracks are run directories under ~/runs/sp, each
 # with its own override.json, listed one per line in ~/runs/sp/tracks.list (read every turn). A
-# track with a STOP file is skipped.
+# track with a STOP file is skipped, and so is one whose LAST file holds a generation it has reached
+# (e.g. 84: stop at the read).
 #
 #   setsid nohup ~/poly/py_sp/tracks.sh > ~/runs/sp/tracks.out 2>&1 < /dev/null &
 #   touch ~/runs/sp/TRACKS_STOP        stop after the current generation
@@ -17,6 +18,7 @@ while [ ! -f $R/TRACKS_STOP ]; do
         [ -f $R/$t/STOP ] && continue
         g=0
         while [ -e $(printf "$R/$t/gen%03d.pt" $((g + 1))) ]; do g=$((g + 1)); done
+        [ -f $R/$t/LAST ] && [ $g -ge $(cat $R/$t/LAST) ] && continue
         if [ $g -lt $bestg ]; then best=$t; bestg=$g; fi
     done
     [ -z "$best" ] && break

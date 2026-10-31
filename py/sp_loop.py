@@ -7,12 +7,28 @@
                     vs Crazy     greedy, --crazy_seeds x 2 games, seeds from 10,000,000 (the standard bot seeds)
                     vs gen 0     greedy, --h2h_seeds x 2 games, seeds from 14,000,000
                   (Crazy and gen 0 every --crazy_every generations)
+                    from held-out human positions (--eval_starts, every --crazy_every generations), seeds from
+                    17,000,000: vs gen 0, and vs the --rival run's same generation
 
 Opponents in the training games: the policy itself (--self_share), the game's AI (--bot_share, at
 difficulty --bot), else an earlier generation drawn uniformly from the --fixed ones (always there,
 e.g. 0,1,2) and the last --recent ones before gen(g-1). With --turn_cost, faster wins are worth a
 little more (py/train_rl.py --turn_cost). With --starts and --start_share, that share of the games
 (not those against the bot) begin from human midgame positions (py/human_starts.py).
+
+Research log S9 options:
+- --critic: a separate value network gives the advantages (py/train_rl.py --critic). Generation g's
+  critic is critic_gNNN.pt, started from the policy at the first generation that uses it; it also
+  learns from the --critic_window_gens previous generations' games.
+- --anchor_every K: the KL anchor (--anchor in --learn_extra) moves to the run's own generation at
+  the last multiple of K (a magnet that follows the run).
+- --league "spec:share,...": more opponents, each spec a checkpoint or <run dir>@N (that run's N
+  latest generations, the share split among them); their share comes out of the earlier
+  generations' share.
+- --reset_from <run dir>: an exploiter's reset. Generation g learns from the other run's latest
+  generation instead of gen(g-1) once gen(g-1) beat the --rival with at least --reset_rate, or
+  --reset_every generations after the last reset (or --branch_gen); logged in resets.tsv.
+- Strategy indicators of each generation's training games (py/indicators.py) go to indicators.tsv.
 
 Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training games); learn/gNNN
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
@@ -96,11 +112,16 @@ def free_procs(cap, floor=8):
     return cap if 6 <= time.localtime().tm_hour < 22 else max(floor, cap // 2)
 
 
+RIVAL_KINDS = ('rival', 'hrival')
+
+
 def eval_jobs(run, g, args):
-    """The evaluations of generation g: [(kind, opponent, seeds, first seed)]."""
+    """The evaluations of generation g: [(kind, opponent, seeds, first seed)]; kinds starting with h
+    begin from the held-out human positions (--eval_starts), seeds = positions."""
     jobs = []
     rival = gen_path(args.rival, g) if args.rival else ''
-    if rival and g > 0 and os.path.exists(rival) and not os.path.samefile(rival, gen_path(run, g)):
+    diverged = rival and g > 0 and os.path.exists(rival) and not os.path.samefile(rival, gen_path(run, g))
+    if diverged:
         jobs.append(('rival', rival, args.h2h_seeds, 15_000_000))  # the same generation of another run (after they diverge)
     if g > 0:
         jobs.append(('prev', gen_path(run, g - 1), args.h2h_seeds, 13_000_000))
@@ -108,7 +129,62 @@ def eval_jobs(run, g, args):
         jobs.append(('crazy', 'bot:3', args.crazy_seeds, 10_000_000))
     if g > 0:
         jobs.append(('gen0', gen_path(run, 0), args.h2h_seeds, 14_000_000))
-    return jobs
+    if args.eval_starts and g > 0 and g % args.crazy_every == 0:
+        jobs.append(('hgen0', gen_path(run, 0), args.h_seeds, 17_000_000))
+        if diverged:
+            jobs.append(('hrival', rival, args.h_seeds, 17_000_000))
+    kinds = set(args.eval_kinds.split(','))
+    return [j for j in jobs if j[0] in kinds]
+
+
+def eval_label(kind, g, args):
+    rival = os.path.basename(os.path.normpath(args.rival or '-'))
+    return {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000', 'rival': f'{rival}_gen{g:03d}',
+            'hgen0': 'h_gen000', 'hrival': f'h_{rival}_gen{g:03d}'}[kind]
+
+
+def latest_gen(run):
+    g = 0
+    while os.path.exists(gen_path(run, g + 1)):
+        g += 1
+    return g
+
+
+def league_pool(args):
+    """--league -> [(checkpoint, share)]."""
+    out = []
+    for part in [p for p in args.league.split(',') if p.strip()]:
+        spec, share = part.rsplit(':', 1)
+        if '@' in spec:
+            d, n = spec.rsplit('@', 1)
+            top = latest_gen(d)
+            gens = list(range(top, max(-1, top - int(n)), -1))
+            out += [(gen_path(d, e), float(share) / len(gens)) for e in gens]
+        else:
+            out.append((spec, float(share)))
+    return out
+
+
+def reset_source(run, g, args):
+    """--reset_from: the checkpoint generation g learns from instead of gen(g-1), or None. Decided once
+    per generation (resets.tsv), so a restart makes the same choice."""
+    path = os.path.join(run, 'resets.tsv')
+    rows = [l.rstrip('\n').split('\t') for l in open(path)] if os.path.exists(path) else []
+    for r in rows:
+        if int(r[0]) == g:
+            return r[1]
+    last = max([int(r[0]) for r in rows] + [args.branch_gen])
+    j = os.path.join(run, 'evals', f'rival_g{g - 1:03d}.json')
+    rate = json.load(open(j))['a_rate'] if os.path.exists(j) else None
+    reason = (f'beat the rival {rate:.1%}' if rate is not None and rate >= args.reset_rate else
+              f'{g - 1 - last} generations since the last reset' if g - 1 - last >= args.reset_every else None)
+    if reason is None:
+        return None
+    src = gen_path(args.reset_from, latest_gen(args.reset_from))
+    with open(path, 'a') as f:
+        f.write(f'{g}\t{src}\t{reason}\n')
+    log(run, f'gen {g:03d}: reset: learns from {src} ({reason})')
+    return src
 
 
 def missing(run, g, kind):
@@ -120,7 +196,7 @@ def start_evals(run, g, args, rival=True):
     catches up on up to two rival evaluations of recent generations: the rival run's generation may
     not have existed yet when they were evaluated."""
     catchup = [(e, j) for e in range(max(1, g - 6), g) for j in eval_jobs(run, e, args)
-               if j[0] == 'rival' and missing(run, e, 'rival')][:2] if rival else []
+               if j[0] in RIVAL_KINDS and missing(run, e, j[0])][:2] if rival else []
     todo = catchup + [(g, j) for j in eval_jobs(run, g, args) if missing(run, g, j[0]) and (rival or j[0] != 'rival')]
     if not todo:
         return None
@@ -136,6 +212,8 @@ def start_evals(run, g, args, rival=True):
                '--first_seed', str(first), '--results', base + '.tsv', '--procs', str(procs),
                '--slots', str(args.eval_slots), '--port', str(args.port + 100),
                '--save_games', os.path.join(run, 'watch', f'sp_{os.path.basename(run)}_{name}')]
+        if kind.startswith('h'):
+            cmd += ['--starts', args.eval_starts, '--starts_split', 'val']
         # a clean start: a half-finished evaluation's lines would be counted twice
         script.append(f"rm -f {base}.tsv; {' '.join(cmd)} > {base}.log 2>&1 && "
                       f"grep '^SUMMARY ' {base}.log | sed 's/^SUMMARY //' > {base}.json.tmp && mv {base}.json.tmp {base}.json")
@@ -152,11 +230,10 @@ def record_evals(run, g, args):
         with open(path, 'w') as f:
             f.write('gen\tvs\tgames\twins\trate\tci_low\tci_high\twins_seat1\twins_seat2\tcapped\tmean_turns\tfinished\n')
     gens = [(g, job) for job in eval_jobs(run, g, args)]
-    gens = [(e, job) for e in range(max(1, g - 8), g) for job in eval_jobs(run, e, args) if job[0] == 'rival'] + gens
+    gens = [(e, job) for e in range(max(1, g - 8), g) for job in eval_jobs(run, e, args) if job[0] in RIVAL_KINDS] + gens
     for g, (kind, opp, _, _) in gens:
         j = os.path.join(run, 'evals', f'{kind}_g{g:03d}.json')
-        label = {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000',
-                 'rival': f'{os.path.basename(os.path.normpath(args.rival or "-"))}_gen{g:03d}'}[kind]
+        label = eval_label(kind, g, args)
         if not os.path.exists(j) or (f'{g:03d}', label) in have:
             continue
         s = json.load(open(j))
@@ -202,6 +279,19 @@ def main():
     ap.add_argument('--eval_slots', type=int, default=4)
     ap.add_argument('--port', type=int, default=9200)
     ap.add_argument('--rival', default='', help='another run directory: also evaluate each generation against its same generation')
+    ap.add_argument('--eval_starts', default='', help='human positions (py/human_starts.py) for the h evaluations (held-out split)')
+    ap.add_argument('--h_seeds', type=int, default=100, help='held-out human positions per h evaluation (each played twice)')
+    ap.add_argument('--eval_kinds', default='rival,prev,crazy,gen0,hgen0,hrival')
+    ap.add_argument('--critic', action='store_true', help='a separate value network for the advantages (py/train_rl.py --critic)')
+    ap.add_argument('--critic_window_gens', type=int, default=1)
+    ap.add_argument('--critic_extra', default='', help='more py/train_rl.py arguments for the critic')
+    ap.add_argument('--anchor_every', type=int, default=0, help='the anchor follows the run: its generation at the last multiple of this')
+    ap.add_argument('--league', default='', help='more opponents: "checkpoint:share" or "<run dir>@N:share", comma-separated')
+    ap.add_argument('--reset_from', default='', help='exploiter: the run whose latest generation it resets to')
+    ap.add_argument('--reset_rate', type=float, default=0.65)
+    ap.add_argument('--reset_every', type=int, default=8)
+    ap.add_argument('--branch_gen', type=int, default=0, help='the generation this run branched at (for --reset_every)')
+    ap.add_argument('--indicators', type=int, default=1, help='strategy indicators of each generation\'s games (0: off)')
     args = ap.parse_args()
     run = args.run
     apply_overrides(run, args)  # before anything uses the settings (ports, processes, the evaluations below)
@@ -215,26 +305,31 @@ def main():
     while os.path.exists(gen_path(run, g)):
         g += 1
     log(run, f'starting at generation {g} (pid {os.getpid()})')
+    own = lambda e: not os.path.islink(gen_path(run, e))  # a branch's linked generations were evaluated in their own run
     for e in range(max(0, g - 3), g - 1):  # older evaluations a restart left unfinished
-        p = start_evals(run, e, args, rival=False)  # waited for: no rival catch-up here
+        p = start_evals(run, e, args, rival=False) if own(e) else None  # waited for: no rival catch-up here
         if p:
             log(run, f'evaluating gen {e:03d} (left over)')
             p.wait()
         record_evals(run, e, args)
     # each generation's evaluations run in the background beside the next generation's games
-    p = start_evals(run, g - 1, args)
+    p = start_evals(run, g - 1, args) if own(g - 1) else None
     evals = (g - 1, p) if p else None
     record_evals(run, g - 1, args)
     while g <= args.generations and not stopped(run):
         apply_overrides(run, args)
         prev = gen_path(run, g - 1)
+        if args.reset_from:
+            prev = reset_source(run, g, args) or prev
         games_dir = os.path.join(run, 'games', f'g{g:03d}')
         pool = [f'self:{args.self_share}'] + ([f'bot:{args.bot}:{args.bot_share}'] if args.bot_share > 0 else [])
+        league = league_pool(args)
         fixed = [int(x) for x in str(args.fixed).split(',') if x.strip()]
         past = sorted({p for p in fixed if p < g - 1} | set(range(max(0, g - 1 - args.recent), g - 1)))  # not gen(g-1)
         if past:
-            share = (1 - args.self_share - (args.bot_share if args.bot_share > 0 else 0)) / len(past)
+            share = (1 - args.self_share - (args.bot_share if args.bot_share > 0 else 0) - sum(s for _, s in league)) / len(past)
             pool += [f'{gen_path(run, p)}:{share:.4f}' for p in past]
+        pool += [f'{p}:{s:.4f}' for p, s in league]
         status(run, generation=g, step='games', pool=pool)
         procs = free_procs(args.procs, args.min_procs) - (args.eval_procs if evals and evals[1].poll() is None else 0)
         procs = max(args.min_procs, procs)
@@ -249,21 +344,39 @@ def main():
                 os.path.join(run, 'games', f'g{g:03d}.log'))
         tail = (open(os.path.join(run, 'games', f'g{g:03d}.log')).read().strip().splitlines() or [''])[-1]
         log(run, f'gen {g:03d}: games done in {time.time() - t0:.0f} s: {tail}')
+        if args.indicators:  # a measurement only: a failure doesn't stop the loop
+            with open(os.path.join(run, 'games', f'g{g:03d}.indicators.log'), 'w') as f:
+                subprocess.call([PY, os.path.join(HERE, 'indicators.py'), f'g{g:03d}={games_dir}', '--max_games', '400',
+                                 '--procs', '6', '--tsv', os.path.join(run, 'indicators.tsv')],
+                                cwd=HERE, stdout=f, stderr=subprocess.STDOUT)
         status(run, step='learning')
         learn_dir = os.path.join(run, 'learn', f'g{g:03d}')
         t0 = time.time()
         apply_overrides(run, args)
         anchor = ['--bc', args.bc, '--bc_weight', str(args.bc_weight)] if args.bc_weight > 0 else []
+        extra = args.learn_extra.split()
+        if args.anchor_every > 0:  # after --learn_extra: the last --anchor counts
+            extra += ['--anchor', gen_path(run, args.anchor_every * ((g - 1) // args.anchor_every))]
+        critic_out = os.path.join(run, f'critic_g{g:03d}.pt')
+        if args.critic:
+            cin = os.path.join(run, f'critic_g{g - 1:03d}.pt')
+            window = [os.path.join(run, 'games', f'g{e:03d}') for e in range(g - args.critic_window_gens, g)]
+            window = [d for d in window if os.path.isdir(d)]
+            extra += ['--critic', cin if os.path.exists(cin) else prev] + (['--critic_window', ','.join(window)] if window else []) \
+                + args.critic_extra.split()
         if not os.path.exists(os.path.join(learn_dir, 'policy.pt')):
             shutil.rmtree(learn_dir, ignore_errors=True)
             run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir] + anchor +
                          ['--temperature', str(args.temperature),
                           '--lr', str(args.lr), '--epochs', str(args.epochs), '--baseline', args.baseline,
                           '--target_kl', str(args.target_kl), '--turn_cost', str(args.turn_cost)]
-                    + args.learn_extra.split(),
+                    + extra,
                     os.path.join(run, 'learn', f'g{g:03d}.log'))
         last = (open(os.path.join(learn_dir, 'log.jsonl')).read().strip().splitlines() or ['(no log lines)'])[-1]
         log(run, f'gen {g:03d}: learned in {time.time() - t0:.0f} s: {last}')
+        if args.critic:
+            shutil.copy(os.path.join(learn_dir, 'critic.pt'), critic_out + '.tmp')
+            os.replace(critic_out + '.tmp', critic_out)
         shutil.copy(os.path.join(learn_dir, 'policy.pt'), gen_path(run, g) + '.tmp')
         os.replace(gen_path(run, g) + '.tmp', gen_path(run, g))
         if evals is not None:
