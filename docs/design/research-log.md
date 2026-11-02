@@ -1335,3 +1335,35 @@ playing well against a person.
   generations cycle rather than climb.
 - **Part 2 is running:** fresh exploiters `e9c`, `e9v`, `e9m`, `e9l`, 4 generations against each
   track's gen 83 (`tools/s9_exploit.sh`). Then the critic's held-out quality and the planner re-test.
+
+### S9 read, part 2 (2026-11-02): exploitability; and the two no-training tests
+- **Fresh exploiters** (`tools/s9_exploit.sh`): each starts from a track's gen 83, plays only it,
+  4 generations of 1,500 games, no anchor. Exploiter vs its target, 200 games per generation:
+
+  | Target | Gen 1 | Gen 2 | Gen 3 | Gen 4 |
+  |---|---|---|---|---|
+  | `s9c` control | 46% | 45.5% | 47.5% | **48.5%** |
+  | `s9v` critic | 50% | 46.5% | 56% | **53%** |
+  | `s9m` magnet | 47.5% | 44.5% | 43% | **47%** |
+  | `s9l` league | 49% | 50.5% | 56.5% | **53.5%** |
+
+  - Spread at gen 4: 6.5 points, under the pre-registered 10, so the tracks don't differ in
+    exploitability. None of the exploiters gained anything in 4 generations either.
+  - With `s9x`, that is five PPO exploiters that never passed ~56%, while Ben beat gen 24 easily.
+  - Reading: PPO with this budget is too weak an optimizer to find the holes. These numbers are
+    not evidence of robustness. A search-based exploiter is the next probe (radical-ideas.md A3).
+- **Engine-only throughput** (`py/engine_bench.py`, 28 native processes, random legal play):
+  - 6 slots per process: **16,991 decisions/s**; 24 slots: 15,919/s. Observations take 4% of the
+    time.
+  - Self-play runs at ~2,200/s, so the network costs ~87% of the time: self-play is ~8× below
+    what the engine can serve.
+  - The B3 kill criterion (< 6,000/s) did not fire. Throughput is a real lever, through inference
+    batching (~24 positions per batch now) and less compute per decision.
+  - (Random play reaches simpler states than real games, so the true ceiling is lower; to measure.)
+- **Weight soups** (`py/soup.py`):
+  - **Control gens 76–83, uniform mean:** vs `s9c` gen 83 197/400 = **49.3%** (CI 44–54), vs gen 0
+    75%. The B4 falsifier fired: averaging one track's cycling generations gains nothing.
+  - **The four S9 finals, mean (one parent, gen 71):** vs `s9c` gen 83 221/400 = **55.3%** (CI
+    50.4–60.0), vs gen 0 75%.
+    - About as strong as the best track (`s9v`, 54.8%), with no training at all.
+    - A small, unconfirmed gain. Re-test it against each track's gen 83 before using it.
