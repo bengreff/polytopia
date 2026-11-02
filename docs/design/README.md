@@ -62,6 +62,9 @@ the decision log below records what is settled.
 | 2026-10-30 | **S9: five tracks from track D gen 71** (control, critic, magnet, league main, exploiter), read at gen 83 (research-log S9) | Ben: "Sounds good … Go." |
 | 2026-10-30 | **Human-position starts stay in every training track** (30%, the 53k varied set minus the held-out human games) | Ben: "Keep human starts in, they can't hurt." |
 | 2026-10-30 | **Build the determinized-state builder** (fog-safe search), alongside S9 | Ben approved (question 3 of superhuman-plan.md §6) |
+| 2026-11-02 | **A privileged (omniscient) critic is allowed in training only.** It may see hidden information; the policy, which acts, keeps its fog-correct view (radical-ideas.md B1) | Ben: "1) ok". The largest lever in AlphaStar and in kevinz917's Polytopia ablation (62% vs 48% of decisive games) |
+| 2026-11-02 | **One fresh pass on human data is approved**, with strategy conditioning (radical-ideas.md B5), possibly a larger model and the Might Continents games (B6, D2) | Ben: "2) ok" |
+| 2026-11-02 | **A hand-coded bot as an evaluation opponent:** fixed logic like the built-in AI but stronger, built from the strategy book and reviewed and tuned by Claude (`py/rulebot/`, docs/design/rulebot.md). It plays fog-correct. The no-hand-written-evaluator rule still governs the learned agent | Ben: "a bot built similar to the built in crazy bots, fixed logic, just more advanced, with how it plays reviewed and tuned by an LLM" |
 | 2026-10-20 | Observation v1 = allowlist of what the viewer's client shows. Enemy unit XP, age and home city are withheld; opponent stars and techs are withheld | Fog principle (scope-and-rules.md); the client shows veteran status, not XP |
 
 ## Iteration log
