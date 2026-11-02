@@ -1367,3 +1367,28 @@ playing well against a person.
     50.4–60.0), vs gen 0 75%.
     - About as strong as the best track (`s9v`, 54.8%), with no training at all.
     - A small, unconfirmed gain. Re-test it against each track's gen 83 before using it.
+
+### S9 read, part 3 (2026-11-02): the planner re-test (radical-ideas.md A1)
+- **Protocol** (`turn_search.py --reply`):
+  - 16 plans per turn: the top-move plan and 15 sampled at temperature 0.5;
+  - each made on a fog-safe sample and replayed on a second one;
+  - after each plan's End Turn, the opponent's whole reply played greedily by the planner's own
+    network from the opponent's view;
+  - scored by the planner's chosen value at its next turn, averaged over the 2 samples;
+  - the best plan played in the real game.
+- **Result:** `s9v` gen 83 planning with its critic (`critic_g083.pt`) vs `s9v` gen 83 raw:
+  **164/200 = 82.0% (95% CI 76.1–86.7%)**, seeds from 16,000,000 (100 × 2 seats). The
+  pre-registered bar (≥ 60%) is passed by far: search is unblocked.
+- **Caveat, the reason for the follow-ups:** here the opponent is the very network the planner
+  uses to simulate replies, so every greedy reply is predicted exactly (apart from the hidden part).
+  Against an opponent it doesn't model, the gain may be much smaller.
+  - Queued: the same planner vs `s9c` gen 83, vs gen 0 (R7, human imitation) and vs Crazy.
+  - Also queued: `s9c` gen 83 planning with its own value head (the scorer comparison).
+- **Second caveat:** the determinizer keeps enemy cities on unexplored tiles in place (the known
+  leak), so part of the gain may come from that. To measure later.
+- **Batching** (`selfplay.py`, `s9c` gen 83 self-play, 600 games, 3 shards):
+  - 6 slots per process: 3,104 decisions/s, 20 positions per batch;
+  - 16 slots: 3,530/s, 33 per batch;
+  - 32 slots: 3,501/s, 29 per batch.
+  - More slots barely help: each shard is a single Python process. The next lever is more shards
+    (more inference processes) or encoding once per turn (radical-ideas.md C1).
