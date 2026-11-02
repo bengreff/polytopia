@@ -147,6 +147,78 @@ These are derived facts the engine computes, used only to measure, never to stee
   - one host (the native Linux build);
   - greedy play.
 
+## 3b. More ideas (round 2, same day)
+
+### J. Odds beyond stars: units and cities
+- **What:** the determinized-state builder already edits states safely through the game's own
+  serializer, so starts can be handicapped in other ways too:
+  - the candidate's starting unit removed;
+  - one city given to the opponent at turn 10;
+  - the candidate's capital at half population.
+- **Why:** the score is the share of these odds games won against panel members. That measures
+  resilience the way piece odds do in chess, and it is the closest local stand-in for "a stronger
+  player got ahead early".
+
+### K. Grading the policy with an offline search oracle
+- **What:** once planning works (S9 read item 6), run a heavy, slow search on a fixed set of
+  positions:
+  - many whole-turn plans, each scored after the opponent's reply, in determinized samples;
+  - the score is the share of turns where the raw policy's own turn is within ε of the search's
+    best, by a frozen reference critic.
+- **Why:** it is chess engines' "agreement with a deep search" measure. It needs no opponent and
+  grades every turn, not only results.
+- **Caveat:** it is only as good as the reference critic, so it is checked against game results.
+
+### L. Where games are decided
+- **What:** with a frozen reference critic, find the turn each game's win estimate swung past 0.5
+  for good, and the turns with the largest swings.
+- **Output:** histograms for the network vs the panel, and the same on human games.
+- **Why:** it tells us which phase to work on (opening, first contact, the naval middle game,
+  conversion) instead of guessing. The swing turns are where to look at games by eye.
+
+### M. A living list of known weaknesses, each with a probe
+- **What:** every weakness Ben or a game review finds gets a named probe set, a regression test
+  for play. Examples:
+  - "faces an early rider rush";
+  - "enemy boats near its catapults";
+  - "a tech that pays off now is available";
+  - "stars ≥ 10 at End Turn".
+- **How:** positions are taken from human and self-play games where the situation arises (found
+  with the game's own facts, section E), and the probe scores the candidate's outcome or choice
+  there.
+- **Where:** the list lives in this doc, and each read reports every probe.
+
+### N. Adaptation and versatility
+- **Adaptation index:** does the candidate's unit mix respond to the opponent's? Measured as the
+  correlation between the opponent's early army mix and the candidate's later one, compared with
+  the same index in human games. Humans answer catapults with riders and boats; a one-trick network
+  doesn't.
+- **Tribe distinctness:** how differently it plays each tribe (opening, tech order, army), against
+  how differently strong humans do.
+- **Style-locked opponents** (idea C, later): its win rate against each, and how fast it adjusts
+  within a game.
+
+### O. The value function's own consistency
+These are cheap critic diagnostics on any games, with no labels needed.
+- **Martingale check:** the estimate before a move against the mean estimate after it (it should
+  not drift).
+- **TD errors:** their size and bias by game phase.
+- **Low-estimate calibration:** how often a position at < 5% is actually lost. The same number
+  later sets resignation and search pruning.
+
+### P. Critical moments in human games
+- **What:** in held-out human games, take the turns where the eventual winner's move was followed by
+  a large swing of the reference critic's estimate, and score agreement with that move there.
+- **Why:** agreement on all moves (D.3) is mostly about style; agreement where it mattered is closer
+  to strength.
+
+### Q. Hygiene beyond seeds
+- **Host drift:** each tier B replays a sample of evaluation games on the Mac's host and checks
+  they come out identical.
+- **Evaluation games never become training data.**
+- **One results file per suite version,** so numbers from different panel versions are never
+  compared.
+
 ## 4. What it would answer that we can't answer now
 
 - Is a new checkpoint better on average (rating), and against the opponents that matter (worst case)?
