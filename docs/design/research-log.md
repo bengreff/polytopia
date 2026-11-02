@@ -1300,3 +1300,38 @@ playing well against a person.
 - **Next:**
   - Build it into the PC's Linux polyhost, as a new binary, before the S9 read's planner re-test.
   - Then expert iteration on samples (superhuman-plan.md pillar 3).
+
+### S9 read, part 1 (2026-11-02): head-to-head, human positions, indicators
+- **All five tracks reached gen 83** (2026-11-01 08:07; ~3.3 h per round of five). There were no KL
+  early stops, and entropy stayed at 1.6–1.7 on every track (the exploiter 1.5–1.6).
+- **Head-to-head vs `s9c`** (200 games per generation):
+
+  | Track | Gens 80–83 (pre-registered) | Gens 72–83 | vs gen 0, 72–83 | Human positions vs gen 0 | Human positions vs `s9c` | vs Crazy |
+  |---|---|---|---|---|---|---|
+  | `s9c` control | — | — | 75.1% | 64.5% | — | 96.9% |
+  | `s9v` critic | 54.8% ± 3.4 | 52.2% ± 2.0 | **78.4%** | 64.8% | 51.6% | 97.6% |
+  | `s9m` magnet | 53.4% ± 3.5 | 52.3% ± 2.0 | 76.5% | 66.6% | 52.2% | 98.4% |
+  | `s9l` league | 50.9% ± 3.5 | 50.1% ± 2.0 | 76.8% | 64.8% | 48.5% | 97.8% |
+
+  - By the pre-registered bar (> 55% better, < 45% worse), no track differs from the control.
+  - The critic is closest: 111, 108, 112, 110, 108 of 200 at gens 79–83 (~55%), from ~50% at gens
+    72–78.
+  - The magnet beat my guess (≤ the control) but didn't clear the bar. Its reading is "in between":
+    keep the fixed anchor.
+- **Exploiter `s9x`:** vs `s9l`'s same generation 87–109 of 200, never above 55% (best 54.5% at
+  gen 75). It was reset by the 8-generation rule at gen 80, never by the 65% rule. Pre-registered
+  reading: the exploiter finds nothing at this budget. The read-time exploiters (part 2) say whether
+  the tracks are that robust or the exploiter too weak.
+- **The critic's own training loss against the outcome** (on its sampled stream) fell 0.47 → 0.31
+  over the 12 generations. Its held-out quality is part 2.
+- **Indicators** of gen 83's training games (humans: techs by turn 20 9.2, stars banked 3.1,
+  catapults 5%):
+  - techs by turn 20: 6.6–7.2;
+  - stars banked: 5.6–6.5;
+  - catapults: 16–20%;
+  - port by turn 20: 71–83%.
+  - No track moved the strategic gaps.
+- **Every track vs its previous generation** averaged ~47–49% while vs gen 0 stayed flat: the
+  generations cycle rather than climb.
+- **Part 2 is running:** fresh exploiters `e9c`, `e9v`, `e9m`, `e9l`, 4 generations against each
+  track's gen 83 (`tools/s9_exploit.sh`). Then the critic's held-out quality and the planner re-test.
