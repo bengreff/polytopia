@@ -11,6 +11,7 @@ the decision log below records what is settled.
 | [open-questions.md](open-questions.md) | Decisions that need Ben, and unknowns we must measure |
 | [iteration-plan.md](iteration-plan.md) | How the network improves run by run from here (night of 2026-10-21), with a status log |
 | [research-log.md](research-log.md) | Every run: pre-registered hypothesis, config, result |
+| [radical-ideas.md](radical-ideas.md) | Research report (2026-11-02): why the plateau, 20 cited ideas (search, privileged critic, throughput, soups, strategy conditioning, LLM uses), a top five, and what to avoid |
 | [evaluation.md](evaluation.md) | Brainstorm (2026-11-02): a frozen gauntlet with a rating, star-odds scale, exploitability, human positions, skill probes, coverage; three tiers |
 | [superhuman-plan.md](superhuman-plan.md) | v6 restrategy (2026-10-30): what holds the network back, the five pillars, and the S9 five-track experiment |
 | [reviews/2026-10-20.md](reviews/2026-10-20.md) | Adversarial review findings, and what was done with each |
