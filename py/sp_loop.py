@@ -136,6 +136,8 @@ def eval_jobs(run, g, args):
         jobs.append(('crazy', 'bot:3', args.crazy_seeds, 10_000_000))
     if g > 0:
         jobs.append(('gen0', gen_path(run, 0), args.h2h_seeds, 14_000_000))
+    if args.script_eval and g > 0 and g % args.crazy_every == 0:  # a scripted opponent (py/script_eval.py)
+        jobs.append(('script', args.script_eval, args.script_seeds, 19_000_000))
     if args.eval_starts and g > 0 and g % args.crazy_every == 0:
         jobs.append(('hgen0', gen_path(run, 0), args.h_seeds, 17_000_000))
         if diverged:
@@ -146,7 +148,7 @@ def eval_jobs(run, g, args):
 
 def eval_label(kind, g, args):
     rival = os.path.basename(os.path.normpath(args.rival or '-'))
-    return {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000', 'rival': f'{rival}_gen{g:03d}',
+    return {'prev': f'gen{g - 1:03d}', 'crazy': 'crazy', 'gen0': 'gen000', 'rival': f'{rival}_gen{g:03d}', 'script': args.script_eval,
             'hgen0': 'h_gen000', 'hrival': f'h_{rival}_gen{g:03d}'}[kind]
 
 
@@ -219,6 +221,9 @@ def start_evals(run, g, args, rival=True):
                '--first_seed', str(first), '--results', base + '.tsv', '--procs', str(procs),
                '--slots', str(args.eval_slots), '--port', str(args.port + 100),
                '--save_games', os.path.join(run, 'watch', f'sp_{os.path.basename(run)}_{name}')]
+        if kind == 'script':  # one game per process, the network on the GPU in each: a few processes
+            cmd = [PY, os.path.join(HERE, 'script_eval.py'), gen_path(run, e), '--bot', opp, '--seeds', str(seeds),
+                   '--first_seed', str(first), '--procs', str(min(4, procs)), '--port', str(args.port + 100)]
         if kind.startswith('h'):
             cmd += ['--starts', args.eval_starts, '--starts_split', 'val']
         # a clean start: a half-finished evaluation's lines would be counted twice
@@ -288,7 +293,9 @@ def main():
     ap.add_argument('--rival', default='', help='another run directory: also evaluate each generation against its same generation')
     ap.add_argument('--eval_starts', default='', help='human positions (py/human_starts.py) for the h evaluations (held-out split)')
     ap.add_argument('--h_seeds', type=int, default=100, help='held-out human positions per h evaluation (each played twice)')
-    ap.add_argument('--eval_kinds', default='rival,prev,crazy,gen0,hgen0,hrival')
+    ap.add_argument('--eval_kinds', default='rival,prev,crazy,gen0,hgen0,hrival,script')
+    ap.add_argument('--script_eval', default='', help='a scripted bot package (py/rulebot) to evaluate against, every --crazy_every generations')
+    ap.add_argument('--script_seeds', type=int, default=50)
     ap.add_argument('--critic', action='store_true', help='a separate value network for the advantages (py/train_rl.py --critic)')
     ap.add_argument('--critic_window_gens', type=int, default=1)
     ap.add_argument('--critic_extra', default='', help='more py/train_rl.py arguments for the critic')

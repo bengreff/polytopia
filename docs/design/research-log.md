@@ -1392,3 +1392,66 @@ playing well against a person.
   - 32 slots: 3,501/s, 29 per batch.
   - More slots barely help: each shard is a single Python process. The next lever is more shards
     (more inference processes) or encoding once per turn (radical-ideas.md C1).
+
+### S9 read, part 4 (2026-11-02): the planner against opponents it doesn't model
+- **The same planner** (`s9v` gen 83 + `critic_g083.pt`, 16 plans, 2 fog-safe samples, temperature
+  0.5; replies modelled by `s9v` itself), 200 games each:
+
+  | Opponent | Planner | Unplanned `s9v` gen 83 vs the same opponent |
+  |---|---|---|
+  | `s9v` gen 83 itself | 82.0% (76–87) | 50% |
+  | `s9c` gen 83 | **85.5%** (80–90) | ~55% |
+  | gen 0 (R7) | **94.0%** (90–97) | ~78% |
+  | Crazy | 154 of 155 finished (the run ended early) | ~97% |
+
+  - The gain holds against opponents the reply model doesn't match: about +30 points (~+250 Elo)
+    against similar networks.
+  - **The scorer matters:** `s9c` planning with its own value head beat itself 72.5% (66–78), vs
+    82% with the S9 critic.
+- **More inference shards** (`selfplay.py --shards`, 600 games, 28 processes, 6 slots):
+  - 3 shards 3,104 decisions/s; 7 shards **3,559/s**; 14 shards 2,929/s.
+  - About 3,500/s is the ceiling with one network call per decision.
+
+## S10 — four tracks from the critic track's gen 83 (pre-registered 2026-11-02, 21:10)
+- **Ben's decisions (2026-11-02):**
+  - **Tracks:** the privileged critic, turn-clock credit, search in the loop and a control.
+    "Make sure you are evaluating against the new hard coded model."
+  - **Base:** `s9v` gen 83.
+  - **The planner everywhere:** in his games and in evaluations.
+  - **The fresh human pass** (~20M parameters, strategy conditioning, the Might Continents games
+    as pretraining) starts now, beside S10.
+  - **Weight edits** may go into the agent when measured.
+  - **His calibration games** come later. The ladder starts at Crazy with its own handicap.
+  - **The evaluation bot is rebuilt on the built-in Crazy AI** (full view allowed), as an
+    evaluation opponent only.
+- **Base:** `s9v` gen 83 and its fog critic `critic_g083.pt`.
+  - Settings: GAE λ 0.97, entropy 0, KL anchor to gen 0 (0.03), lr 3e-5, KL limit 0.05,
+    temperature 0.5, 1,500 games per generation.
+  - Starts: 30% of non-bot games from human positions (minus the held-out games).
+  - The fog critic trains in every track (search needs it).
+  - Throughput: 7 inference shards.
+  - Setup: `tools/s10_setup.sh`.
+  - Each track stops at gen 95 (`LAST`).
+
+  | Track | Run | Change from the control |
+  |---|---|---|
+  | Control | `s10c` | none: the fog critic drives the advantages (`s9v`'s recipe) |
+  | Privileged critic | `s10p` | `--pcritic`: a training-only critic that also sees the opponent's own view (recorded per decision) drives the advantages. It starts from the fog critic, with the opponent embedding at zero |
+  | Turn-clock credit | `s10t` | `--turn_lambda 0.9`: credit up to the start of the player's next turn (after the reply), decaying per turn instead of per decision (λ = 1 within a turn) |
+  | Search in the loop | `s10x` | expert iteration with the planner. To be built, then pre-registered as an addendum before it starts |
+
+- **Evaluations:**
+  - each generation, as S9: vs previous, vs gen 0, the rival (`s10c`), from human positions;
+  - every third generation: vs Crazy, and vs the scripted bot (`py/script_eval.py`, 100 games). That
+    is RuleBot until the improved Crazy-based bot is ready, then that one.
+  - at the read, the planner versions of each track's gen 95 (its own fog critic as scorer) vs each
+    other and vs gen 0.
+- **Read at gen 95:** tracks vs `s10c` over gens 92–95 (800 games): better > 55%, worse < 45%.
+- **Expected and falsifiers:**
+  - **Privileged critic (`s10p`):**
+    - Expected: > 55%, with its critic's training loss against the outcome clearly below the fog
+      critic's.
+    - Falsifier: ≤ 50% and no lower loss.
+  - **Turn-clock credit (`s10t`):**
+    - Expected: ≥ 52%.
+    - Falsifier: < 45%.
