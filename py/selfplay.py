@@ -16,7 +16,10 @@ with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
   move (a start position the opponent wins at once) is counted but not saved. With --privileged, each
   recorded decision also stores what the opponent's own client shows at that moment (`opp_tiles`,
   `opp_globals`, `opp_techs`), for a training-only critic (py/train_rl.py --pcritic); the policy
-  never sees it.
+  never sees it. With --search_share (research log S10, track s10x), that share of the learner's turns
+  is chosen whole by the planner of py/search_loop.py (fog-safe samples, scored by --search_scorer);
+  its commands are played as forced rows, `searched` marks those decisions and `search` holds one row
+  per searched turn (search_loop.INFO).
 - **Matches** (`--match B`): `--net` against B, both greedy (`--temperature` 0), each seed played
   twice with the seats swapped. B is a checkpoint or `bot:<difficulty>` (the game's own AI on the
   other seat, as py/eval_vs_bot.py; the same seeds and tribe draws give the same games). Writes one
@@ -126,10 +129,20 @@ class Inference:
         self.positions = 0
         threading.Thread(target=self.loop, daemon=True).start()
 
-    def request(self, key, obs, statuses, temperature):
+    def request(self, key, obs, statuses, temperature, force=None):
+        """force (search in the loop): per position a row to play instead of sampling, or -1; the
+        log-probability returned is the forced row's."""
+        return self.collect(self.submit(key, obs, statuses, temperature, force))
+
+    def submit(self, key, obs, statuses, temperature, force=None):
         done = threading.Event()
         box = {}
-        self.q.put((key, obs, statuses, temperature, done, box))
+        self.q.put((key, obs, statuses, temperature, done, box, force))
+        return done, box
+
+    @staticmethod
+    def collect(pending):
+        done, box = pending
         done.wait()
         if 'error' in box:
             raise box['error']
@@ -152,7 +165,10 @@ class Inference:
                 try:
                     obs = [o for it in group for o in it[1]]
                     sts = [s for it in group for s in it[2]]
-                    rows, logp, value = self.run(key, obs, sts, temperature)
+                    force = None
+                    if any(it[6] is not None for it in group):
+                        force = [x for it in group for x in (it[6] if it[6] is not None else [-1] * len(it[1]))]
+                    rows, logp, value = self.run(key, obs, sts, temperature, force)
                     k = 0
                     for it in group:
                         n = len(it[1])
@@ -168,7 +184,7 @@ class Inference:
             self.positions += sum(len(it[1]) for it in items)
 
     @torch.no_grad()
-    def run(self, key, obs, statuses, temperature):
+    def run(self, key, obs, statuses, temperature, force=None):
         inputs = eval_vs_bot.batch_inputs(obs, statuses)
         logits, v = self.fast[key](inputs)
         if key not in self.checked:  # once per network: the same choices as the plain forward pass
@@ -185,6 +201,9 @@ class Inference:
             return logits.argmax(1).cpu().numpy(), np.zeros(len(obs), np.float32), value
         lp = torch.log_softmax(logits / temperature, 1)
         rows = torch.multinomial(lp.exp(), 1).squeeze(1)
+        if force is not None:
+            f = torch.as_tensor(force, dtype=rows.dtype, device=rows.device)
+            rows = torch.where(f >= 0, f, rows)
         return rows.cpu().numpy(), lp.gather(1, rows[:, None]).squeeze(1).cpu().numpy(), value
 
 
@@ -211,6 +230,16 @@ def main():
     ap.add_argument('--save_games', default=None, help='matches: keep the games for the web app\'s watch mode, '
                                                        'as py/eval_vs_bot.py --save_games')
     ap.add_argument('--privileged', action='store_true', help='training games: also record the opponent\'s view of each recorded decision')
+    ap.add_argument('--search_share', type=float, default=0.0,
+                    help='training games: share of the learner\'s turns its whole turn is chosen by the planner (py/search_loop.py; '
+                         'needs POLYHOST_BIN=polyhost-det on the PC)')
+    ap.add_argument('--search_scorer', default=None, help='--search_share: checkpoint whose value head scores the lanes (a fog critic)')
+    ap.add_argument('--search_plans', type=int, default=16, help='--search_share: lanes per searched turn (the top-move lane + sampled ones)')
+    ap.add_argument('--search_samples', type=int, default=2, help='--search_share: fog-safe samples each lane is scored on')
+    ap.add_argument('--search_tau', type=float, default=0.05,
+                    help='--search_share: the played lane is drawn from the sampled lanes with probability softmax(score / tau); '
+                         '0: the best of all lanes')
+    ap.add_argument('--search_slots', type=int, default=100, help='--search_share: first scratch slot (each thread group uses 50)')
     ap.add_argument('--shards', type=int, default=0, help='child processes to split the games across (0: one per 10 game processes)')
     ap.add_argument('--shard', default=None, help=argparse.SUPPRESS)  # i/K: this child's share (set by the parent)
     args = ap.parse_args()
@@ -254,12 +283,22 @@ def main():
             print(f'{len(starts)} human midgame starts ({split}), share {args.start_share}', flush=True)
         have = set(os.listdir(args.out_dir))
         jobs = [(s, None) for s in range(args.first_seed, args.first_seed + args.games) if f'g{s:08d}.npz' not in have]
+    search = None
+    if args.search_share > 0 and not match:
+        import search_loop as search  # py/search_loop.py
+        nets['C'] = load_net(args.search_scorer or args.net, args.device)
+        if args.search_plans * args.search_samples > search.SLOT_STRIDE:
+            ap.error(f'--search_plans x --search_samples must be at most {search.SLOT_STRIDE}')
     if args.shard:
         i, k = map(int, args.shard.split('/'))
         jobs = jobs[i::k]
     jobs.reverse()
     jobs_lock = threading.Lock()
     infer = Inference(nets, args.device, bf16=not match)
+    if search:  # the scorer's estimates in fp32: lanes differ by a few hundredths
+        infer.fast['C'] = fast_infer.FastPolicy(nets['C'], args.device, bf16=False)
+        infer.checked.add('C')
+    s_count = dict(turns=0, seconds=0.0, gain=0.0, chosen_gain=0.0, kl=0.0, broken=0, commands=0, forced=0)
 
     results, log_lock = [], threading.Lock()
     out = open(args.results, 'a') if args.results else None
@@ -282,9 +321,17 @@ def main():
                                 f"{sum(x == 'win' for x in v) if o >= 0 else len(v)}"
                                 f"{'/' + str(len(v)) if o >= 0 else ' games'}" for o, v in sorted(by.items()))
             el = time.time() - t0
+            if search:  # before the games line, which py/sp_loop.py logs as the last line
+                print(search_line(s_count), flush=True)
             print(f'{n} games ({summary}), {counters["decisions"]} decisions, {el:.0f} s, '
                   f'{counters["decisions"] / el:.0f} decisions/s, GPU busy {infer.busy / el:.0%}, '
                   f'{infer.positions / max(infer.batches, 1):.0f} positions/batch', flush=True)
+
+    def search_line(c):
+        t = max(c['turns'], 1)
+        return (f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each; best lane - top-move lane {c['gain'] / t:.3f}, "
+                f"drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) {c['kl'] / t:.3f}, "
+                f"broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played")
 
     def new_game(env, slot):
         with jobs_lock:
@@ -322,6 +369,8 @@ def main():
             g['rec'] = dagger.Recorder(seed, spec)
             g['rec'].value = []
             g['rec'].opp = []
+            if search:
+                g['rec'].searched, g['plan'], g['pturn'], g['search'] = [], [], None, []
         if g['human_start']:
             with open(g['human_start']['file'], 'rb') as f:
                 g['st'] = env.load(slot, spec, f.read())
@@ -371,6 +420,9 @@ def main():
                 opp = g['rec'].opp
                 extra = dict(opp_tiles=np.stack([x[0] for x in opp]), opp_globals=np.stack([x[1] for x in opp]),
                              opp_techs=np.stack([x[2] for x in opp])) if args.privileged else {}
+                if search:  # which decisions the planner chose, and one row per searched turn (search_loop.INFO)
+                    extra.update(searched=np.asarray(g['rec'].searched, np.int8),
+                                 search=np.array([[r[f] for f in search.INFO] for r in g['search']], np.float32).reshape(-1, len(search.INFO)))
                 dagger.save(args.out_dir, g['rec'], st, owner, capital, g['opp'], g['record'], source='selfplay',
                             extra=dict(extra, v_old=np.asarray(g['rec'].value, np.float32), start_turn=np.int32(g['start_turn']),
                                        start=np.str_(os.path.basename(g['human_start']['file']) if g['human_start'] else '')))
@@ -385,8 +437,45 @@ def main():
 
     errors = []
 
+    def plan_moves(env, slots, slots_now, live, rng):
+        """--search_share: at the start of a recorded player's turn, maybe plans it (py/search_loop.py);
+        while a slot's plan lasts, {slot: the legal row of its next command}. A command not legal in
+        the real game (its hidden part differed from the samples) ends the plan."""
+        force = {}
+        base = args.search_slots + search.SLOT_STRIDE * (slots[0] % 2)  # this thread group's scratch slots
+        for s in slots_now:
+            g = live[s]
+            st = g['st']
+            if st.current not in g['record']:
+                continue
+            if g['pturn'] != (st.turn, st.current):
+                g['pturn'], g['plan'] = (st.turn, st.current), []
+                if search.pick(g['seed'], st.turn, st.current, args.search_share):
+                    g['plan'], info = search.plan_turn(env, infer, s, st.current, base, args.search_plans, args.search_samples,
+                                                       args.temperature, args.search_tau, g['seed'] * 1000 + st.turn * 4 + st.current, rng)
+                    info.update(turn=st.turn, player=st.current)
+                    g['search'].append(info)
+                    with log_lock:
+                        for k, x in (('turns', 1), ('seconds', info['seconds']), ('gain', info['best'] - info['top']),
+                                     ('chosen_gain', info['chosen'] - info['top']), ('kl', info['kl']), ('commands', len(g['plan']))):
+                            s_count[k] += x
+            if g['plan']:
+                r = search.find(st, g['plan'][0])
+                if r >= 0:
+                    force[s] = r
+                    g['plan'].pop(0)
+                    with log_lock:
+                        s_count['forced'] += 1
+                else:
+                    g['plan'] = []
+                    g['search'][-1]['broken'] = 1
+                    with log_lock:
+                        s_count['broken'] += 1
+        return force
+
     def run_slots(i, env, slots):
         """Plays games on these slots of one game process until no jobs are left."""
+        s_rng = np.random.default_rng([args.first_seed, args.port + i, slots[0]]) if search else None  # draws among lanes
         live = {}
         for s in slots:
             g = new_game(env, s)
@@ -402,6 +491,7 @@ def main():
                 if want:
                     opp_obs = dict(zip(want, env.observe([(s, 3 - live[s]['st'].current) for s in want])))
             counters['env'] += time.time() - te
+            force = plan_moves(env, slots, slots_now, live, s_rng) if search else {}
             acts = {}
             by_key = {}
             for s, o in zip(slots_now, obs):
@@ -409,7 +499,8 @@ def main():
                 by_key.setdefault(g['seats'][g['st'].current], []).append((s, o))
             for key, items in by_key.items():
                 temp = 0.0 if match else args.temperature
-                rows, logp, value = infer.request(key, [o for _, o in items], [live[s]['st'] for s, _ in items], temp)
+                f = [force.get(s, -1) for s, _ in items] if force else None
+                rows, logp, value = infer.request(key, [o for _, o in items], [live[s]['st'] for s, _ in items], temp, f)
                 for (s, o), a, lp, v in zip(items, rows, logp, value):
                     g = live[s]
                     st = g['st']
@@ -422,6 +513,8 @@ def main():
                         if args.privileged:
                             q = opp_obs[s]
                             g['rec'].opp.append((q.tiles.reshape(-1, q.tiles.shape[-1]), q.globals, q.techs))
+                        if search:
+                            g['rec'].searched.append(int(s in force))
                     if st.turn != g['turn']:
                         g['turn'], g['n'] = st.turn, 0
                     g['n'] += 1
@@ -444,8 +537,13 @@ def main():
                     if g.get('recorded'):
                         r = g['rec']
                         for lst in (r.tiles, r.globs, r.techs, r.legal, r.labels, r.players, r.played, r.logp, r.value) + \
-                                ((r.opp,) if args.privileged else ()):
+                                ((r.opp,) if args.privileged else ()) + ((r.searched,) if search else ()):
                             lst.pop()
+                    if s in force:  # a planned command the game rejected: the rest of the turn is the policy's
+                        g['plan'] = []
+                        g['search'][-1]['broken'] = 1
+                        with log_lock:
+                            s_count['broken'] += 1
                     live[s]['st'] = st
                     continue
                 live[s]['st'] = st
@@ -485,7 +583,8 @@ def main():
     report()
     if args.shard:  # for the parent (run_shards)
         print('SHARD ' + json.dumps(dict(results=results, decisions=counters['decisions'], busy=infer.busy,
-                                         batches=infer.batches, positions=infer.positions)), flush=True)
+                                         batches=infer.batches, positions=infer.positions, **({'search': s_count} if search else {}))),
+              flush=True)
         return
     if match:
         n = len(results)
@@ -541,6 +640,12 @@ def run_shards(args, k):
         summary = ', '.join(f"{'self' if o < 0 else pool[o - 100].split('/')[-1]}: "
                             f"{sum(x == 'win' for x in v) if o >= 0 else len(v)}{'/' + str(len(v)) if o >= 0 else ' games'}"
                             for o, v in sorted(by.items()))
+        if any('search' in p for p in parts):  # --search_share: the shards' planner counts, combined
+            c = {x: sum(p['search'][x] for p in parts) for x in parts[0]['search']}
+            t = max(c['turns'], 1)
+            print(f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each (per thread); best lane - top-move lane "
+                  f"{c['gain'] / t:.3f}, drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) "
+                  f"{c['kl'] / t:.3f}, broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played", flush=True)
         print(f'{n} games ({summary}), {decisions} decisions, {el:.0f} s, {decisions / el:.0f} decisions/s, '
               f'{k} shards, GPU busy {np.mean([p["busy"] for p in parts]) / el:.0%} per shard, '
               f'{sum(p["positions"] for p in parts) / max(sum(p["batches"] for p in parts), 1):.0f} positions/batch', flush=True)

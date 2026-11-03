@@ -36,6 +36,12 @@ Research log S10 options:
   from the policy if there is none.
 - --shards: inference processes for the training games (py/selfplay.py --shards; 0: one per 10 game
   processes).
+- --search_share p (track s10x, search in the loop): the planner chooses that share of the learner's
+  turns in the training games (py/selfplay.py --search_share, py/search_loop.py), scored by the run's
+  fog critic of the previous generation (critic_g(g-1).pt, else the policy itself); --search_extra
+  holds more py/selfplay.py --search_* arguments, and --search_bin the game binary for the training
+  games (the planner needs the determinizer, ~/polylinux/polyhost-det). The learning side's
+  --search_adv goes in --learn_extra.
 
 Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training games); learn/gNNN
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
@@ -81,14 +87,14 @@ def stopped(run):
     return os.path.exists(os.path.join(run, 'STOP'))
 
 
-def run_cmd(run, cmd, logfile, tries=3):
+def run_cmd(run, cmd, logfile, tries=3, env=None):
     """Runs a step to completion, retrying a failed one (the steps resume where they stopped);
-    raises after `tries` failures."""
+    raises after `tries` failures. env: the step's environment (None: this process's)."""
     for k in range(tries):
         with open(logfile, 'a') as f:
             f.write(f"\n# {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(cmd)}\n")
             f.flush()
-            rc = subprocess.call(cmd, cwd=HERE, stdout=f, stderr=subprocess.STDOUT)
+            rc = subprocess.call(cmd, cwd=HERE, stdout=f, stderr=subprocess.STDOUT, env=env)
         if rc == 0:
             return
         log(run, f'step failed (exit {rc}, try {k + 1} of {tries}): see {logfile}')
@@ -301,6 +307,9 @@ def main():
     ap.add_argument('--critic_extra', default='', help='more py/train_rl.py arguments for the critic')
     ap.add_argument('--pcritic', action='store_true', help='a privileged critic for training only (py/train_rl.py --pcritic)')
     ap.add_argument('--shards', type=int, default=0, help='py/selfplay.py --shards for the training games')
+    ap.add_argument('--search_share', type=float, default=0.0, help='search in the loop: py/selfplay.py --search_share (0: off)')
+    ap.add_argument('--search_extra', default='', help='more py/selfplay.py --search_* arguments')
+    ap.add_argument('--search_bin', default='', help='POLYHOST_BIN for the training games (the planner needs polyhost-det)')
     ap.add_argument('--anchor_every', type=int, default=0, help='the anchor follows the run: its generation at the last multiple of this')
     ap.add_argument('--league', default='', help='more opponents: "checkpoint:share" or "<run dir>@N:share", comma-separated')
     ap.add_argument('--reset_from', default='', help='exploiter: the run whose latest generation it resets to')
@@ -352,13 +361,20 @@ def main():
         log(run, f'gen {g:03d}: playing {args.games} games with gen {g - 1:03d} on {procs} game processes, '
                  f'pool {",".join(os.path.basename(p) for p in pool)}')
         t0 = time.time()
+        search, search_env = [], None
+        if args.search_share > 0:  # the planner, scored by the critic the coming step starts from
+            scorer = os.path.join(run, f'critic_g{g - 1:03d}.pt')
+            search = ['--search_share', str(args.search_share), '--search_scorer', scorer if os.path.exists(scorer) else prev] + \
+                args.search_extra.split()
+            search_env = dict(os.environ, POLYHOST_BIN=args.search_bin) if args.search_bin else None
+            log(run, f'gen {g:03d}: search in the loop: {" ".join(search)}' + (f', POLYHOST_BIN={args.search_bin}' if args.search_bin else ''))
         run_cmd(run, [PY, os.path.join(HERE, 'selfplay.py'), prev, '--out_dir', games_dir, '--games', str(args.games),
                       '--pool', ','.join(pool), '--temperature', str(args.temperature),
                       '--first_seed', str(50_000_000 + g * 100_000), '--procs', str(procs),
                       '--slots', str(args.slots), '--port', str(args.port)]
                 + (['--starts', args.starts, '--start_share', str(args.start_share)] if args.starts and args.start_share > 0 else [])
-                + (['--privileged'] if args.pcritic else []) + (['--shards', str(args.shards)] if args.shards else []),
-                os.path.join(run, 'games', f'g{g:03d}.log'))
+                + (['--privileged'] if args.pcritic else []) + (['--shards', str(args.shards)] if args.shards else []) + search,
+                os.path.join(run, 'games', f'g{g:03d}.log'), env=search_env)
         tail = (open(os.path.join(run, 'games', f'g{g:03d}.log')).read().strip().splitlines() or [''])[-1]
         log(run, f'gen {g:03d}: games done in {time.time() - t0:.0f} s: {tail}')
         if args.indicators:  # a measurement only: a failure doesn't stop the loop

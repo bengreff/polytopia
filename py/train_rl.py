@@ -44,6 +44,14 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
   targets, and by default its estimates drive the advantages (--advantage). The fog critic keeps
   training for search, which can't use hidden information. Saved as <out_dir>/pcritic.pt.
 - **Turn-clock credit** (--turn_lambda): see gae().
+- **Search in the loop** (--search_adv a; research log S10, track s10x): the decisions the planner
+  chose (py/selfplay.py --search_share marks them `searched`) were not sampled from the acting policy,
+  so they get no GAE advantage. Their turn was drawn from the planner's lanes with probability
+  softmax(score / tau), approximately a draw from pi'(turn) ~ pi_old(turn) exp(Q / tau); they get the
+  constant advantage a in the same clipped objective, whose expected gradient at pi = pi_old is
+  a x -grad KL(pi' || pi), and which stops once a row's probability is 1 + --clip times pi_old's. They
+  are left out of the advantage normalization and of the KL early stop (`kl` is over the other
+  decisions; `kl_search` is theirs). The critics train on every decision.
 
     python train_rl.py <init.pt> <rl_dir[,rl_dir2...]> <out_dir> --bc human1:0.5,m1v2:0.5 [--epochs 2]
 """
@@ -166,12 +174,13 @@ class RLStream(torch.utils.data.IterableDataset):
     a critic's stream (no advantage normalization needed)."""
 
     def __init__(self, files, adv, batch, window, epochs, seed, value_norm=None, lam=1.0, values=None, clam=0.95,
-                 critic_only=False, sample=1.0, targets=(), opp=False, turn_lam=None):
+                 critic_only=False, sample=1.0, targets=(), opp=False, turn_lam=None, searched=False):
         self.files, self.adv, self.batch, self.window, self.epochs, self.seed = files, adv, batch, window, epochs, seed
         self.value_norm = value_norm  # --baseline value: A = (z - v_old - mean) / sd, or (GAE - mean) / sd
         self.lam, self.turn_lam = lam, turn_lam
         self.values, self.clam, self.critic_only, self.sample = values, clam, critic_only, sample
         self.targets, self.opp = list(targets), opp
+        self.searched = searched  # --search_adv: the batches carry `searched` (the planner's decisions)
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -201,6 +210,8 @@ class RLStream(torch.utils.data.IterableDataset):
                     if self.opp:
                         for k in OPP:
                             e[k] = z[k]
+                    if self.searched:
+                        e['searched'] = z['searched'].astype(bool) if 'searched' in z.files else np.zeros(len(player), bool)
                     extra.append(e)
                 # collate keeps at most MAX_LEGAL rows per decision; a played row beyond them can't be scored
                 picks = [(gi, d) for gi, e in enumerate(extra) for d in range(len(e['adv']))
@@ -220,6 +231,8 @@ class RLStream(torch.utils.data.IterableDataset):
                     if self.opp:
                         for k in OPP:
                             b[k] = np.stack([extra[gi][k][d] for gi, d in chunk])
+                    if self.searched:
+                        b['searched'] = np.array([extra[gi]['searched'][d] for gi, d in chunk], bool)
                     yield b
 
 
@@ -264,6 +277,8 @@ def main():
     ap.add_argument('--advantage', choices=['auto', 'pcritic', 'critic', 'head'], default='auto',
                     help='whose estimates the advantages use (auto: the privileged critic, else the critic, else the policy\'s head)')
     ap.add_argument('--turn_lambda', type=float, default=None, help='turn-clock credit: lambda 1 within a turn, this between turns')
+    ap.add_argument('--search_adv', type=float, default=None,
+                    help='search in the loop: the planner\'s decisions (selfplay.py --search_share) get this constant advantage (docstring)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -312,14 +327,21 @@ def main():
     value_norm = None
     if args.baseline == 'value':
         res, gres = [], []
+        n_searched = 0
         for f in files:
             z = np.load(f)
-            for p, v in zip(z['player'], values_of(f, z)):
-                if (f, int(p)) in adv:
+            on = None
+            if args.search_adv is not None and 'searched' in z.files:  # the planner's decisions have no GAE advantage
+                on = z['searched'] == 0
+                n_searched += int((~on).sum())
+            for k, (p, v) in enumerate(zip(z['player'], values_of(f, z))):
+                if (f, int(p)) in adv and (on is None or on[k]):
                     res.append(adv[(f, int(p))][2] - float(v))
             if args.gae_lambda < 1 or args.turn_lambda is not None:
                 g = gae(f, z['player'].astype(np.int64), values_of(f, z), adv, args.gae_lambda, z['globals'][:, G_TURN], args.turn_lambda)
-                gres.extend(g[~np.isnan(g)].tolist())
+                gres.extend(g[~np.isnan(g) & (on if on is not None else True)].tolist())
+        if args.search_adv is not None:
+            print(f'search in the loop: {n_searched} decisions chosen by the planner get advantage {args.search_adv}', flush=True)
         value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
         print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
               f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w, _ in adv.values()]):.3f} per game)',
@@ -336,7 +358,8 @@ def main():
           + ', '.join(f"{'self' if o < 0 else o}: {base[o]:.3f} over {counts[o]}" for o in sorted(base)), flush=True)
     steps_total = max(1, args.epochs * decisions // args.batch)
     rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed, value_norm,
-                                              args.gae_lambda, values=cvals, turn_lam=args.turn_lambda),
+                                              args.gae_lambda, values=cvals, turn_lam=args.turn_lambda,
+                                              searched=args.search_adv is not None),
                                      batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda', prefetch_factor=4)
     c_iter, c_total, c_every = None, 1, 1
     if critics:
@@ -411,6 +434,9 @@ def main():
         logp = logp_all.gather(1, b['played'][:, None]).squeeze(1)
         ratio = torch.exp(logp - b['logp'])
         A = b['adv']
+        if args.search_adv is not None:  # the planner's decisions: a constant advantage toward pi' (docstring)
+            sm = b['searched']
+            A = torch.where(sm, torch.full_like(A, args.search_adv), A)
         pg = -torch.min(ratio * A, ratio.clamp(1 - args.clip, 1 + args.clip) * A).mean()
         p = logp_all.exp()
         ent = -(p * logp_all.masked_fill(~b['mask'], 0)).sum(1).mean()  # padding is -inf: keep NaN out of the gradient
@@ -438,6 +464,10 @@ def main():
         with torch.no_grad():
             m = dict(pg=pg, ent=ent, value=val, bc=bcl, ratio=ratio.mean(), clipfrac=((ratio - 1).abs() > args.clip).float().mean(),
                      kl=(b['logp'] - logp).mean(), anchor=anc)
+            if args.search_adv is not None:  # the early stop watches the sampled decisions only
+                on = (~sm).float()
+                m.update(kl=((b['logp'] - logp) * on).sum() / on.sum().clamp(min=1),
+                         kl_search=((b['logp'] - logp) * (1 - on)).sum() / (1 - on).sum().clamp(min=1), searched=1 - on.mean())
         if c_iter is not None and step % c_every == 0:
             try:
                 m.update(critic_step(train_bc.to_device(next(c_iter), dev)))

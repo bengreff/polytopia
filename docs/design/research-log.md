@@ -1557,8 +1557,17 @@ playing well against a person.
   - `s10c`'s gen 84 games held ~62k learner turns, so 25% is ~15k searched turns per generation
     (derived).
   - Guessed: a generation's games take ~30–40 min in the daytime (28 processes) and ~60–70 min at
-    night (14), against ~10 and ~20 min for `s10c`. The first generation's real figure is added
-    below.
+    night (14), against ~10 and ~20 min for `s10c`.
+  - **First generation** (gen 84, started 2026-11-02 23:12 at night: 14 processes, 4 shards, beside
+    the human pass's training on the GPU):
+    - First 50 games per shard (measured): 91–95 decisions/s per shard, 4.3–4.7 s per searched turn,
+      best − top-move lane 0.025, drawn − top-move lane 0.016–0.017, KL(weights ‖ uniform) 0.39–0.41,
+      broken plans 5%.
+    - The planner chose 25.5% of the recorded decisions (first 60 games).
+    - Derived: ~370 decisions/s over 4 shards, so its ~1.3M decisions take ~1 h at night. That is
+      ~3× `s10c`'s night rate (~1,150/s, half its daytime 2,288/s, guessed).
+    - With learning (~20–50 min) and evaluations (~35 min), an `s10x` generation is ~2 h at night
+      (guessed).
   - Every round of the S10 rotation grows by one `s10x` generation.
 - **Default behaviour of the shared files is unchanged** (checked on the PC before deploying):
   - the same match with the old and new `selfplay.py` gave identical results (6 games);
