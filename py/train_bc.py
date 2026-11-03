@@ -16,6 +16,12 @@ Held-out validation games: AI games (g<seed>.npz) whose seed is a multiple of 50
 Human games are used only if replaying them reached the game server's own final state (final_check
 'bytes' or 'content', or differing only in cosmetic fields). A game decided by a timeout kick still
 trains the policy but gives no value target.
+
+Strategy conditioning (--z, research log HP1): each decision also gets its player's z for that game
+(py/zfacts.py), dropped (set absent) on --z_drop of the training decisions; validation runs with the
+game's own z (`val`) and with z absent (`val_z0`, comparable with networks without z), and `best.pt`
+keeps the checkpoint with the lowest z-absent held-out policy loss. --accum, --mem_cap_gb and
+--grad_ckpt fit a larger network beside other GPU jobs. Without these options nothing changes.
 """
 import argparse
 import json
@@ -69,12 +75,17 @@ def accepted(z):
     return bool(fields) and fields <= COSMETIC_FIELDS
 
 
-def load_game(path, winners_only=False):
+def load_game(path, winners_only=False, with_z=False):
     """The arrays of one game, or None if it isn't accepted (see accepted()). winners_only: no policy
-    label on the losing side's decisions, nor on any decision of a game without a value target."""
+    label on the losing side's decisions, nor on any decision of a game without a value target.
+    with_z: also each decision's z (zfacts.game_z, from the recorded labels)."""
     z = np.load(path)
     if not accepted(z):
         return None
+    zv = None
+    if with_z:
+        import zfacts
+        zv = zfacts.game_z(z)
     D = len(z['label'])
     player = z['player'].astype(np.int64)
     ended, winner = bool(z['ended']), int(z['winner'])
@@ -88,13 +99,17 @@ def load_game(path, winners_only=False):
         label = np.where(value == 1.0, label, IGNORE)
     owner = z['final_owner'].astype(np.int64)
     own = np.where(owner[None, :] == player[:, None], 1, np.where((owner[None, :] == 1) | (owner[None, :] == 2), 2, 0))
-    return dict(tiles=z['tiles'], globals=z['globals'], techs=z['techs'], legal=z['legal'],
-                offsets=z['legal_offsets'], label=label, value=value, own=own.astype(np.int8))
+    out = dict(tiles=z['tiles'], globals=z['globals'], techs=z['techs'], legal=z['legal'],
+               offsets=z['legal_offsets'], label=label, value=value, own=own.astype(np.int8))
+    if zv is not None:
+        out['z'] = zv
+    return out
 
 
-def collate(games, picks, max_legal=1024, rng=None):
+def collate(games, picks, max_legal=1024, rng=None, z_drop=None, z_rng=None):
     """picks: [(game index, decision index)] -> a padded batch of numpy arrays. With rng, each label
-    is replaced by a uniformly random legal row (the R2 canary)."""
+    is replaced by a uniformly random legal row (the R2 canary). Games loaded with z give a `z` array;
+    z_drop: the share of decisions whose z is set absent (with z_rng), 1.0 for all of them."""
     B = len(picks)
     n = [int(games[g]['offsets'][d + 1] - games[g]['offsets'][d]) for g, d in picks]
     N = min(max(n), max_legal)
@@ -107,13 +122,20 @@ def collate(games, picks, max_legal=1024, rng=None):
         legal[i, :k] = games[g]['legal'][o:o + k]
         mask[i, :k] = True
         label[i] = min(int(games[g]['label'][d]), k - 1) if rng is None else rng.randrange(k)
-    return dict(
+    out = dict(
         tiles=np.stack([games[g]['tiles'][d] for g, d in picks]),
         globals=np.stack([games[g]['globals'][d] for g, d in picks]),
         techs=np.stack([games[g]['techs'][d] for g, d in picks]),
         legal=legal, mask=mask, label=label,
         value=np.array([games[g]['value'][d] for g, d in picks], np.float32),
         own=np.stack([games[g]['own'][d] for g, d in picks]))
+    if 'z' in games[picks[0][0]]:
+        zb = np.stack([games[g]['z'][d] for g, d in picks])
+        if z_drop:
+            drop = np.ones(B, bool) if z_drop >= 1 else np.array([z_rng.random() < z_drop for _ in range(B)])
+            zb[drop] = 0
+        out['z'] = zb
+    return out
 
 
 def parse_sources(spec):
@@ -142,9 +164,11 @@ class Stream(torch.utils.data.IterableDataset):
     several sources, each game of the window is drawn from a source with probability proportional
     to share / mean decisions per game."""
 
-    def __init__(self, data_dir, batch, window, seed, min_seed=None, random_labels=False, winners_only=False):
+    def __init__(self, data_dir, batch, window, seed, min_seed=None, random_labels=False, winners_only=False,
+                 with_z=False, z_drop=0.0):
         self.sources = parse_sources(data_dir)
         self.winners_only = winners_only
+        self.with_z, self.z_drop = with_z, z_drop
         self.batch, self.window, self.seed = batch, window, seed
         self.min_seed, self.random_labels = min_seed, random_labels
         sizes = [mean_decisions(d) for d, _ in self.sources]
@@ -167,7 +191,7 @@ class Stream(torch.utils.data.IterableDataset):
             games = []
             for f in self.pick_files(rng):
                 try:
-                    g = load_game(f, self.winners_only)
+                    g = load_game(f, self.winners_only, self.with_z)
                 except Exception as e:  # e.g. a file still being copied: skip it, never kill the run
                     print(f'skipping unreadable {f}: {e}', flush=True)
                     continue
@@ -176,7 +200,8 @@ class Stream(torch.utils.data.IterableDataset):
             picks = [(g, d) for g, game in enumerate(games) for d in range(len(game['label']))]
             rng.shuffle(picks)
             for i in range(0, len(picks) - self.batch + 1, self.batch):
-                yield collate(games, picks[i:i + self.batch], rng=rng if self.random_labels else None)
+                yield collate(games, picks[i:i + self.batch], rng=rng if self.random_labels else None,
+                              z_drop=self.z_drop if self.with_z else None, z_rng=rng)
 
 
 def to_device(b, dev):
@@ -184,7 +209,10 @@ def to_device(b, dev):
 
 
 def losses(net, b):
-    logits, v, own = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
+    if 'z' in b:
+        logits, v, own = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'], b['z'])
+    else:
+        logits, v, own = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
     has_l = b['label'] != IGNORE
     pol = F.cross_entropy(logits[has_l], b['label'][has_l]) if has_l.any() else logits[:, 0].sum() * 0
     has_v = b['value'] >= 0
@@ -205,12 +233,13 @@ def autocast(dev):
 
 
 @torch.no_grad()
-def validate(net, val_games, dev, batch=256):
+def validate(net, val_games, dev, batch=256, zero_z=False):
+    """Held-out losses; zero_z: with z absent (games loaded with z only)."""
     net.eval()
     sums, count = np.zeros(5), 0
     picks = [(g, d) for g, game in enumerate(val_games) for d in range(len(game['label']))]
     for i in range(0, len(picks), batch):
-        b = to_device(collate(val_games, picks[i:i + batch]), dev)
+        b = to_device(collate(val_games, picks[i:i + batch], z_drop=1.0 if zero_z else None), dev)
         with autocast(dev):
             out = losses(net, b)
         k = len(picks[i:i + batch])
@@ -281,13 +310,28 @@ def main():
     ap.add_argument('--winners_only', action='store_true', help='imitate only the winning side of each game (validation unchanged)')
     ap.add_argument('--value_val_games', type=int, default=0,
                     help='also check value on this many held-out games of each source, 16 positions each')
+    ap.add_argument('--heads', type=int, default=8)
+    ap.add_argument('--z', action='store_true', help='strategy conditioning: the player\'s own build facts as input')
+    ap.add_argument('--z_drop', type=float, default=0.1, help='with --z: share of training decisions with z absent')
+    ap.add_argument('--accum', type=int, default=1, help='micro-batches of --batch per optimizer step')
+    ap.add_argument('--mem_cap_gb', type=float, default=0, help='cap this process\'s GPU memory (CUDA only)')
+    ap.add_argument('--grad_ckpt', action='store_true', help='recompute trunk layers in the backward pass (less memory)')
+    ap.add_argument('--warmup', type=int, default=1000)
     args = ap.parse_args()
     global FP32
     FP32 = args.fp32
     os.makedirs(args.run_dir, exist_ok=True)
     torch.manual_seed(args.seed)
     dev = args.device
-    net = M.Net(d=args.d, layers=args.layers).to(dev)
+    if args.mem_cap_gb and dev == 'cuda':
+        torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_cap_gb * 2 ** 30 / torch.cuda.get_device_properties(0).total_memory))
+    net_cfg = dict(d=args.d, layers=args.layers)
+    if args.heads != 8:
+        net_cfg['heads'] = args.heads
+    if args.z:
+        net_cfg['z'] = True
+    net = M.Net(**net_cfg).to(dev)
+    net.grad_ckpt = args.grad_ckpt
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.01, betas=(0.9, 0.95), fused=dev == 'cuda')
     step = 0
     ckpt_path = os.path.join(args.run_dir, 'last.pt')
@@ -296,6 +340,7 @@ def main():
         net.load_state_dict(ck['model'])
         opt.load_state_dict(ck['opt'])
         step = ck['step']
+    best = ck.get('best', float('inf')) if args.resume and os.path.exists(ckpt_path) else float('inf')
     if args.init and not (args.resume and os.path.exists(ckpt_path)):
         net.load_state_dict(torch.load(args.init, map_location=dev)['model'])
         print(f'initialised from {args.init}', flush=True)
@@ -315,7 +360,7 @@ def main():
     val_sets = []
     for d, _ in parse_sources(args.data_dir):
         val_files = list_games(d, val=True)[:args.val_games]
-        val_sets.append([g for g in (load_game(f) for f in val_files) if g is not None])
+        val_sets.append([g for g in (load_game(f, with_z=args.z) for f in val_files) if g is not None])
         print(f'validation {d}: {len(val_sets[-1])} games, {sum(len(g["label"]) for g in val_sets[-1])} decisions', flush=True)
     val_games = val_sets[0]
     value_sets = []
@@ -325,29 +370,34 @@ def main():
             value_sets.append(pos)
             print(f'value check {d}: {n} games, {0 if pos is None else len(pos["value"])} positions', flush=True)
     stream = Stream(args.data_dir, args.batch, args.window, args.seed + step, args.min_seed, args.random_labels,
-                    args.winners_only)
+                    args.winners_only, args.z, args.z_drop)
     loader = torch.utils.data.DataLoader(stream, batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda',
                                          prefetch_factor=4, persistent_workers=True)
     log = open(os.path.join(args.run_dir, 'log.jsonl'), 'a')
-    warmup = 1000
+    warmup = args.warmup
     t0, seen, acc_sum = time.time(), 0, np.zeros(5)
-    for batch in loader:
+    batches = iter(loader)
+    save_cfg = net_cfg
+    while True:
         if step >= args.steps or (args.minutes and time.time() - t0 > 60 * args.minutes):
             break
         lr = args.lr * min(1, (step + 1) / warmup) * 0.5 * (1 + math.cos(math.pi * min(1, step / args.steps)))
         for gr in opt.param_groups:
             gr['lr'] = lr
-        b = to_device(batch, dev)
-        with autocast(dev):
-            pol, val, own, acc, vacc = losses(net, b)
-            loss = pol + args.value_weight * val + args.owner_weight * own
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        parts = np.zeros(5)
+        for _ in range(args.accum):
+            b = to_device(next(batches), dev)
+            with autocast(dev):
+                pol, val, own, acc, vacc = losses(net, b)
+                loss = pol + args.value_weight * val + args.owner_weight * own
+            (loss / args.accum).backward()
+            seen += len(b['label'])
+            parts += np.array([float(x.detach()) for x in (pol, val, own, acc, vacc)]) / args.accum
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
         step += 1
-        seen += len(b['label'])
-        acc_sum += np.array([float(x.detach()) for x in (pol, val, own, acc, vacc)])
+        acc_sum += parts
         if step % 200 == 0:
             m = dict(zip(['policy', 'value', 'owner', 'top1', 'value_acc'], (acc_sum / 200).round(4).tolist()))
             acc_sum[:] = 0
@@ -356,21 +406,33 @@ def main():
             if step % args.val_every == 0:
                 for i, vs in enumerate(val_sets):
                     if vs:
-                        rec['val' if i == 0 else f'val_{i}'] = validate(net, vs, dev)
+                        rec['val' if i == 0 else f'val_{i}'] = validate(net, vs, dev, batch=args.batch)
+                        if args.z:
+                            rec['val_z0' if i == 0 else f'val_z0_{i}'] = validate(net, vs, dev, batch=args.batch, zero_z=True)
                 for i, pos in enumerate(value_sets):
                     if pos is not None:
                         rec['vval' if i == 0 else f'vval_{i}'] = validate_value(net, pos, dev)
-                torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step,
-                                config=dict(d=args.d, layers=args.layers)), ckpt_path)
+                if args.z and val_sets[0]:
+                    score = rec['val_z0']['policy']
+                    if score < best:
+                        best = score
+                        torch.save(dict(model=net.state_dict(), step=step, config=save_cfg, val_z0=rec['val_z0']),
+                                   os.path.join(args.run_dir, 'best.pt.tmp'))
+                        os.replace(os.path.join(args.run_dir, 'best.pt.tmp'), os.path.join(args.run_dir, 'best.pt'))
+                        rec['best'] = True
+                torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step, config=save_cfg, best=best),
+                           ckpt_path + '.tmp')
+                os.replace(ckpt_path + '.tmp', ckpt_path)
                 if step % args.save_every == 0:
-                    torch.save(dict(model=net.state_dict(), step=step, config=dict(d=args.d, layers=args.layers)),
+                    torch.save(dict(model=net.state_dict(), step=step, config=save_cfg),
                                os.path.join(args.run_dir, f'step{step:06d}.pt'))
             print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + '\n')
             log.flush()
-    torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step, config=dict(d=args.d, layers=args.layers)),
-               ckpt_path)
-    print('done', json.dumps(validate(net, val_games, dev)), flush=True)
+    torch.save(dict(model=net.state_dict(), opt=opt.state_dict(), step=step, config=save_cfg, best=best),
+               ckpt_path + '.tmp')
+    os.replace(ckpt_path + '.tmp', ckpt_path)
+    print('done', json.dumps(validate(net, val_games, dev, batch=args.batch)), flush=True)
 
 
 if __name__ == '__main__':

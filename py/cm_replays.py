@@ -16,6 +16,12 @@ each is looked at once (data/replays/cm_walked.tsv).
 Needs a Challengermode API application's refresh key in ~/.config/polytopia/challengermode_refresh_key.
 
     python3 py/cm_replays.py [--all] [--workers 4]
+
+Other formats (e.g. the Might Continents Small instant tournaments, for pretraining): --format 1,2,1
+--tag _cont --tournaments data/replays/cm_tournaments_instant.txt [--from_walked]. The tag keeps the
+walked list and the id list separate (cm_walked_cont.tsv, cm_ids_cont.tsv); --from_walked adds the
+tournaments the default walk already saw in that format; --no_recent skips the 50 newest and the
+downloaded games' tournaments.
 """
 import argparse
 import concurrent.futures as cf
@@ -100,17 +106,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--all', action='store_true', help='walk every tournament, not only Might, Lakes, Small')
     ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--format', default=','.join(map(str, CHAMPIONSHIP)), help='GameMode,MapType,MapSize to walk')
+    ap.add_argument('--tag', default='', help='suffix of the walked and id lists (cm_walked<tag>.tsv, cm_ids<tag>.tsv)')
+    ap.add_argument('--tournaments', default=os.path.join(OUT, 'cm_tournaments.txt'), help='extra tournament id list')
+    ap.add_argument('--from_walked', action='store_true', help='also the tournaments cm_walked.tsv recorded in --format')
+    ap.add_argument('--no_recent', action='store_true', help='skip the 50 newest and the downloaded games\' tournaments')
     args = ap.parse_args()
+    want = tuple(int(x) for x in args.format.split(','))
     cm = Client()
-    ids = [t['id'] for t in cm.query(RECENT)['tournamentsForGame']]
-    listed = os.path.join(OUT, 'cm_tournaments.txt')
-    if os.path.exists(listed):
-        ids += [l.split()[0] for l in open(listed) if l.strip() and not l.startswith('#')]
-    for f in glob.glob(os.path.join(OUT, 'raw', '*.json')):
-        ctx = json.load(open(f)).get('gameContext') or {}
-        if ctx.get('externalTournamentId'):
-            ids.append(ctx['externalTournamentId'])
-    walked_path, ids_path = os.path.join(OUT, 'cm_walked.tsv'), os.path.join(OUT, 'cm_ids.tsv')
+    ids = []
+    if not args.no_recent:
+        ids += [t['id'] for t in cm.query(RECENT)['tournamentsForGame']]
+    if os.path.exists(args.tournaments):
+        ids += [l.split()[0] for l in open(args.tournaments) if l.strip() and not l.startswith('#')]
+    if args.from_walked and os.path.exists(os.path.join(OUT, 'cm_walked.tsv')):
+        ids += [l.split('\t')[0] for l in open(os.path.join(OUT, 'cm_walked.tsv')) if l.split('\t')[1:2] == [str(want)]]
+    if not args.no_recent:
+        for f in glob.glob(os.path.join(OUT, 'raw', '*.json')):
+            ctx = json.load(open(f)).get('gameContext') or {}
+            if ctx.get('externalTournamentId'):
+                ids.append(ctx['externalTournamentId'])
+    walked_path, ids_path = os.path.join(OUT, f'cm_walked{args.tag}.tsv'), os.path.join(OUT, f'cm_ids{args.tag}.tsv')
     walked = {l.split('\t')[0] for l in open(walked_path)} if os.path.exists(walked_path) else set()
     todo = [i for i in dict.fromkeys(ids) if i not in walked]
     print(f'{len(set(ids))} tournaments known, {len(todo)} not walked yet', flush=True)
@@ -125,7 +141,7 @@ def main():
             t = cm.query(SETTINGS, {'id': tid})['tournament']
             s = t['settings']['gameSessionSettings'] or {}
             fmt = (s.get('GameMode'), s.get('MapType'), s.get('MapSize'))
-            if not (args.all or fmt == CHAMPIONSHIP):
+            if not (args.all or fmt == want):
                 return tid, fmt, t['name'], [], ''
             tour = cm.query(TOURNAMENT, {'id': tid})['tournament']
             return tid, fmt, tour['name'], list(games(tour)), (tour['schedule']['startedAt'] or '')[:10]

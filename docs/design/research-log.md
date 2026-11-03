@@ -1455,3 +1455,217 @@ playing well against a person.
   - **Turn-clock credit (`s10t`):**
     - Expected: ≥ 52%.
     - Falsifier: < 45%.
+
+### S10 addendum: `s10x`, search in the loop (pre-registered 2026-11-02, 21:45, before it started)
+- **Hypothesis:** the planner's gain (about +30 points over the raw network, S9 read parts 3–4) can be
+  moved into the raw network by expert iteration, if the learning target is a damped policy
+  improvement and not a copy of the best lane.
+- **kevinz917's failure, and what is different here** (radical-ideas.md section 0: his students'
+  raw play equalled the parent's, and search on top of them gained +54 to +67 Elo against the
+  parent's +104):
+  - **The max of noisy lanes.** He trained toward the best of several lanes. The best of 15 noisy
+    scores is biased toward lucky noise (the optimizer's curse). Here the lanes are not far apart:
+    in the scratch test the sampled lanes' scores had a standard deviation of 0.019 per turn (median
+    0.011), and a lane's score differed between its 2 samples by a standard deviation of 0.009
+    (median 0.004; measured, 127 turns). That is only the determinization part of the noise; the
+    critic's own error comes on top.
+  - **Narrowing.** Copying the argmax makes the policy sharper, so later search has worse lanes to
+    choose from (his search gain on the students halved).
+  - **A soft target instead.** The real game plays a lane drawn from the 15 sampled lanes with
+    probability softmax(score / τ). Those lanes are draws of whole turns from the policy π, so the
+    drawn turn is approximately a draw from π'(turn) ∝ π(turn) · exp(Q(turn) / τ). That is the
+    KL-regularized improvement of π under the planner's scores: the form of Gumbel MuZero's
+    completed-Q target (softmax(logits + σ(Q))) and of MPO's E-step. Lanes within the noise of each
+    other get near-equal weight, so on flat turns the target is π itself (no move in expectation). A
+    lane clearly ahead, or one that wins the game, dominates. τ → 0 is his argmax.
+  - **A damped step.** The planner's decisions get a constant advantage +1 in PPO's clipped
+    objective. At π = π_old its expected gradient is −∇KL(π' ‖ π). The clip stops it once a row's
+    probability is 1.2 × the acting policy's: the same trust region as every other decision, and
+    on flat turns (π' ≈ π) the expected gradient is zero, so it doesn't sharpen the policy there.
+  - **Online, not offline.** He refit students once on search labels. Here the searched turns are
+    played in the training games every generation, so the critic and the outcomes see that play too.
+- **τ = 0.02, set from the scratch test before the start** (24 + 16 games, measured):
+
+  | τ | turns | drawn lane − mean sampled lane | best lane − mean sampled lane | KL(weights ‖ uniform), mean / median |
+  |---|---|---|---|---|
+  | 0.05 | 127 | 0.015 (49% of the best's) | 0.030 | 0.115 / 0.025 nats |
+  | 0.02 | 189 | 0.017 (67%) | 0.025 | 0.32 / 0.044 nats |
+
+  - At 0.02 the drawn lane keeps two thirds of the planner's estimated gain over the policy's
+    average turn, while the median turn's weights stay near uniform (0.044 nats).
+  - The mean KL, 0.32 nats per turn of ~16 commands, is about 0.02 per decision (derived). That is
+    below PPO's 0.05 limit per generation, so the clip, not τ, bounds the step.
+- **Config:** identical to `s10c`: the same base (`s9v` gen 83 and its fog critic), the same
+  override.json apart from the keys below, the same evaluations (rival `s10c`). Run dir
+  `~/runs/sp/s10x`, port 9850, `LAST` 95, setup `tools/s10x_setup.sh`.
+  - **One infrastructure change:** 4 inference shards instead of 7. With the planner, a shard
+    (4 game processes) holds 1.92 GB of GPU memory instead of 1.10 GB, and one with 7 processes holds
+    2.37 GB (torch's peak reserved, measured). Seven of them, with their CUDA contexts, would need
+    ~16 GB beside the human pass's training (derived). Shards only split the games across inference
+    processes; the games and the learning don't change.
+
+  The changes:
+  - **Training games** (`selfplay.py --search_share 0.25`, `py/search_loop.py`):
+    - A fixed draw per (game seed, turn, player) picks 25% of the learner's turns (both seats in
+      self-play games, the learner's seat otherwise).
+    - At the start of such a turn, the planner of S9 read part 3 runs on scratch slots of the same
+      game process:
+      - 16 lanes: the top-move lane and 15 sampled at T 0.5 from the actors' own (bf16) policy;
+      - 2 fog-safe samples;
+      - End Turn, then the opponent's whole reply, played greedily by the learner's network from the
+        opponent's view of the sample;
+      - scored by the track's fog critic of the previous generation (`critic_g(g−1).pt`, in fp32).
+    - The drawn lane is played in the real game through the normal loop, command by command. Its rows
+      are forced, and the log-probability recorded is the acting policy's for that row at the real
+      observation. A command not legal in the real game (its hidden part differed) ends the plan, and
+      the rest of the turn is sampled from the policy as usual.
+    - Recorded per decision: `searched`. Per searched turn: the scores (top-move lane, drawn lane,
+      best, mean), KL(weights ‖ uniform), lane spread and sample-to-sample noise, commands, broken,
+      seconds.
+    - The training games run on `polyhost-det` (the same build plus the determinizer, used in the S9
+      planner tests). The evaluations keep `polyhost`.
+  - **Learning** (`train_rl.py --search_adv 1.0`, in `learn_extra`):
+    - The planner's decisions get the constant advantage +1 in the clipped objective (above).
+    - **The PPO ratio stays honest:** these decisions get no GAE advantage. They are left out of the
+      advantage normalization, and the KL early stop (0.05) is measured on the sampled decisions only
+      (`kl`; theirs is logged as `kl_search`).
+    - Every other decision is unchanged: GAE λ 0.97 from the fog critic, clip 0.2, anchor 0.03 to
+      gen 0.
+    - The fog critic trains on every decision, searched or not, as in `s10c`.
+  - **Fog:** lanes, replies and scores all run on samples built from the learner's own view. The
+    scorer is the fog critic, and nothing reads the real hidden state.
+- **Read at gen 95:**
+  1. **As S10:** `s10x` vs `s10c` over gens 92–95 (800 games): better > 55%, worse < 45%.
+  2. **A4 kill test, raw play:** below 52% in (1) means search in the loop didn't reach the raw
+     network.
+  3. **A4 kill test, search on top:** the S9 part 3 planner (16 lanes, 2 samples, T 0.5, the track's
+     own `critic_g095.pt`; seeds from 16,000,000, 200 games), on `s10x` gen 95 vs raw `s10x` gen 95,
+     and the same on `s10c` gen 95. If `s10x`'s planner gain is less than half of `s10c`'s, the
+     policy narrowed the way kevinz917's did. (The planner-vs-planner games of the S10 read compare
+     the two directly.)
+  - **Indicators each generation** (the games log): searched turns, best − top-move lane, drawn −
+    top-move lane, KL(weights ‖ uniform), broken plans, and the policy's entropy (learn log). If the
+    policy absorbs the search, best − top-move should shrink slowly over the generations.
+- **Expected (guessed):** 55–60% vs `s10c` over gens 92–95, and the planner's gain on `s10x` at least
+  70% of its gain on `s10c`.
+- **Falsifier:** below 52% vs `s10c`, or the planner's gain on `s10x` below half of its gain on `s10c`.
+- **Cost:**
+  - Scratch tests (measured): 3.3–4.0 s per searched turn per game-process thread.
+    - One shard of 4 processes, 40 games: 83 decisions/s with the planner, 289/s without.
+    - One shard of 7 processes, 56 games: 118 decisions/s with the planner.
+    - Both small runs include a long tail of last games, so they understate throughput.
+  - `s10c`'s gen 84 games held ~62k learner turns, so 25% is ~15k searched turns per generation
+    (derived).
+  - Guessed: a generation's games take ~30–40 min in the daytime (28 processes) and ~60–70 min at
+    night (14), against ~10 and ~20 min for `s10c`. The first generation's real figure is added
+    below.
+  - Every round of the S10 rotation grows by one `s10x` generation.
+- **Default behaviour of the shared files is unchanged** (checked on the PC before deploying):
+  - the same match with the old and new `selfplay.py` gave identical results (6 games);
+  - default training games have the same fields as `s10c`'s;
+  - `train_rl.py` old and new on the CPU gave bit-identical policy and critic weights (6 games).
+
+## HP1 — the fresh human pass: a 22M network with strategy conditioning z (pre-registered 2026-11-02, 21:30, before the 21:33 launch)
+- **Ben (2026-11-02):** "Now, beside S10"; ~20M parameters; strategy conditioning
+  (radical-ideas.md B5); the Might Continents games as pretraining, then the championship games;
+  train once on the human set (no anchor that replays it).
+- **Hypotheses:**
+  1. **Controllability (B5):** a network trained with z (the player's own build facts of that game)
+     follows a z it is given at play time: tech tempo, catapults and navy move toward the z.
+  2. **Size (B6):** a 22M network trained on the same data imitates people better than R7 (5.9M)
+     and plays at least as well.
+- **z (`py/zfacts.py`), per player per game, from the game's record only (no judgement):**
+  - the first 6 techs researched, in order; the first 10 units trained, in order;
+  - techs by turn 10 and by turn 20; cities at turn 10; the turn of the first port and of the first
+    naval unit (with "had one" flags); units trained by turn 20, per class (warrior, rider, archer,
+    defender, catapult, swordsman, knight, giant, mind bender, cloak/dagger, other) and ship
+    upgrades by turn 20. Turns are the game's counter (0 at the start); a game that ended earlier
+    counts to its end.
+  - Input: embeddings of the two sequences plus a linear map of the scalars, added to the global
+    token. **z is dropped (set to "absent") on 10% of training decisions**; absent z adds exactly
+    nothing, so z = 0 is the plain unconditioned network.
+  - z holds the future of the game, so held-out top-1 with the game's own z is not comparable with
+    R7. **All comparisons with R7 use z = 0.**
+  - Known leak, accepted: the value head can read z (e.g. many cities at turn 10). Value quality
+    is reported at z = 0 only.
+- **Model:** `model.Net(d=512, layers=6, z=True)`: R7's architecture twice as wide, 21.9M
+  parameters before z (measured). bf16, gradient accumulation and a per-process GPU memory cap so it
+  fits beside S10.
+- **Data:**
+  - **Continents:** the plan was ~14k Might Continents Small "Instant Tournament" games. Found
+    tonight:
+    - the instant tournaments the site lists (10,000 of 14,221) date from 2023-12 to 2025-08, so most
+      will return 1005 (expired);
+    - the 1,019 regular Might/Continents/Small tournaments already known (2026 dailies among them)
+      are the realistic source;
+    - **the game client's saved token was refused (HTTP 401)**, so nothing can be downloaded until
+      Ben logs in to the game again.
+  - **Tonight, instead:** stage 1 pretrains on the AI-teacher games (`m1v2`, 19,956 games, 24.6M
+    decisions), as R3 did for R4/R7. Stage 2 is the 7,732 championship games (`human_full`, same
+    held-out split as R4/R7).
+- **Arms (separable; one GPU job at a time):**
+
+  | Arm | Run | Stage 1 | Stage 2 | When |
+  |---|---|---|---|---|
+  | A | `hp1a` | m1v2 AI games with z, 25,000 steps × 256 (6.4M samples, ~1/4 pass) | human_full with z, 24,000 steps × 256 (~2.2 passes), held-out every 1,000 steps, best checkpoint kept | tonight |
+  | B | `hp1b` | as A, then the Continents games with z (one pass) | as A | after Ben's login and the download |
+  | C | `hp1c` | A's stage 1 | as A, advantage-weighted (AWR, weights from a value learned on human outcomes) | only if A passes T1 or T3; not built yet |
+
+  - B against A isolates the Continents pretraining. C against A isolates the weighting.
+  - **No auxiliary heads in A or B** (they would confound the size and z results); a later arm if
+    wanted.
+  - **Train-once rule:** each arm is one fresh network trained once on the championship set
+    (stage 2, early-stopped on held-out loss). B is a second fresh network on the same set, which
+    makes it an ablation: Ben's call, asked in the handoff.
+- **Tests (z = 0 unless stated):**
+  - **T1, imitation:** `human_bench.py` on the 150 held-out human games. R7: top-1 43.7%.
+    - Expected: ≥ 45.0%.
+    - Falsifier: < 43.7%.
+    - Also logged: top-1 with the game's own z (an upper bound, not compared).
+  - **T2, controllability** (vs Crazy, 100 games per z set, each game's z drawn from held-out human
+    games of the agent's own tribe; facts measured from the agent's own commands):
+    - **Tech tempo (B5's test):** z sets "fast" (techs by turn 20 ≥ 9) and "slow" (≤ 5).
+      - Expected: fast gives ≥ 8.5 techs by turn 20 (over games reaching turn 20); slow is at least
+        3 lower.
+    - **Catapults:** "none" (0 catapults by turn 20, game ≥ 20 turns) gives ≤ 5% catapults among
+      units trained by turn 20; "many" (≥ 3) gives at least twice z = 0's share.
+    - **Navy:** "no navy" (no port and no naval unit in a game of ≥ 20 turns) against "early port"
+      (port by turn 8): the share of games with a naval unit by turn 20 differs by ≥ 30 points.
+    - **Kill (B5):** if the agent moves less than half of the gap between the two z sets' own
+      facts on tech tempo and catapults, z is dropped from the plan (no z track in RL).
+  - **T3, head-to-head vs R7** (`selfplay.py --match`, 200 games, seats swapped):
+    - Expected: > 55%.
+    - Kill (B6): ≤ 52% → the size change doesn't pay, and arm C is not run.
+  - **T4, vs Crazy** (200 games, the standard seeds): expected ≥ R7's 191/200.
+  - Also at the end: vs `s10c` gen 95 for orientation, not as a test.
+- **Cost:** A ~6–7 GPU-hours beside S10 (stage-1 rate guessed at ~500 samples/s from R3's
+  2,500/s alone at 5.9M); T2–T4 ~2 h of games. B adds the Continents pass. Engineering ~1 evening.
+- **Files:** `py/zfacts.py` (new); `py/model.py` (`z`, optional and off by default: old checkpoints
+  load and give identical outputs, checked); `py/train_bc.py` (`--z`, `--z_drop`, `--accum`,
+  `--mem_cap_gb`, `--heads`, `--grad_ckpt`; defaults unchanged); `py/eval_vs_bot.py` (`--z_from`,
+  `--z_filter`, facts per game); `py/cm_replays.py` (`--format`, `--tag`), `tools/cm_list_tournaments.py`
+  (`--out`), `py/convert_replays.py` (`--preset`, for Continents). PC copy in `~/poly/hp` (S10's
+  `~/poly/py_sp` untouched). Status: `runs/agents/humanpass_status.md`.
+- **Amendment before any test ran (2026-11-02, 21:50):** T2 draws each game's z from all human games
+  of the agent's tribe that pass the set's filter (training and held-out), not only the held-out
+  ones: the held-out pool had only 14 "slow" players, in 6 tribes (measured). On new maps the z is
+  only an input vector, so the split it comes from doesn't matter for this test.
+- **Change to arm A's stage 1 (2026-11-02, 22:04), before any test:** once S10's games shared the
+  GPU, stage 1 fell from ~445 to ~330 samples/s (measured), which put arm A's end near 09:00. Stage 1
+  is cut from 25,000 to 12,000 steps (3.1M samples, about 1/8 of a pass over m1v2), resumed from its
+  step-2,000 checkpoint, so the cosine schedule follows the 12k length from there. Stage 2 is unchanged.
+  - First check of z (stage 1, step 2,000, 10 held-out AI games): policy loss 1.7585 with the game's z
+    against 1.7622 without (measured): z already carries a little information.
+- **Running (2026-11-02, 22:10):** arm A on the PC, `~/runs/hp1a` (`tools/hp1_chain.sh`, code in
+  `~/poly/hp`): stage 1 at ~375 samples/s beside S10 (measured), ETA ~00:15; stage 2 ETA ~05:30
+  (derived from that rate). `tools/hp_after.sh` runs T1 at stage-2 steps 8,000 and 16,000, then T1, T3
+  and T2 + T4 on `best.pt` when the chain ends (`~/runs/hp1a/tests/`). Arm B waits for Ben's game
+  login (`tools/hp_continents.sh`, then `tools/hp1b_chain.sh`).
+  - Stage 1, step 4,000 (measured): held-out AI-game policy loss 1.4348 with z, 1.4367 without (top-1
+    52.6% either way); value log loss 1.37 with z against 0.92 without. The value head is already
+    reading outcomes through z (the leak noted above), so search and evaluations should use the value
+    at z = 0.
+  - **Lead's note (22:45):** stage 1's training value accuracy is 0.98–0.99 at steps 4,800–5,000
+    (measured): z holds later facts of the same game (cities at turn 10, units by turn 20), so the
+    value head reads the result from it. The policy tests (T1–T4) don't use the value. Any later
+    z run should train the value head only on z-dropped samples, or keep z out of the value path.

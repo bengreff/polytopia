@@ -7,7 +7,7 @@ fresh temporary profile (nothing signed in), takes that token from the page's ow
 pages through the search. The search returns at most 10,000 results per query, so it is split by
 tournament type (1 tournaments, 4 instant tournaments, ...); a type above the cap is reported.
 
-Appends new ids to data/replays/cm_tournaments.txt. Needs Google Chrome and the playwright package.
+Appends new ids to data/replays/cm_tournaments.txt (or --out). Needs Google Chrome and the playwright package.
 
     python3 tools/cm_list_tournaments.py Polytopia PolyChampions [--types 1]
 """
@@ -31,8 +31,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('spaces', nargs='+', help='space slugs, as in challengermode.com/s/<slug>')
     ap.add_argument('--types', default='1', help='comma-separated tournament types (1 tournament, 4 instant)')
+    ap.add_argument('--out', default=OUT, help='the id list to append to (e.g. a separate list for instant tournaments)')
     args = ap.parse_args()
-    known = {l.split()[0] for l in open(OUT) if l.strip() and not l.startswith('#')} if os.path.exists(OUT) else set()
+    out_path = args.out
+    known = {l.split()[0] for l in open(out_path) if l.strip() and not l.startswith('#')} if os.path.exists(out_path) else set()
     found = []
     with sync_playwright() as p:
         browser = p.chromium.launch(channel='chrome', headless=True)
@@ -67,10 +69,10 @@ def main():
                 print(f'{slug} type {kind}: {n} tournaments', flush=True)
         browser.close()
     new = [f for f in dict.fromkeys(found) if f[0] not in known]
-    with open(OUT, 'a') as f:
+    with open(out_path, 'a') as f:
         for tid, date, slug, name in new:
             f.write(f'{tid} {date} {slug}: {name}\n')
-    print(f'{len(new)} new tournament ids added to {OUT}')
+    print(f'{len(new)} new tournament ids added to {out_path}')
 
 
 if __name__ == '__main__':

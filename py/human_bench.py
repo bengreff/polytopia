@@ -7,7 +7,11 @@ cross-entropy over every recorded decision, and value accuracy and log loss over
 games with a value target, overall and by turn bucket of the game (early / middle / late thirds of
 each game's decisions).
 
-    .venv/bin/python py/human_bench.py <checkpoint.pt> [--data data/human1] [--games 150]
+    .venv/bin/python py/human_bench.py <checkpoint.pt> [--data data/human1] [--games 150] [--own_z]
+
+A network trained with strategy conditioning (train_bc.py --z) gets no z here (unconditioned,
+comparable with networks without z); --own_z gives it each game's own z instead (it holds the
+game's future, so it is an upper bound, not a comparison).
 """
 import argparse
 import os
@@ -28,12 +32,13 @@ def main():
     ap.add_argument('--games', type=int, default=150, help='first N held-out games by file name')
     ap.add_argument('--batch', type=int, default=256)
     ap.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cpu')
+    ap.add_argument('--own_z', action='store_true', help='z networks: give each decision its game\'s own z')
     args = ap.parse_args()
     net, step = eval_vs_bot.load_policy(args.checkpoint, args.device)
     files = train_bc.list_games(args.data, val=True)
     games = []
     for f in files:
-        g = train_bc.load_game(f)
+        g = train_bc.load_game(f, with_z=args.own_z)
         if g is not None:
             games.append(g)
         if len(games) >= args.games:
@@ -46,7 +51,10 @@ def main():
         for i in range(0, D, args.batch):
             picks = [(0, d) for d in range(i, min(D, i + args.batch))]
             b = train_bc.to_device(train_bc.collate([g], picks), args.device)
-            logits, v, _ = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
+            if 'z' in b:
+                logits, v, _ = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'], b['z'])
+            else:
+                logits, v, _ = net(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
             logits, v = logits.float(), v.float()
             lab = b['label']
             top1 += int((logits.argmax(1) == lab).sum())
@@ -62,7 +70,7 @@ def main():
                 for j in range(3):
                     m = t == j
                     vstats[j] += [corr[m].sum(), ll[m].sum(), m.sum()]
-    print(f'checkpoint step {step} on {len(games)} held-out games of {os.path.basename(os.path.normpath(args.data))} '
+    print(f'checkpoint step {step}{" (own z)" if args.own_z else ""} on {len(games)} held-out games of {os.path.basename(os.path.normpath(args.data))} '
           f'({n} decisions): top-1 {top1 / n:.1%}, top-5 {top5 / n:.1%}, policy CE {nll / n:.3f}')
     tot = vstats.sum(0)
     if tot[2]:

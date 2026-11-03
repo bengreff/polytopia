@@ -6,6 +6,13 @@ bot is the game's AI at the given difficulty. The policy plays greedily (or samp
 --temperature), with no search.
 
     .venv/bin/python py/eval_vs_bot.py <checkpoint.pt> --seeds 200 --difficulty 1 --procs 3 --slots 8
+
+Strategy conditioning (research log HP1, a network trained with train_bc.py --z): --z_from <human games
+dir> gives each game a z drawn from the held-out games of that directory, from a player of the
+agent's own tribe whose facts pass --z_filter (a Python expression over py/zfacts.py's fact names plus
+T, the game's length in turns, e.g. "techs_t20 >= 9 and T >= 20"). Without --z_from the network gets
+no z (unconditioned). --facts_out writes one JSON line per game with the agent's own facts (and the
+z's), for the controllability test.
 """
 import argparse
 import concurrent.futures as cf
@@ -22,6 +29,7 @@ import torch
 import model as M
 import polyenv
 import remote
+import zfacts
 
 REGULAR_TRIBES = sorted(polyenv.TRIBES.values())
 TURN_CAP = 150
@@ -64,12 +72,38 @@ def policy_logits(net, device, inputs):
     if isinstance(net, remote.RemoteNet):  # --remote: the PC's GPU
         return net.infer(inputs)[0]
     t = {k: torch.from_numpy(v).to(device) for k, v in inputs.items()}
-    logits, _, _ = net(t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'])
+    if 'z' in t:
+        logits, _, _ = net(t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'], t['z'])
+    else:
+        logits, _, _ = net(t['tiles'], t['globals'], t['techs'], t['legal'], t['mask'])
     return logits.float().cpu().numpy()
 
 
-def choose(net, device, obs, statuses, temperature, rng):
+def z_pool(data_dir, expr, split='val'):
+    """{tribe: [(game id, player, z vector, facts)]} from the held-out games of data_dir (split 'val'),
+    the training games ('train') or all, whose player passes expr (zfacts fact names plus T, the game's
+    turns)."""
+    import train_bc
+    pool = {}
+    files = [f for v in ((True,) if split == 'val' else (False,) if split == 'train' else (True, False))
+             for f in train_bc.list_games(data_dir, val=v)]
+    for f in files:
+        z = np.load(f)
+        if not train_bc.accepted(z):
+            continue
+        for p, fx in zfacts.game_facts(z).items():
+            names = dict(fx[2], T=int(z['turns']))
+            if expr and not eval(expr, {}, names):
+                continue
+            tribe = int(z['tribes'][p - 1])
+            pool.setdefault(tribe, []).append((os.path.basename(f)[:-4], p, zfacts.vector(*fx), names))
+    return pool
+
+
+def choose(net, device, obs, statuses, temperature, rng, z=None):
     inputs = batch_inputs(obs, statuses)
+    if z is not None:
+        inputs['z'] = z
     logits = policy_logits(net, device, inputs)
     if temperature <= 0:
         return logits.argmax(1)
@@ -104,7 +138,16 @@ def main():
     ap.add_argument('--remote', action='store_true', help='run the policy on the PC\'s GPU (py/remote.py)')
     ap.add_argument('--teacher', action='store_true',
                     help='reference: the agent seat plays the game\'s own AI (the M1 teacher); checkpoint is ignored')
+    ap.add_argument('--z_from', default=None, help='a z per game from the held-out games of this dir (HP1)')
+    ap.add_argument('--z_filter', default='', help='with --z_from: only players whose facts pass this expression')
+    ap.add_argument('--z_split', choices=['val', 'train', 'all'], default='val', help='with --z_from: which games')
+    ap.add_argument('--facts_out', default=None, help='one JSON line per game: the agent\'s facts (and its z\'s)')
     args = ap.parse_args()
+    zpool = z_pool(args.z_from, args.z_filter, args.z_split) if args.z_from else None
+    if zpool is not None:
+        print(f'z pool: {sum(map(len, zpool.values()))} players from {args.z_from} pass {args.z_filter!r}; '
+              f'per tribe {dict(sorted((t, len(v)) for t, v in zpool.items()))}', flush=True)
+    facts_out = open(args.facts_out, 'a') if args.facts_out else None
     if args.teacher:
         net, step = None, 'teacher'
     elif args.remote:
@@ -166,7 +209,13 @@ def main():
             bots = (None, args.difficulty) if seat == 0 else (args.difficulty, None)
             st = envs[e].new(slot, polyenv.Spec(tribes=tribes, bots=bots, seed=seed))
             live[e][slot] = dict(seed=seed, seat=seat, tribes=tribes, st=st, turn=st.turn, n=0,
-                                 start=blob_prefix + envs[e].save(slot) if args.save_games else None)
+                                 start=blob_prefix + envs[e].save(slot) if args.save_games else None,
+                                 rec=[], z=None, z_src=None)
+            if zpool is not None:
+                cands = zpool.get(int(tribes[seat]), [])
+                if cands:
+                    gid, p, zv, names = cands[np.random.default_rng(seed * 2 + seat).integers(len(cands))]
+                    live[e][slot].update(z=zv, z_src=dict(game=gid, player=p, facts=names))
 
         for e in range(len(envs)):
             for s in range(args.slots):
@@ -188,6 +237,14 @@ def main():
                     agent_id = g['seat'] + 1
                     res = 'win' if st.ended and st.winner == agent_id else 'loss' if st.ended else 'cap'
                     results.append((g['seed'], g['seat'], g['tribes'], res, st.turn))
+                    if facts_out:
+                        rec = g['rec']
+                        techs, units, fx = zfacts.facts([r[0] for r in rec], [r[1] for r in rec], [r[2] for r in rec],
+                                                        [r[3] for r in rec]) if rec else ([], [], {})
+                        facts_out.write(json.dumps(dict(seed=g['seed'], seat=g['seat'], tribes=list(map(int, g['tribes'])),
+                                                        result=res, turns=st.turn, facts=fx, techs=techs, units=units,
+                                                        z=g['z_src'])) + '\n')
+                        facts_out.flush()
                     if args.save_games:
                         save_game(args.save_games, g, envs[e].save(s), res, st.turn)
                     if out:
@@ -218,10 +275,19 @@ def main():
             if not flat:
                 return None
             statuses = [live[e][s]['st'] for e, s in flat]
+            zs = None
+            if zpool is not None:
+                zs = np.stack([live[e][s]['z'] if live[e][s]['z'] is not None else np.zeros(zfacts.Z_DIM, np.float32)
+                               for e, s in flat])
             if args.teacher:
                 acts = [b if b >= 0 else polyenv.STEP_BOT_OWN for b in bots]
             else:
-                acts = choose(net, args.device, flat_obs, statuses, args.temperature, rng)
+                acts = choose(net, args.device, flat_obs, statuses, args.temperature, rng, zs)
+            if facts_out:
+                for (e, s), o, st_, a in zip(flat, flat_obs, statuses, acts):
+                    if a >= 0:
+                        naval = bool(zfacts.naval_flags(o.tiles.reshape(1, -1, o.tiles.shape[-1]))[0])
+                        live[e][s]['rec'].append((o.get('turn'), st_.legal[int(a)].tolist(), o.get('cities'), naval))
             per_env = [[] for _ in envs]
             for (e, s), a in zip(flat, acts):
                 g = live[e][s]

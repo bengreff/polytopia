@@ -9,7 +9,8 @@ Resign (it decides the outcome: see resignation()). Nature's commands and EndMat
 not recorded.
 
 Only the championship format is converted unless --all: two players of regular tribes, Might, Lakes,
-Small (14x14).
+Small (14x14). --preset 3 takes Continents instead of Lakes (the game's MapPreset: 1 Dryland, 2 Lakes,
+3 Continents, 4 Archipelago, 6 Pangea), e.g. for pretraining data.
 
     python3 py/convert_replays.py [--raw data/replays/raw] [--out data/human1] [--port 8400]
         [--binary polyhost_replay] [--all] [--shard i/n]
@@ -49,8 +50,8 @@ def describe_game(dump):
     }
 
 
-def championship(meta):
-    return (len(meta['players']) == 2 and (meta['mode'], meta['map_preset'], meta['map_size']) == (MIGHT, LAKES, SMALL)
+def championship(meta, preset=LAKES):
+    return (len(meta['players']) == 2 and (meta['mode'], meta['map_preset'], meta['map_size']) == (MIGHT, preset, SMALL)
             and all(p[1] in REGULAR_TRIBES for p in meta['players']))
 
 
@@ -76,13 +77,13 @@ def save(path, game_id, rec, meta, st, owner, capital, not_in_legal, out_of_turn
     os.replace(path + '.tmp.npz', path)
 
 
-def convert(env, raw, out_dir, keep_all, misses):
+def convert(env, raw, out_dir, keep_all, misses, preset=LAKES):
     game_id = raw['id']
     start = base64.b64decode(raw['initialGameStateData'])
     final = base64.b64decode(raw['currentGameStateData'])
     left, st = env.replay(0, polyenv.Spec(), start, final)
     meta = describe_game(env.dump(0))
-    if not keep_all and not championship(meta):
+    if not keep_all and not championship(meta, preset):
         return meta, None
     rec = Recorder(0, None)
     not_in_legal = out_of_turn = 0
@@ -152,10 +153,15 @@ def main():
     ap.add_argument('--binary', default='polyhost_replay')
     ap.add_argument('--all', action='store_true', help='convert every game, not only the championship format')
     ap.add_argument('--shard', default='0/1', help='i/n: convert only every n-th game (by id), for parallel runs')
+    ap.add_argument('--preset', type=int, default=LAKES, help='MapPreset to convert (2 Lakes, 3 Continents)')
+    ap.add_argument('--only', default=None, help='convert only the games whose ids are listed in this file')
     args = ap.parse_args()
     shard, shards = map(int, args.shard.split('/'))
     os.makedirs(args.out, exist_ok=True)
     files = sorted(f for f in os.listdir(args.raw) if f.endswith('.json') and int(f[:8], 16) % shards == shard)
+    if args.only:
+        only = {l.split()[0] for l in open(args.only) if l.strip()}
+        files = [f for f in files if f[:-5] in only]
     log = open(os.path.join(args.out, 'games.tsv'), 'a')
     misses = open(os.path.join(args.out, 'not_in_legal.tsv'), 'a')
     done = {l.split('\t')[0] for l in open(os.path.join(args.out, 'games.tsv'))}
@@ -166,7 +172,7 @@ def main():
             if raw['id'] in done:
                 continue
             try:
-                meta, result = convert(env, raw, args.out, args.all, misses)
+                meta, result = convert(env, raw, args.out, args.all, misses, args.preset)
             except polyenv.EnvError as e:
                 totals['failed'] += 1
                 log.write(f"{raw['id']}\tfailed\t{e}\n")

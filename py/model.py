@@ -6,10 +6,16 @@ plus one global token, with
 
 Inputs are polyenv observations (obs version 1) and legal rows (type, a, b, arg). Nothing here
 judges a position; it only encodes facts.
+
+Optional strategy conditioning (Net(z=True), research log HP1): a z vector of the player's own build
+facts in a game (py/zfacts.py) is embedded and added to the global token. A z whose first entry
+(present) is 0, or no z at all, adds nothing. Without z=True the network is unchanged, so older
+checkpoints load and give the same outputs.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 import polyenv
 
@@ -37,9 +43,10 @@ N_ARGS = 64
 
 
 class Net(nn.Module):
-    def __init__(self, d=256, layers=6, heads=8, width=14):
+    def __init__(self, d=256, layers=6, heads=8, width=14, z=False):
         super().__init__()
         self.width, self.tiles = width, width * width
+        self.grad_ckpt = False  # train_bc.py --grad_ckpt: recompute each trunk layer in the backward pass
         self.cat_names = list(TILE_CATEGORICAL)
         self.cat_offsets = []
         total = 0
@@ -73,11 +80,39 @@ class Net(nn.Module):
         self.value = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 1))
         self.owner = nn.Linear(d, 3)
 
-    def encode(self, tiles, glob, techs):
-        """tiles int16 [B, 196, 32], glob int32 [B, 20], techs uint8 [B, 64] -> tokens [B, 197, d]."""
-        return self.norm(self.trunk(self.embed(tiles, glob, techs)))
+        self.z = z
+        if z:  # strategy conditioning (zfacts.py); created only when asked, so older checkpoints are unchanged
+            import zfacts  # only needed with z, so copies of this file without zfacts.py keep working
+            self.z_sizes = (zfacts.N_TECHS, zfacts.N_UNITS, zfacts.TECH_VOCAB, zfacts.UNIT_VOCAB)
+            self.z_tech = nn.Embedding(zfacts.TECH_VOCAB, d, padding_idx=0)
+            self.z_unit = nn.Embedding(zfacts.UNIT_VOCAB, d, padding_idx=0)
+            self.z_tech_pos = nn.Parameter(torch.randn(zfacts.N_TECHS, d) * 0.02)
+            self.z_unit_pos = nn.Parameter(torch.randn(zfacts.N_UNITS, d) * 0.02)
+            self.z_dense = nn.Linear(len(zfacts.SCALARS), d)
+            self.z_out = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d))
 
-    def embed(self, tiles, glob, techs):
+    def z_embed(self, z):
+        """z float [B, Z_DIM] -> [B, d]; zero where z is absent (present flag 0)."""
+        nt, nu, tv, uv = self.z_sizes
+        present = z[:, :1].float()
+        tech = z[:, 1:1 + nt].long().clamp(0, tv - 1)
+        unit = z[:, 1 + nt:1 + nt + nu].long().clamp(0, uv - 1)
+        e = (self.z_tech(tech) + (tech > 0).unsqueeze(-1) * self.z_tech_pos).sum(1) / nt
+        e = e + (self.z_unit(unit) + (unit > 0).unsqueeze(-1) * self.z_unit_pos).sum(1) / nu
+        e = e + self.z_dense(z[:, 1 + nt + nu:].float())
+        return self.z_out(e) * present
+
+    def encode(self, tiles, glob, techs, z=None):
+        """tiles int16 [B, 196, 32], glob int32 [B, 20], techs uint8 [B, 64] (z float [B, Z_DIM] or None,
+        only with Net(z=True)) -> tokens [B, 197, d]."""
+        x = self.embed(tiles, glob, techs, z)
+        if self.grad_ckpt and self.training:
+            for layer in self.trunk.layers:
+                x = torch.utils.checkpoint.checkpoint(layer, x, use_reentrant=False)
+            return self.norm(x)
+        return self.norm(self.trunk(x))
+
+    def embed(self, tiles, glob, techs, z=None):
         """The trunk's input tokens [B, 197, d]: the global token, then the 196 tiles."""
         B = tiles.shape[0]
         t = tiles.long()
@@ -103,12 +138,14 @@ class Net(nn.Module):
                         torch.stack([torch.log1p(stars), torch.log1p(glob[:, G['income']].float().clamp(min=0))], -1),
                         techs.float()], -1)
         gx = gx + self.g_dense(gd)
+        if z is not None and self.z:
+            gx = gx + self.z_embed(z).to(gx.dtype)
         return torch.cat([gx.unsqueeze(1), x], 1)
 
-    def forward(self, tiles, glob, techs, legal, legal_mask):
+    def forward(self, tiles, glob, techs, legal, legal_mask, z=None):
         """legal int16 [B, N, 4] padded, legal_mask bool [B, N]. Returns policy logits [B, N] (padding
         at -inf), value logit [B], ownership logits [B, 196, 3]. Only the real rows are scored."""
-        return self.heads(self.encode(tiles, glob, techs), legal, legal_mask)
+        return self.heads(self.encode(tiles, glob, techs, z), legal, legal_mask)
 
     def heads(self, h, legal, legal_mask):
         """The policy, value and ownership heads on the encoded tokens h [B, 197, d]."""
