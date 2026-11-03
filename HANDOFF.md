@@ -30,6 +30,23 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
+## Now (2026-11-02, 21:45): three agents building; weight-space plan written
+
+- **S10** (`s10c s10p s10t`) is rotating on the PC, healthy; gen 84 started 21:06.
+- **Agents launched by the lead** (each writes its state to a file; check it after a stall):
+  - `s10x`, search in the loop: pre-register in research-log S10, build, test, then append to
+    tracks.list (it runs alone until it catches up). Status: `runs/agents/s10x_status.md`.
+  - **The fresh human pass:** Continents harvest, z conditioning, ~20M model, chained BC on the PC
+    (`~/runs/hp1_*`). Status: `runs/agents/humanpass_status.md`. It may need a fresh game login from
+    Ben if the saved token has expired.
+  - `py/crazyplus/` (from before): adds `polyhost/crazyplus.hpp` and a dispatch line in `wire.hpp`.
+    Its doc will be `docs/design/crazyplus.md`.
+  - Not yet committed: the agents don't commit; the lead does once each one reports.
+- **Weight-space programming plan:** `docs/design/weight-space.md` (committed).
+  - Measured: gen 0 → 83's change is low-rank in the value head and the last trunk layer.
+  - Phases: diagnosis kit, weight arithmetic at the S10 read, habit edits, critic edits.
+  - Every edit is gated at ≥ 55% vs the unedited network over 400 games.
+
 ## Now (2026-11-02, 21:15): S10 running; search works; an improved Crazy-based bot is being built
 
 - **S9 read** (research log, parts 1–4):
