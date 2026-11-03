@@ -11,7 +11,8 @@ person's seat (handicap 1), so Crazy has +3 stars per turn over it.
     ... --vs runs/x/step.pt    # against a network (greedy)
 
 CrazyPlus needs polyhost's two extra ops (polyhost/crazyplus.hpp): on the Mac it runs
-build/polyhost-mac-cp (POLYHOST_BIN is switched to it when it points at another Mac build). On a
+build/polyhost-mac-cp (POLYHOST_BIN is switched to it when it points at another Mac build), on the PC
+~/polylinux/polyhost-cp (the same, for its Linux builds). On a
 host without the ops it falls back to slower pure-Python rollouts and no unit vetoes.
 """
 import argparse
@@ -38,6 +39,11 @@ TURN_CAP = 100
 if polyenv.NATIVE and os.path.exists(sim.BINARY) and \
         os.path.basename(os.environ.get('POLYHOST_BIN', '')) in ('', 'polyhost-mac', 'polyhost-mac-det', 'polyhost-mac-det2'):
     os.environ['POLYHOST_BIN'] = sim.BINARY
+# The PC's native Linux build with the same ops: ~/polylinux/polyhost-cp (built from this repo's polyhost/).
+LINUX_BINARY = os.path.join(polyenv.POLYLINUX, 'polyhost-cp')
+if os.environ.get('POLYHOST') == 'linux' and os.path.exists(LINUX_BINARY) and \
+        os.path.basename(os.environ.get('POLYHOST_BIN', '')) in ('', 'polyhost', 'polyhost-det'):
+    os.environ['POLYHOST_BIN'] = LINUX_BINARY
 
 
 def wilson(wins, n, z=1.96):

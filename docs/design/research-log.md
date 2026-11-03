@@ -1574,6 +1574,20 @@ playing well against a person.
   - default training games have the same fields as `s10c`'s;
   - `train_rl.py` old and new on the CPU gave bit-identical policy and critic weights (6 games).
 
+### S10 evaluation change (2026-11-03, 08:14): CrazyPlus replaces RuleBot
+- **Why:** Ben asked for the evaluations to use the new hard-coded bot. CrazyPlus
+  (docs/design/crazyplus.md) beats Crazy 94.0% (188/200, CI 89.8–96.5%) from a person seat on
+  validation seeds, against RuleBot's 15%.
+- **What changed:** `script_eval` is `crazyplus` in all four tracks' `override.json`. The first
+  CrazyPlus check is each track's gen 87 (every third generation), so the tracks switch together.
+  Training is unchanged.
+- **On the PC:** the bot's two engine ops are built into `~/polylinux/polyhost-cp`. `crazyplus/match.py`
+  switches to it under `POLYHOST=linux`.
+  - Test: 4 games, s10c gen 86 vs CrazyPlus, seeds 19,000,000–001: the network won 4/4 (measured).
+  - 144–291 ms per CrazyPlus decision, no errors (measured).
+- **Expectation:** the networks will win most games. R4 at 20k already beat CrazyPlus 18/20, since
+  CrazyPlus's simulations assume a Crazy reply. A drop in the win rate is the signal to watch.
+
 ## HP1 — the fresh human pass: a 22M network with strategy conditioning z (pre-registered 2026-11-02, 21:30, before the 21:33 launch)
 - **Ben (2026-11-02):** "Now, beside S10"; ~20M parameters; strategy conditioning
   (radical-ideas.md B5); the Might Continents games as pretraining, then the championship games;
@@ -1678,3 +1692,11 @@ playing well against a person.
     (measured): z holds later facts of the same game (cities at turn 10, units by turn 20), so the
     value head reads the result from it. The policy tests (T1–T4) don't use the value. Any later
     z run should train the value head only on z-dropped samples, or keep z out of the value path.
+- **Stage 2 stalled overnight, and was relaunched (lead, 2026-11-03 08:10):** from 00:11 to 03:32 it
+  hit the 2.5 GB per-process cap six times (a 394 MiB request with 1.61 GB allocated and 0.64 GB
+  reserved but unused: fragmentation, while the GPU had 12.4 GB free). The chain used its six tries
+  and exited at step ~15,800 of 24,000; nothing ran from 03:32 to 08:09.
+  - The cap stays at 2.5 GB, since S10 alone reached 14.3 of 16 GB at 07:53 (measured).
+  - Relaunched from `last.pt` (saved 03:21) with micro-batch 32 × accumulation 8 instead of 64 × 4:
+    the same 256 samples per optimizer step, so the pre-registered training is unchanged. Also with
+    `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
