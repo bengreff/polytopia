@@ -13,6 +13,7 @@ the decision log below records what is settled.
 | [research-log.md](research-log.md) | Every run: pre-registered hypothesis, config, result |
 | [radical-ideas.md](radical-ideas.md) | Research report (2026-11-02): why the plateau, 20 cited ideas (search, privileged critic, throughput, soups, strategy conditioning, LLM uses), a top five, and what to avoid |
 | [evaluation.md](evaluation.md) | Brainstorm (2026-11-02): a frozen gauntlet with a rating, star-odds scale, exploitability, human positions, skill probes, coverage; three tiers |
+| [weight-space.md](weight-space.md) | Plan (2026-11-02): weight-space programming (the MIT result) applied here: what carries over, the measured gen 0 → 83 weight diff, four phases (diagnosis, weight arithmetic, habit edits, critic edits), the 400-game gate |
 | [superhuman-plan.md](superhuman-plan.md) | v6 restrategy (2026-10-30): what holds the network back, the five pillars, and the S9 five-track experiment |
 | [reviews/2026-10-20.md](reviews/2026-10-20.md) | Adversarial review findings, and what was done with each |
 
