@@ -40,6 +40,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "crazyplus.hpp"
 #include "determinize.hpp"
 #include "env.hpp"
 
@@ -246,6 +247,8 @@ struct Server {
             determinizer.build(src, *m, viewer, seed);
             env::Match& dst = *(slots[id] = std::move(m));  // (src may be the same slot: replaced only now)
             status(w, dst);
+        } else if (crazyplus::handles(op)) {  // py/crazyplus's ops (crazyplus.hpp)
+            crazyplus::handle(op, r, w, [&](uint32_t id) -> env::Match& { return slot(id); }, [](Writer& o, env::Match& m) { status(o, m); });
         } else {
             throw std::runtime_error("unknown op " + std::to_string(op));
         }
