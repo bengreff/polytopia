@@ -34,8 +34,16 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 
 - **S10** (`s10c s10p s10t`) is rotating on the PC, healthy; gen 84 started 21:06.
 - **Agents launched by the lead** (each writes its state to a file; check it after a stall):
-  - `s10x`, search in the loop: pre-register in research-log S10, build, test, then append to
-    tracks.list (it runs alone until it catches up). Status: `runs/agents/s10x_status.md`.
+  - **`s10x`, search in the loop** (done 23:15, committed; research log S10 addendum):
+    - **Running:** gen 84 started 23:12 from s9v gen 83. The planner plays 25% of the learner's
+      turns; its lane is drawn by softmax(score/0.02); those decisions get a constant PPO advantage.
+    - **Rotation:** tracks.list is `s10c s10x s10p s10t`, round-robin.
+    - **Speed:** s10x uses 4 inference shards, not 7, since a planner shard holds ~2 GB of GPU.
+      A generation takes about 2 h at night (guessed), so **the S10 read moves ~12–15 h later**
+      (guessed).
+    - **GPU sharing:** s10p's gen 84 learning took 53 min against s10c's 18, most likely from HP1
+      sharing the GPU (not checked).
+    - Backups of the old shared files are in `~/poly/stage_x`; delete that once S10 is read.
   - **The fresh human pass, HP1** (done 22:40, committed; research log HP1):
     - **Arm A** (`~/runs/hp1a`, 22M network with z) is training on the PC. Stage 1 is on the AI
       games (ETA ~00:15), stage 2 on the championship games (ETA ~05:30). `tools/hp_after.sh` then
