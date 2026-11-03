@@ -36,9 +36,14 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - **Agents launched by the lead** (each writes its state to a file; check it after a stall):
   - `s10x`, search in the loop: pre-register in research-log S10, build, test, then append to
     tracks.list (it runs alone until it catches up). Status: `runs/agents/s10x_status.md`.
-  - **The fresh human pass:** Continents harvest, z conditioning, ~20M model, chained BC on the PC
-    (`~/runs/hp1_*`). Status: `runs/agents/humanpass_status.md`. It may need a fresh game login from
-    Ben if the saved token has expired.
+  - **The fresh human pass, HP1** (done 22:40, committed; research log HP1):
+    - **Arm A** (`~/runs/hp1a`, 22M network with z) is training on the PC. Stage 1 is on the AI
+      games (ETA ~00:15), stage 2 on the championship games (ETA ~05:30). `tools/hp_after.sh` then
+      runs tests T1–T4 by itself.
+    - **Arm B** (with the Continents pass) waits for Ben: the saved game token got HTTP 401. Once he
+      logs in, run `TOKEN_FILE=<jwtToken file> nohup tools/hp_continents.sh &`. Only ~1–3k
+      Continents games are likely to load (guessed).
+    - **Known flaw:** the value head reads the result through z. Use z = 0 for value and search.
   - `py/crazyplus/` (from before): adds `polyhost/crazyplus.hpp` and a dispatch line in `wire.hpp`.
     Its doc will be `docs/design/crazyplus.md`.
   - Not yet committed: the agents don't commit; the lead does once each one reports.
