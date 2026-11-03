@@ -13,7 +13,10 @@ with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
   (py/human_starts.py) instead of a new map; `start_turn` is the turn they began at (0 otherwise).
   Training games use only the positions of human games outside the held-out split (`--starts_split
   train`, train_bc.is_val's split of the human games); a game in which the learner made no recorded
-  move (a start position the opponent wins at once) is counted but not saved.
+  move (a start position the opponent wins at once) is counted but not saved. With --privileged, each
+  recorded decision also stores what the opponent's own client shows at that moment (`opp_tiles`,
+  `opp_globals`, `opp_techs`), for a training-only critic (py/train_rl.py --pcritic); the policy
+  never sees it.
 - **Matches** (`--match B`): `--net` against B, both greedy (`--temperature` 0), each seed played
   twice with the seats swapped. B is a checkpoint or `bot:<difficulty>` (the game's own AI on the
   other seat, as py/eval_vs_bot.py; the same seeds and tribe draws give the same games). Writes one
@@ -207,6 +210,7 @@ def main():
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--save_games', default=None, help='matches: keep the games for the web app\'s watch mode, '
                                                        'as py/eval_vs_bot.py --save_games')
+    ap.add_argument('--privileged', action='store_true', help='training games: also record the opponent\'s view of each recorded decision')
     ap.add_argument('--shards', type=int, default=0, help='child processes to split the games across (0: one per 10 game processes)')
     ap.add_argument('--shard', default=None, help=argparse.SUPPRESS)  # i/K: this child's share (set by the parent)
     args = ap.parse_args()
@@ -317,6 +321,7 @@ def main():
         if not match:
             g['rec'] = dagger.Recorder(seed, spec)
             g['rec'].value = []
+            g['rec'].opp = []
         if g['human_start']:
             with open(g['human_start']['file'], 'rb') as f:
                 g['st'] = env.load(slot, spec, f.read())
@@ -363,8 +368,11 @@ def main():
         else:
             if g['rec'].played:  # a start position the opponent wins before the learner moves records nothing
                 owner, capital = env.owners(slot)
+                opp = g['rec'].opp
+                extra = dict(opp_tiles=np.stack([x[0] for x in opp]), opp_globals=np.stack([x[1] for x in opp]),
+                             opp_techs=np.stack([x[2] for x in opp])) if args.privileged else {}
                 dagger.save(args.out_dir, g['rec'], st, owner, capital, g['opp'], g['record'], source='selfplay',
-                            extra=dict(v_old=np.asarray(g['rec'].value, np.float32), start_turn=np.int32(g['start_turn']),
+                            extra=dict(extra, v_old=np.asarray(g['rec'].value, np.float32), start_turn=np.int32(g['start_turn']),
                                        start=np.str_(os.path.basename(g['human_start']['file']) if g['human_start'] else '')))
             res = 'cap' if not st.ended else 'win' if st.winner in g['record'] else 'loss'
             with log_lock:
@@ -388,6 +396,11 @@ def main():
             slots_now = sorted(live)
             te = time.time()
             obs = env.observe([(s, 0) for s in slots_now])
+            opp_obs = {}
+            if args.privileged and not match:  # the opponent's own view, for the training-only critic
+                want = [s for s in slots_now if live[s]['st'].current in live[s]['record']]
+                if want:
+                    opp_obs = dict(zip(want, env.observe([(s, 3 - live[s]['st'].current) for s in want])))
             counters['env'] += time.time() - te
             acts = {}
             by_key = {}
@@ -406,6 +419,9 @@ def main():
                         g['rec'].played.append(int(a))
                         g['rec'].logp.append(float(lp))
                         g['rec'].value.append(float(v))
+                        if args.privileged:
+                            q = opp_obs[s]
+                            g['rec'].opp.append((q.tiles.reshape(-1, q.tiles.shape[-1]), q.globals, q.techs))
                     if st.turn != g['turn']:
                         g['turn'], g['n'] = st.turn, 0
                     g['n'] += 1
@@ -427,7 +443,8 @@ def main():
                     g = live[s]
                     if g.get('recorded'):
                         r = g['rec']
-                        for lst in (r.tiles, r.globs, r.techs, r.legal, r.labels, r.players, r.played, r.logp, r.value):
+                        for lst in (r.tiles, r.globs, r.techs, r.legal, r.labels, r.players, r.played, r.logp, r.value) + \
+                                ((r.opp,) if args.privileged else ()):
                             lst.pop()
                     live[s]['st'] = st
                     continue

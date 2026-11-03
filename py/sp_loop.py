@@ -30,6 +30,13 @@ Research log S9 options:
   --reset_every generations after the last reset (or --branch_gen); logged in resets.tsv.
 - Strategy indicators of each generation's training games (py/indicators.py) go to indicators.tsv.
 
+Research log S10 options:
+- --pcritic: a privileged critic for training only (py/train_rl.py --pcritic). The games record the
+  opponent's view (py/selfplay.py --privileged). pcritic_gNNN.pt starts from the fog critic, or
+  from the policy if there is none.
+- --shards: inference processes for the training games (py/selfplay.py --shards; 0: one per 10 game
+  processes).
+
 Files under <run>: gen000.pt (the start), gen001.pt, ...; games/gNNN (training games); learn/gNNN
 (learner output and log); evals/<kind>_gNNN.{tsv,json,log}; watch/<kind>_gNNN (evaluation games for
 the web app's watch mode); summary.tsv (one line per evaluation); loop.log; status.json.
@@ -285,6 +292,8 @@ def main():
     ap.add_argument('--critic', action='store_true', help='a separate value network for the advantages (py/train_rl.py --critic)')
     ap.add_argument('--critic_window_gens', type=int, default=1)
     ap.add_argument('--critic_extra', default='', help='more py/train_rl.py arguments for the critic')
+    ap.add_argument('--pcritic', action='store_true', help='a privileged critic for training only (py/train_rl.py --pcritic)')
+    ap.add_argument('--shards', type=int, default=0, help='py/selfplay.py --shards for the training games')
     ap.add_argument('--anchor_every', type=int, default=0, help='the anchor follows the run: its generation at the last multiple of this')
     ap.add_argument('--league', default='', help='more opponents: "checkpoint:share" or "<run dir>@N:share", comma-separated')
     ap.add_argument('--reset_from', default='', help='exploiter: the run whose latest generation it resets to')
@@ -340,7 +349,8 @@ def main():
                       '--pool', ','.join(pool), '--temperature', str(args.temperature),
                       '--first_seed', str(50_000_000 + g * 100_000), '--procs', str(procs),
                       '--slots', str(args.slots), '--port', str(args.port)]
-                + (['--starts', args.starts, '--start_share', str(args.start_share)] if args.starts and args.start_share > 0 else []),
+                + (['--starts', args.starts, '--start_share', str(args.start_share)] if args.starts and args.start_share > 0 else [])
+                + (['--privileged'] if args.pcritic else []) + (['--shards', str(args.shards)] if args.shards else []),
                 os.path.join(run, 'games', f'g{g:03d}.log'))
         tail = (open(os.path.join(run, 'games', f'g{g:03d}.log')).read().strip().splitlines() or [''])[-1]
         log(run, f'gen {g:03d}: games done in {time.time() - t0:.0f} s: {tail}')
@@ -358,12 +368,18 @@ def main():
         if args.anchor_every > 0:  # after --learn_extra: the last --anchor counts
             extra += ['--anchor', gen_path(run, args.anchor_every * ((g - 1) // args.anchor_every))]
         critic_out = os.path.join(run, f'critic_g{g:03d}.pt')
+        pcritic_out = os.path.join(run, f'pcritic_g{g:03d}.pt')
+        window = [os.path.join(run, 'games', f'g{e:03d}') for e in range(g - args.critic_window_gens, g)]
+        window = [d for d in window if os.path.isdir(d)]
+        cin = os.path.join(run, f'critic_g{g - 1:03d}.pt')
+        cin = cin if os.path.exists(cin) else prev
         if args.critic:
-            cin = os.path.join(run, f'critic_g{g - 1:03d}.pt')
-            window = [os.path.join(run, 'games', f'g{e:03d}') for e in range(g - args.critic_window_gens, g)]
-            window = [d for d in window if os.path.isdir(d)]
-            extra += ['--critic', cin if os.path.exists(cin) else prev] + (['--critic_window', ','.join(window)] if window else []) \
-                + args.critic_extra.split()
+            extra += ['--critic', cin]
+        if args.pcritic:
+            pin = os.path.join(run, f'pcritic_g{g - 1:03d}.pt')
+            extra += ['--pcritic', pin if os.path.exists(pin) else cin]
+        if args.critic or args.pcritic:
+            extra += (['--critic_window', ','.join(window)] if window else []) + args.critic_extra.split()
         if not os.path.exists(os.path.join(learn_dir, 'policy.pt')):
             shutil.rmtree(learn_dir, ignore_errors=True)
             run_cmd(run, [PY, os.path.join(HERE, 'train_rl.py'), prev, games_dir, learn_dir] + anchor +
@@ -374,9 +390,10 @@ def main():
                     os.path.join(run, 'learn', f'g{g:03d}.log'))
         last = (open(os.path.join(learn_dir, 'log.jsonl')).read().strip().splitlines() or ['(no log lines)'])[-1]
         log(run, f'gen {g:03d}: learned in {time.time() - t0:.0f} s: {last}')
-        if args.critic:
-            shutil.copy(os.path.join(learn_dir, 'critic.pt'), critic_out + '.tmp')
-            os.replace(critic_out + '.tmp', critic_out)
+        for flag, name, out in ((args.critic, 'critic', critic_out), (args.pcritic, 'pcritic', pcritic_out)):
+            if flag:
+                shutil.copy(os.path.join(learn_dir, name + '.pt'), out + '.tmp')
+                os.replace(out + '.tmp', out)
         shutil.copy(os.path.join(learn_dir, 'policy.pt'), gen_path(run, g) + '.tmp')
         os.replace(gen_path(run, g) + '.tmp', gen_path(run, g))
         if evals is not None:

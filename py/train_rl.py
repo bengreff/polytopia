@@ -38,6 +38,12 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
   step the same way. Its steps are spread over the policy's, and it finishes its passes even if
   the policy stops early (--target_kl). Saved as <out_dir>/critic.pt. The policy's own value head
   still trains as before (--value_weight); only the advantages change.
+- **Privileged critic** (--pcritic; research log S10; Ben approved it for training only): a
+  model.PrivilegedCritic that also sees the opponent's own view of each decision (recorded by
+  py/selfplay.py --privileged). It trains beside the fog critic, on the same stream with its own
+  targets, and by default its estimates drive the advantages (--advantage). The fog critic keeps
+  training for search, which can't use hidden information. Saved as <out_dir>/pcritic.pt.
+- **Turn-clock credit** (--turn_lambda): see gae().
 
     python train_rl.py <init.pt> <rl_dir[,rl_dir2...]> <out_dir> --bc human1:0.5,m1v2:0.5 [--epochs 2]
 """
@@ -53,6 +59,7 @@ import torch
 import torch.nn.functional as F
 
 import model as M
+import polyenv
 import train_bc
 
 MAX_LEGAL = 1024  # train_bc.collate's default max_legal
@@ -85,9 +92,13 @@ def game_targets(files, turn_cost=0.0):
     return {k: (v / sd, won[k], reward[k]) for k, v in adv.items()}, base, {o: len(v) for o, v in by_opp.items()}
 
 
-def gae(f, player, v_old, adv, lam):
+def gae(f, player, v_old, adv, lam, turns=None, turn_lam=None):
     """Per decision of the file's agent seats: the generalized advantage over that player's own
-    decisions (NaN for other decisions and unfinished games)."""
+    decisions (NaN for other decisions and unfinished games). With turn_lam (turn-clock credit,
+    radical-ideas.md / kevinz917's c6), lambda is 1 between decisions of the same turn and turn_lam
+    from a turn's last decision to the next turn's first: each decision is credited with the change in
+    the estimate up to the start of the player's next turn (after the opponent's reply), and earlier
+    turns' credit decays per turn, not per decision."""
     out = np.full(len(player), np.nan, np.float32)
     for p in np.unique(player):
         if (f, int(p)) not in adv:
@@ -95,20 +106,29 @@ def gae(f, player, v_old, adv, lam):
         idx = np.nonzero(player == p)[0]
         v = v_old[idx].astype(np.float64)
         delta = np.append(v[1:], adv[(f, int(p))][2]) - v  # the next own move's estimate; the outcome after the last
+        if turn_lam is not None:
+            t = turns[idx]
+            lams = np.where(np.append(t[1:] == t[:-1], True), 1.0, turn_lam)  # lams[k]: from k to k+1
+        else:
+            lams = np.full(len(idx), lam)
         a, run = np.empty(len(idx)), 0.0
         for k in range(len(idx) - 1, -1, -1):
-            run = delta[k] + lam * run
+            run = delta[k] + (lams[k] * run if k + 1 < len(idx) else 0.0)
             a[k] = run
         out[idx] = a
     return out
 
 
-class FileChunks(torch.utils.data.IterableDataset):
-    """Each game file's observations, for scoring every decision with the critic: (file, tiles,
-    globals, techs) per file, the files shared among the workers."""
+G_TURN = polyenv.GLOBAL_FEATURES.index('turn')
+OPP = ('opp_tiles', 'opp_globals', 'opp_techs')
 
-    def __init__(self, files):
-        self.files = sorted(files)
+
+class FileChunks(torch.utils.data.IterableDataset):
+    """Each game file's observations, for scoring every decision with a critic: (file, tiles, globals,
+    techs[, the opponent's view]) per file, the files shared among the workers."""
+
+    def __init__(self, files, opp=False):
+        self.files, self.opp = sorted(files), opp
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -116,22 +136,22 @@ class FileChunks(torch.utils.data.IterableDataset):
         for i, f in enumerate(self.files):
             if i % nw == wid:
                 z = np.load(f)
-                yield f, z['tiles'], z['globals'], z['techs']
+                yield (f, z['tiles'], z['globals'], z['techs']) + (tuple(z[k] for k in OPP) if self.opp else ())
 
 
 @torch.no_grad()
-def critic_values(critic, files, dev, workers, batch=1024):
+def critic_values(critic, files, dev, workers, privileged=False, batch=1024):
     """{file: the critic's win probability before each recorded decision}."""
     critic.eval()
     out = {}
-    loader = torch.utils.data.DataLoader(FileChunks(files), batch_size=None, num_workers=workers, prefetch_factor=4)
-    for f, tiles, globs, techs in loader:
+    loader = torch.utils.data.DataLoader(FileChunks(files, privileged), batch_size=None, num_workers=workers, prefetch_factor=4)
+    for f, *arrays in loader:
         vs = []
-        for i in range(0, len(tiles), batch):
-            t, g, te = (torch.as_tensor(x[i:i + batch]).to(dev) for x in (tiles, globs, techs))
+        for i in range(0, len(arrays[0]), batch):
+            xs = [torch.as_tensor(x[i:i + batch]).to(dev) for x in arrays]
             with train_bc.autocast(dev):
-                v = critic.value(critic.encode(t, g, te)[:, 0]).squeeze(-1).float()
-            vs.append(torch.sigmoid(v).cpu().numpy())
+                v = critic(*xs)[0] if privileged else critic.value(critic.encode(*xs)[:, 0]).squeeze(-1)
+            vs.append(torch.sigmoid(v.float()).cpu().numpy())
         out[f] = np.concatenate(vs).astype(np.float32)
     critic.train()
     return out
@@ -140,15 +160,18 @@ def critic_values(critic, files, dev, workers, batch=1024):
 class RLStream(torch.utils.data.IterableDataset):
     """Epochs over the RL games: each worker takes its share of the files, loads them a window at a
     time, shuffles the decisions and yields batches with played, logp, advantage and value target.
-    With `values` (the critic's estimates per file), they replace v_old, and each batch also carries
-    the critic's target: the lambda-return with lambda `clam`. critic_only: no policy fields."""
+    `values` (a critic's estimates per file) replace v_old in the advantages; `targets` (one dict per
+    critic) add each critic's target to the batches, `ctarget<i>`: the lambda-return with lambda
+    `clam`. opp: the batches also carry the opponent's view (for a privileged critic). critic_only:
+    a critic's stream (no advantage normalization needed)."""
 
     def __init__(self, files, adv, batch, window, epochs, seed, value_norm=None, lam=1.0, values=None, clam=0.95,
-                 critic_only=False, sample=1.0):
+                 critic_only=False, sample=1.0, targets=(), opp=False, turn_lam=None):
         self.files, self.adv, self.batch, self.window, self.epochs, self.seed = files, adv, batch, window, epochs, seed
         self.value_norm = value_norm  # --baseline value: A = (z - v_old - mean) / sd, or (GAE - mean) / sd
-        self.lam = lam
+        self.lam, self.turn_lam = lam, turn_lam
         self.values, self.clam, self.critic_only, self.sample = values, clam, critic_only, sample
+        self.targets, self.opp = list(targets), opp
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -163,16 +186,21 @@ class RLStream(torch.utils.data.IterableDataset):
                     g = train_bc.load_game(f)
                     z = np.load(f)
                     player = z['player'].astype(np.int64)
+                    turns = z['globals'][:, G_TURN]
                     a = np.array([self.adv.get((f, int(p)), (np.nan,) * 3) for p in player], np.float32).reshape(-1, 3)
                     v = self.values[f] if self.values is not None else z['v_old']
                     if self.value_norm and not self.critic_only:
                         mean, sd = self.value_norm
-                        raw = a[:, 2] - v if self.lam >= 1 else gae(f, player, v, self.adv, self.lam)
+                        raw = (a[:, 2] - v if self.lam >= 1 and self.turn_lam is None
+                               else gae(f, player, v, self.adv, self.lam, turns, self.turn_lam))
                         a[:, 0] = np.where(np.isnan(a[:, 0]), np.nan, (raw - mean) / sd)
                     games.append(g)
                     e = dict(played=z['played'].astype(np.int64), logp=z['logp'].astype(np.float32), adv=a[:, 0], won=a[:, 1])
-                    if self.values is not None:
-                        e['ctarget'] = np.clip(v + gae(f, player, v, self.adv, self.clam), 0, 1)  # NaN off the agent seats
+                    for c, tv in enumerate(self.targets):
+                        e[f'ctarget{c}'] = np.clip(tv[f] + gae(f, player, tv[f], self.adv, self.clam), 0, 1)  # NaN off the agent seats
+                    if self.opp:
+                        for k in OPP:
+                            e[k] = z[k]
                     extra.append(e)
                 # collate keeps at most MAX_LEGAL rows per decision; a played row beyond them can't be scored
                 picks = [(gi, d) for gi, e in enumerate(extra) for d in range(len(e['adv']))
@@ -187,8 +215,11 @@ class RLStream(torch.utils.data.IterableDataset):
                     b['logp'] = np.array([extra[gi]['logp'][d] for gi, d in chunk], np.float32)
                     b['adv'] = np.array([extra[gi]['adv'][d] for gi, d in chunk], np.float32)
                     b['won'] = np.array([extra[gi]['won'][d] for gi, d in chunk], np.float32)
-                    if self.values is not None:
-                        b['ctarget'] = np.array([extra[gi]['ctarget'][d] for gi, d in chunk], np.float32)
+                    for c in range(len(self.targets)):
+                        b[f'ctarget{c}'] = np.array([extra[gi][f'ctarget{c}'][d] for gi, d in chunk], np.float32)
+                    if self.opp:
+                        for k in OPP:
+                            b[k] = np.stack([extra[gi][k][d] for gi, d in chunk])
                     yield b
 
 
@@ -228,6 +259,11 @@ def main():
     ap.add_argument('--critic_sample', type=float, default=0.25, help='share of each game\'s decisions per critic pass')
     ap.add_argument('--critic_epochs', type=int, default=2)
     ap.add_argument('--critic_files', type=int, default=64, help='games shuffled together in the critic\'s stream')
+    ap.add_argument('--pcritic', default=None, help='a privileged critic (model.PrivilegedCritic, or a Net to start one from): '
+                                                   'it also sees the opponent\'s view (games recorded with selfplay.py --privileged)')
+    ap.add_argument('--advantage', choices=['auto', 'pcritic', 'critic', 'head'], default='auto',
+                    help='whose estimates the advantages use (auto: the privileged critic, else the critic, else the policy\'s head)')
+    ap.add_argument('--turn_lambda', type=float, default=None, help='turn-clock credit: lambda 1 within a turn, this between turns')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -249,21 +285,30 @@ def main():
     list_dir = lambda d: [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.npz') and not f.endswith('.tmp.npz')]
     files = [f for d in args.rl_dirs.split(',') for f in list_dir(d)]
     adv, base, counts = game_targets(files, args.turn_cost)
-    critic = cvals = None
-    if args.critic:
+    critics = []  # dict(name, net, privileged, opt, vals, out, src)
+    for name, path, priv in (('critic', args.critic, False), ('pcritic', args.pcritic, True)):
+        if not path:
+            continue
         if args.baseline != 'value':
-            ap.error('--critic needs --baseline value')
-        kk = torch.load(args.critic, map_location='cpu')
-        critic = M.Net(**kk.get('config', cfg)).to(dev)
-        critic.load_state_dict(kk['model'])
-        copt = torch.optim.AdamW(critic.parameters(), lr=args.critic_lr, weight_decay=0.01, betas=(0.9, 0.95), fused=dev == 'cuda')
+            ap.error('--critic/--pcritic need --baseline value')
+        cnet, ccfg = M.load_critic(path, priv, dev)
+        c = dict(name=name, net=cnet, cfg=ccfg, privileged=priv, src=path,
+                 opt=torch.optim.AdamW(cnet.parameters(), lr=args.critic_lr, weight_decay=0.01, betas=(0.9, 0.95), fused=dev == 'cuda'))
         tc = time.time()
-        cvals = critic_values(critic, files, dev, args.workers)
-        v_rec = np.concatenate([np.load(f)['v_old'] for f in sorted(cvals)])
-        v_cri = np.concatenate([cvals[f] for f in sorted(cvals)])
-        print(f'critic {args.critic}: scored {len(v_cri)} decisions in {time.time() - tc:.0f} s; mean {v_cri.mean():.3f} '
+        c['vals'] = critic_values(cnet, files, dev, args.workers, priv)
+        v_rec = np.concatenate([np.load(f)['v_old'] for f in sorted(c['vals'])])
+        v_cri = np.concatenate([c['vals'][f] for f in sorted(c['vals'])])
+        print(f'{name} {path}: scored {len(v_cri)} decisions in {time.time() - tc:.0f} s; mean {v_cri.mean():.3f} '
               f'(policy head {v_rec.mean():.3f}), correlation with the policy head {np.corrcoef(v_rec, v_cri)[0, 1]:.3f}', flush=True)
-    values_of = (lambda f, z: cvals[f]) if critic is not None else (lambda f, z: z['v_old'])
+        critics.append(c)
+    by_name = {c['name']: c for c in critics}
+    use = args.advantage if args.advantage != 'auto' else ('pcritic' if 'pcritic' in by_name else 'critic' if 'critic' in by_name else 'head')
+    if use != 'head' and use not in by_name:
+        ap.error(f'--advantage {use} without that critic')
+    cvals = by_name[use]['vals'] if use != 'head' else None
+    print(f'advantages from: {use}' + (f', turn-clock credit (lambda 1 within a turn, {args.turn_lambda} between turns)'
+                                       if args.turn_lambda is not None else f', GAE lambda {args.gae_lambda}'), flush=True)
+    values_of = (lambda f, z: cvals[f]) if cvals is not None else (lambda f, z: z['v_old'])
     value_norm = None
     if args.baseline == 'value':
         res, gres = [], []
@@ -272,16 +317,16 @@ def main():
             for p, v in zip(z['player'], values_of(f, z)):
                 if (f, int(p)) in adv:
                     res.append(adv[(f, int(p))][2] - float(v))
-            if args.gae_lambda < 1:
-                g = gae(f, z['player'].astype(np.int64), values_of(f, z), adv, args.gae_lambda)
+            if args.gae_lambda < 1 or args.turn_lambda is not None:
+                g = gae(f, z['player'].astype(np.int64), values_of(f, z), adv, args.gae_lambda, z['globals'][:, G_TURN], args.turn_lambda)
                 gres.extend(g[~np.isnan(g)].tolist())
         value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
         print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
               f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w, _ in adv.values()]):.3f} per game)',
               flush=True)
-        if args.gae_lambda < 1:
+        if gres:
             value_norm = (float(np.mean(gres)), float(np.std(gres)) or 1.0)
-            print(f'GAE lambda {args.gae_lambda}: advantage mean {value_norm[0]:.3f}, sd {value_norm[1]:.3f}', flush=True)
+            print(f'credit per move: advantage mean {value_norm[0]:.3f}, sd {value_norm[1]:.3f}', flush=True)
     if args.turn_cost:
         wins = [r for _, w, r in adv.values() if w]
         print(f'turn cost {args.turn_cost}: {len(wins)} wins, mean reward of a win {np.mean(wins):.3f} '
@@ -291,45 +336,60 @@ def main():
           + ', '.join(f"{'self' if o < 0 else o}: {base[o]:.3f} over {counts[o]}" for o in sorted(base)), flush=True)
     steps_total = max(1, args.epochs * decisions // args.batch)
     rl = torch.utils.data.DataLoader(RLStream(files, adv, args.batch, args.window, args.epochs, args.seed, value_norm,
-                                              args.gae_lambda, values=cvals, clam=args.critic_lambda),
+                                              args.gae_lambda, values=cvals, turn_lam=args.turn_lambda),
                                      batch_size=None, num_workers=args.workers, pin_memory=dev == 'cuda', prefetch_factor=4)
-    c_iter = None
-    if critic is not None:
-        cfiles, cadv, cv_all = list(files), dict(adv), dict(cvals)
+    c_iter, c_total, c_every = None, 1, 1
+    if critics:
+        priv = any(c['privileged'] for c in critics)
+        has_opp = lambda f: all(k in np.load(f).files for k in OPP)
+        cfiles, cadv = list(files), dict(adv)
+        if priv and not all(has_opp(f) for f in files):
+            ap.error('--pcritic needs games recorded with selfplay.py --privileged')
         wfiles = [f for d in args.critic_window.split(',') if d and os.path.isdir(d) for f in list_dir(d)]
+        if priv:
+            wfiles = [f for f in wfiles if has_opp(f)]
         if wfiles:
             tc = time.time()
             cadv.update(game_targets(wfiles, args.turn_cost)[0])
-            cv_all.update(critic_values(critic, wfiles, dev, args.workers))
+            for c in critics:
+                c['vals'] = dict(c['vals'], **critic_values(c['net'], wfiles, dev, args.workers, c['privileged']))
             cfiles += wfiles
             print(f'critic window: {len(wfiles)} games from {args.critic_window}, scored in {time.time() - tc:.0f} s', flush=True)
         c_dec = sum(int(np.sum([(f, int(p)) in cadv for p in np.load(f)['player']])) for f in cfiles)
         c_total = max(1, int(args.critic_epochs * c_dec * args.critic_sample) // args.batch)
         c_every = max(1, steps_total // c_total)
-        print(f'critic: {len(cfiles)} games, {c_dec} decisions, ~{c_total} steps (one per {c_every} policy steps)', flush=True)
+        print(f'critics ({", ".join(c["name"] for c in critics)}): {len(cfiles)} games, {c_dec} decisions, ~{c_total} steps '
+              f'(one per {c_every} policy steps)', flush=True)
         c_iter = iter(torch.utils.data.DataLoader(
-            RLStream(cfiles, cadv, args.batch, args.critic_files, args.critic_epochs, args.seed + 11, values=cv_all,
-                     clam=args.critic_lambda, critic_only=True, sample=args.critic_sample),
+            RLStream(cfiles, cadv, args.batch, args.critic_files, args.critic_epochs, args.seed + 11, clam=args.critic_lambda,
+                     critic_only=True, sample=args.critic_sample, targets=[c['vals'] for c in critics], opp=priv),
             batch_size=None, num_workers=max(2, args.workers // 2), pin_memory=dev == 'cuda', prefetch_factor=2))
     c_step = 0
 
     def critic_step(b):
-        """One critic update on a batch with ctarget; returns (target loss, outcome loss, ownership loss)."""
+        """One update of every critic on a batch with their targets; returns {metric: value}."""
         lr = args.critic_lr * min(1, (c_step + 1) / 100) * 0.5 * (1 + math.cos(math.pi * min(1, c_step / c_total)))
-        for gr in copt.param_groups:
-            gr['lr'] = lr
-        with train_bc.autocast(dev):
-            _, cv, cown = critic(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
-        cv = cv.float()
-        closs = F.binary_cross_entropy_with_logits(cv, b['ctarget'])
-        cown_loss = F.cross_entropy(cown.float().reshape(-1, 3), b['own'].long().reshape(-1))
-        copt.zero_grad(set_to_none=True)
-        (closs + args.critic_own * cown_loss).backward()
-        torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-        copt.step()
-        with torch.no_grad():
-            cz = F.binary_cross_entropy_with_logits(cv, b['won'])
-        return closs.detach(), cz, cown_loss.detach()
+        out = {}
+        for ci, c in enumerate(critics):
+            for gr in c['opt'].param_groups:
+                gr['lr'] = lr
+            with train_bc.autocast(dev):
+                if c['privileged']:
+                    cv, cown = c['net'](b['tiles'], b['globals'], b['techs'], *(b[k] for k in OPP))
+                else:
+                    _, cv, cown = c['net'](b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
+            cv = cv.float()
+            closs = F.binary_cross_entropy_with_logits(cv, b[f'ctarget{ci}'])
+            cown_loss = F.cross_entropy(cown.float().reshape(-1, 3), b['own'].long().reshape(-1))
+            c['opt'].zero_grad(set_to_none=True)
+            (closs + args.critic_own * cown_loss).backward()
+            torch.nn.utils.clip_grad_norm_(c['net'].parameters(), 1.0)
+            c['opt'].step()
+            with torch.no_grad():
+                out[c['name']] = closs.detach()
+                out[c['name'] + '_z'] = F.binary_cross_entropy_with_logits(cv, b['won'])
+                out[c['name'] + '_own'] = cown_loss.detach()
+        return out
     bc_iter = None
     if args.bc:
         bc = torch.utils.data.DataLoader(train_bc.Stream(args.bc, args.batch, 24, args.seed + 7), batch_size=None,
@@ -380,7 +440,7 @@ def main():
                      kl=(b['logp'] - logp).mean(), anchor=anc)
         if c_iter is not None and step % c_every == 0:
             try:
-                m['critic'], m['critic_z'], m['critic_own'] = critic_step(train_bc.to_device(next(c_iter), dev))
+                m.update(critic_step(train_bc.to_device(next(c_iter), dev)))
                 c_step += 1
             except StopIteration:
                 c_iter = None
@@ -404,7 +464,7 @@ def main():
         for b in c_iter:
             out = critic_step(train_bc.to_device(b, dev))
             c_step += 1
-            for k, x in zip(('critic', 'critic_z', 'critic_own'), out):
+            for k, x in out.items():
                 acc[k] = acc.get(k, 0.0) + float(x)
             if (c_step - n0) % 50 == 0:
                 rec = dict(critic_step=c_step, of=c_total, s=round(time.time() - t0), **{k: round(x / 50, 4) for k, x in acc.items()})
@@ -413,9 +473,9 @@ def main():
                 log.write(json.dumps(rec) + '\n')
                 log.flush()
         print(f'critic: {c_step} steps ({c_step - n0} after the policy)', flush=True)
-    if critic is not None:
-        torch.save(dict(model=critic.state_dict(), config=kk.get('config', cfg), critic_from=args.critic),
-                   os.path.join(args.out_dir, 'critic.pt'))
+    for c in critics:  # critic.pt (fog), pcritic.pt (privileged)
+        torch.save(dict(model=c['net'].state_dict(), config=c['cfg'], critic_from=c['src'], privileged=c['privileged']),
+                   os.path.join(args.out_dir, c['name'] + '.pt'))
     print(f'done: {step} steps in {time.time() - t0:.0f} s', flush=True)
 
 

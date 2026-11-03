@@ -128,3 +128,48 @@ class Net(nn.Module):
         logits = torch.full(legal_mask.shape, float('-inf'), device=scores.device)
         logits[bi, ni] = scores
         return logits, self.value(hg).squeeze(-1).float(), self.owner(ht).float()
+
+
+class PrivilegedCritic(nn.Module):
+    """A critic for training only (research log S10; radical-ideas.md B1): the win estimate from the
+    player's own observation plus the opponent's own observation of the same moment (what each side's
+    client shows: together they hold the hidden units, both sides' stars and techs; tiles neither has
+    explored stay unknown). It never acts and never reaches the policy's inputs; only its estimates
+    enter the policy's advantages.
+
+    The two observations are embedded separately (the opponent's with its own embedding tables) and
+    summed per token before one trunk. The opponent embedding starts at zero, so a new privileged
+    critic starts as exactly the fog critic (`Net`) its weights come from."""
+
+    def __init__(self, d=256, layers=6, heads=8, width=14):
+        super().__init__()
+        self.net = Net(d, layers, heads, width)
+        self.opp = Net(d, 0, heads, width)  # only its embedding is used
+        for m in (self.opp.tile_cat, self.opp.tile_dense, self.opp.g_dense, *self.opp.g_cat):
+            for p in m.parameters():
+                nn.init.zeros_(p)
+        nn.init.zeros_(self.opp.pos)
+
+    def forward(self, tiles, glob, techs, opp_tiles, opp_glob, opp_techs):
+        """Value logit [B] and ownership logits [B, 196, 3], as Net's heads."""
+        x = self.net.embed(tiles, glob, techs) + self.opp.embed(opp_tiles, opp_glob, opp_techs)
+        h = self.net.norm(self.net.trunk(x))
+        return self.net.value(h[:, 0]).squeeze(-1).float(), self.net.owner(h[:, 1:]).float()
+
+
+def load_critic(path, privileged=False, device='cpu'):
+    """A critic checkpoint: a Net (fog critic, or a policy whose value head serves as one) or a
+    PrivilegedCritic (saved with privileged=True). With privileged=True a Net is wrapped into a new
+    PrivilegedCritic that starts from it."""
+    ck = torch.load(path, map_location='cpu')
+    cfg = ck.get('config', dict(d=256, layers=6))
+    if ck.get('privileged'):
+        c = PrivilegedCritic(**cfg)
+        c.load_state_dict(ck['model'])
+    elif privileged:
+        c = PrivilegedCritic(**cfg)
+        c.net.load_state_dict(ck['model'])
+    else:
+        c = Net(**cfg)
+        c.load_state_dict(ck['model'])
+    return c.to(device), cfg
