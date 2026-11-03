@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-10-30, night: S9 five tracks running; fog-safe state builder v1)
+# Handoff: Polytopia AI (2026-11-02, night: S10 running; the planner works; Crazy-based eval bot in progress)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -29,6 +29,28 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     `tools/setup_pc_games.sh`). No Steam is needed. It's bit-identical to the Mac (`py/parity_hosts.py`)
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
+
+## Now (2026-11-02, 21:15): S10 running; search works; an improved Crazy-based bot is being built
+
+- **S9 read** (research log, parts 1–4):
+  - No track beat the control by the 55% bar. The critic track was closest at 54.8%.
+  - Fresh exploiters gained nothing (47–53.5%).
+  - Engine-only throughput is 17k decisions/s against ~3.5k in self-play.
+  - The soup of the four finals reached 55%.
+  - **The planner works:** `turn_search.py --reply` (16 plans in fog-safe samples, scored after the
+    opponent's reply by the S9 critic) beat unplanned networks 82–94%.
+- **S10** (`tools/s10_setup.sh`, research log S10): `s10c` control, `s10p` privileged critic, `s10t`
+  turn-clock credit, from `s9v` gen 83; read at gen 95. Not yet built:
+  - `s10x` (search in the loop), to be pre-registered before it starts;
+  - the fresh human pass (~20M parameters, strategy conditioning, the Might Continents games).
+- **Evaluation bots:**
+  - `py/rulebot` (Normal–Hard level) is in the S10 evaluations every third generation, through
+    `py/script_eval.py`.
+  - An agent is building `py/crazyplus` (the built-in AI plus overrides and a combat search) to beat
+    Crazy. Switch the S10 `script_eval` to it once it's validated.
+- **Ben's decisions:** docs/design/README.md (2026-11-02 rows) and memory `project-constraints`.
+- **Docs:** `docs/design/evaluation.md` (evaluation brainstorm) and `docs/design/radical-ideas.md`
+  (research report: kevinz917's bot, ideas, top five).
 
 ## Now (2026-10-30, 23:00): S9 running; the determinized-state builder v1 is done
 
