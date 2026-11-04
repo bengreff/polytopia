@@ -1700,3 +1700,48 @@ playing well against a person.
   - Relaunched from `last.pt` (saved 03:21) with micro-batch 32 × accumulation 8 instead of 64 × 4:
     the same 256 samples per optimizer step, so the pre-registered training is unchanged. Also with
     `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+
+### S10 stall (2026-11-04): a GPU hang froze `s10x` for 17 hours
+- **What happened:** `s10x`'s gen 89 wrote its last game at 20:32 on 2026-11-03 (881 of 1,500) and
+  then made no progress until 13:08 the next day.
+  - Every process was alive. Each self-play shard's inference thread was stuck inside the CUDA graph
+    replay (`selfplay.py:199`, py-spy).
+  - The GPU reported 15.7 of 16 GB and 100% busy at 39 °C, i.e. not computing.
+- **Cause (measured):** with its processes killed the GPU held 1.0 GB, so s10x's 4 inference shards
+  had grown to ~14.7 GB together, ~3.7 GB each (1.9–2.4 GB at launch).
+  - `fast_infer` captures one CUDA graph per batch bucket, per legal-row bucket, per network: 10
+    networks in the pool, plus the planner's varied batch sizes. That is growth to a ceiling, not a
+    leak.
+  - Four of them, plus Ben's apps in the evening, oversubscribed the card.
+- **Fixes (2026-11-04, 13:10):**
+  - s10x runs 3 shards, not 4 (~11 GB at the ceiling); this changes throughput only.
+  - Its gen 89 restarted from scratch at 13:11.
+  - `tools/sp_watchdog.sh` now runs beside `tracks.sh`: when a track's self-play is running but no
+    game has been written for 45 minutes, it kills that self-play so `sp_loop` retries.
+- **Cost:** about 17 hours of the PC, and the S10 read moves at least that much later.
+
+### HP1 read (2026-11-04): arm A fails every pre-registered test
+All measured; tests ran on 2026-11-03, 10:00–10:38, on `~/runs/hp1a/s2/best.pt` (step 24,000).
+
+| Test | Arm A (22M, z) | R7 (5.9M) | Bar |
+|---|---|---|---|
+| T1, held-out human top-1 (150 games) | 40.8% with its own z (37.9% at 8k, 40.0% at 16k) | 43.7% | beat R7 |
+| T2, z steers play (vs Crazy, 100 games per z set) | follows 15–36% of the gap | — | ≥ 50% |
+| T3, head-to-head vs R7 (200 games) | 50/200 = 25% (CI 19.5–31.4%) | — | > 52% |
+| T4, vs Crazy at z = 0 (200 games) | 150/200 = 75% | 191/200 | ≥ R7 |
+
+- **T2 by fact** (agent's gap between two z sets, against the gap between their z values):
+  - techs by turn 20, fast − slow: +0.88 vs +5.87 (15%);
+  - techs by turn 10: +0.53 vs +1.47 (36%);
+  - catapult share, many − none: +0.064 vs +0.206 (31%);
+  - naval by turn 20, early port − no navy: +0.16 vs +0.99 (16%).
+  - z moves play in the right direction every time, but by a third or less.
+- **Falsifiers fired:** B5's (z followed for less than half the gap) and B6's (≤ 52% vs R7). Arm C
+  isn't run.
+- **Reading:** this is mostly a training-budget result, not a size or z result. Arm A had 36k steps
+  (12k on AI games, 24k on human games); R7's lineage had about 140k (R3's 100k on AI games, then
+  40k on human games). Its top-1 was still rising at the end (37.9 → 40.0 → 40.8%). The test as
+  registered says the size change doesn't pay at this budget, and nothing here separates size from
+  steps.
+- **Arm B** (Continents) still waits for a game login. Given this read, it isn't worth running as
+  planned.
