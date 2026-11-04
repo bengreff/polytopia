@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-04: S10 recovered, HP1 failed, WSP-1 running)
+# Handoff: Polytopia AI (2026-11-04 evening: S10 running, Ben playing the planner, research038 being confirmed)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -47,10 +47,21 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - **Weight-space programming, plan v2** (`docs/design/weight-space.md`):
   - the MIT post overstates its case (critique and replications);
   - what carries over is defect-fixing with forward passes.
-- **WSP-1** (research log WSP-1): an Opus agent audits `s9v` gen 83's fog critic for systematic
-  errors, edits the largest, and gates it with the planner. Then star banking, and an ExPO control.
-  - At most 5 game gates. Status: `runs/agents/wsp1_status.md`.
-  - The lead commits its work when it reports.
+- **WSP-1 results** (research log WSP-1):
+  - **Critic:** no robust error; the Part A falsifier fired. Float noise alone flips 7.2% of the
+    planner's choices, since the best two plans differ by a median of 0.0011.
+  - **ExPO 0.25:** 40.3% vs gen 83.
+  - **`research038`** (gen 83 with the Research command-type embedding moved +0.385 logit; 256
+    weights; `~/runs/wsp1/ckpt/research038.pt`): 220/400 = 55.0% (CI 50.1–59.8) vs the unedited
+    network. Its tuning check was 50/100.
+  - **Confirmation** (400 games, seeds 32,100,000+): `~/runs/wsp1/confirm038.sh`, started 17:46. It
+    waits for GPU headroom. Status: `~/runs/wsp1/gates/research038_confirm.status`.
+  - **Adopting it is Ben's call** after the confirmation.
+- **Playing Ben with the planner:** `SCORER=runs/sp/s9v/critic_g083.pt tools/play.sh runs/sp/s9v/gen083.pt`
+  (`py/plan_agent.py`, `agent_server.py --planner`, `build/polyhost-mac-play`).
+  - Running since 2026-11-04 16:55 for Ben's 3–5 games, on http://localhost:8123; log `runs/play_planner.log`.
+  - Games are recorded in `runs/games/play_2026-11-04/`.
+  - Ben always moves first in this app.
 - **CrazyPlus:** validated (Crazy 94%, Hard 98.5%, Normal 100% from a person seat). It's in S10's
   evaluations; about 780 MB of recorded games in `runs/crazyplus/` can be deleted.
 - **Waiting for Ben:** a game login (only needed if arm B or other downloads are wanted).
