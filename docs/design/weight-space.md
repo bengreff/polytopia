@@ -1,207 +1,147 @@
-# Weight-space programming for the agent (plan, 2026-11-02)
+# Weight-space programming for the agent (plan v2, 2026-11-04)
 
-**Verdict: worth a scoped try, but as a tool-driven loop of analysis and edits, measured in games.
-Reading our network's raw numbers is out.** Weight arithmetic (extrapolating along training's own
-direction, adding the S10 tracks' changes) is the cheapest and most likely to pay. Targeted edits of
-the habits no training run fixed are the real test of the MIT idea and may well fail. Writing new
-circuits by hand comes last. Ben's rule (2026-11-02, decision log) governs all of it: an edit goes
-into the agent only if it wins ≥ 55% against the unedited network over 400 games, and it is logged.
+**Verdict: the MIT post overstates what it shows, but a narrower, real version is worth one
+experiment here: find a specific defect in a trained network by measurement, fix it with a small
+hand-made edit, and prove the fix in games.** The defect to look for first is in the critic, the
+value network that scores the planner's candidate turns. The closest published case (a card-game DQN)
+gained about 4 points of win rate that way. Writing networks from scratch and reading our 5.9M
+weights directly are out.
 
-## 1. What the MIT work showed, and what it didn't
+This replaces v1 (2026-11-02), which repeated the post's framing too readily. v1 also led with weight
+arithmetic, which isn't weight-space programming, and its "low-rank change" finding is weak evidence
+(see section 3).
 
-Takehi, Teoh, Zhang and Khattab (MIT CSAIL), "Sparks of Weight-Space Programming: LLMs can natively
-read & write neural network weights", a blog post of 2026-11-02 with full logs on GitHub. It is not
-peer-reviewed. The model was GPT-6 Astra, with Codex's own tools switched off; in some experiments it
-could run Python in a sandbox, with a budget of forward passes. All numbers below are as reported.
+## 1. What the MIT post claimed, and what holds up
 
-| Experiment | Network | What the LLM had | Result |
-|---|---|---|---|
-| Read: which game? | MLP, 17,253 weights, PPO 1B steps on 10×10 grids | all weights as text, no tools | named the right game for all 4 |
-| Edit: fix a car policy | 171,664 weights | weights, scene, one recorded episode; no forward passes | 0/256 successes → 1,024/1,024, changing 3.5% of weights |
-| Write from scratch: MinAtar | ~19k weights, zero init | rules and source code; one reply, no tools | Breakout 517.4 vs PPO-500M's 25.3; Seaquest 53.1 vs 88.9; Asterix 53.2 vs 55.2 |
-| Write from scratch: 9×9 Go | 1,480,274 weights | Python sandbox, 0–50 forward passes (128 rollouts each) | at 50 passes, 74.2 / 70.0 / 78.5% over 3 seeds vs PPO baselines trained on ~20M games |
-| Edit: Qwen3.5-0.8B math | 131,072 weights (0.016%) in layers 15 and 19 | sandbox, 50 forward-pass requests, 158 turns, 20.3 h | MATH-500 7.9 → 48.1%, GSM8K 13.8 → 67.1%, IFEval 21.0 → 62.3% |
+Takehi, Teoh, Zhang and Khattab (MIT CSAIL), "Sparks of Weight-Space Programming", a blog post of
+2026-11-02 with logs. It is not peer-reviewed. All numbers here are as reported by the sources.
 
-- **The Qwen edit** removed one "repetition direction" u from 64 output columns of two MLP layers:
-  W ← W − 6·u(uᵀW) on those columns. Responses hitting the 32,768-token cap fell from 93.0% to 33.1%.
-  It's the same move as subtracting a steering vector, made permanent in the weights.
-- **Failures:**
-  - Gemma 3 270M didn't improve (6.8% → 7.0–7.7%): its errors were ordinary arithmetic and algebra
-    slips, with no single component behind them.
-  - Telling a sycophantic model from an honest one by its weights failed until the authors supplied
-    attention measurements.
-- **The authors' rule:** an edit can remove an obstacle that hides an ability; it can't add an
-  ability the model lacks. The forward-pass budget mattered: Qwen's gain came at 50 passes, not 10.
-- **Weak spots:** earlier prompt trials aren't in the logs (selection effects); it's unshown that
-  gains compound with further training; the "20×" chart Ben saw is a third-party replication.
-
-Prior art that points the same way (all on small networks):
-- the "cheese vector": subtracting one activation difference from a maze-solving RL policy makes it
-  ignore the goal (Mini et al. 2023);
-- ExPO: extrapolating from the start checkpoint through the trained one improves aligned LLMs from 7B
-  to 70B (Zheng et al. 2024);
-- task arithmetic and model soups. Our four-track soup already reached 55% against the control
-  (S9 read).
-
-## 2. What carries over to our network
-
-**Our network** (`py/model.py`, measured: 5,917,069 parameters):
-- a 6-layer transformer, width 256, over 197 tokens (the global token and the 196 tiles);
-- a pointer head that scores each legal command: its type-and-argument embedding (`cmd_emb`), plus
-  projections of its source and target tiles and the global token, through a small MLP (`cmd_out`);
-- a value head on the global token.
-
-It is 4× the Go network and 340× the 17k-weight ones.
-
-**Reading the raw numbers is out.** 5.9M numbers as text is tens of millions of tokens. The mode that
-scaled in the MIT work is the Go/Qwen one: a Python sandbox, tensor summaries and forward passes on
-chosen inputs. Here that means diffs, SVDs, probes, activation contrasts and per-command score tables,
-with game batches as the "forward-pass budget".
-
-**Measured tonight: where self-play changed the network** (s9v gen 0 = R7 → gen 83, PC, CPU):
-
-| Tensor | Change ‖ΔW‖/‖W‖ | Share of ΔW in its top 1 / top 8 directions |
+| Claim | What it really was | Holds up? |
 |---|---|---|
-| Whole network | 12.2% | — |
-| Value head, first layer | 42.7% | 46% / 90% |
-| Last trunk layer, MLP output (`layers.5.linear2`) | 27.2% | 40% / 74% |
-| Pointer head MLP (`cmd_out.1`) | 26.2% | 20% / 63% |
-| Early trunk layers (0–2), each matrix | 25–31% | 8–29% / 33–52% |
+| An LLM reads what a network computes from its raw weights | Tiny MLPs only: 17,253 and 171,664 weights. Named the game in 4 of 4 | **Yes, reproduced.** The Turing Institute replication: Astra 12/12, Opus 5.5 12/12; both fall to chance on shuffled weights. Models before mid-2026 fail |
+| It fixed a car policy by editing weights | 171,664 weights, no forward passes: 0/256 → 1,024/1,024 successes | Not independently re-run that I found |
+| It writes game networks from scratch that beat PPO | ~19k-weight MLPs. Breakout 517 vs PPO-500M's 25.3, but it **lost** on Seaquest (53 vs 89) and Asterix (53 vs 55). PPO on MinAtar is a weak baseline | **Partly.** Turing replication: Astra 457 / 25.5 / 66.2, **Opus 5.5 112 / 0 / 45.1**. Breakout has a simple program (track the ball) |
+| It wrote a 1.5M-weight 9×9 Go network | Python sandbox and 0–50 batches of forward passes; the opponents were small 243→32→32→82 MLPs | A low bar (the critique) |
+| It raised Qwen3.5-0.8B's MATH-500 from 7.9% to 48.1% by editing 0.016% of weights | **A loop fix**: 93% of answers hit the 32,768-token cap. It removed one "repetition direction" from two MLP layers (activation steering made permanent), with Python and 50 forward-pass batches | **The edit is real** (a rerun gave 51.0%), but the authors confirm the model already had the ability. On Gemma 3 270M, which rarely loops, it gained nothing |
 
-- Reading: self-play's change is **low-rank at the output end** (a few directions in the value head
-  and the last layer) and diffuse in the early layers. That is the structure the Qwen edit relied on.
-- So the late layers are the place to look first, for both extrapolation and direction-level edits.
-  The early layers are left alone.
+The critique (Honnibal, "The 'Astra can read and write weights to improve Qwen' post is misleading")
+makes three points, and I agree with them:
+- "Every experiment involving a real language model uses Python." The headline results are an LLM
+  doing an ML engineer's job (probe, find a direction, edit, test), not reading weights natively.
+- The baselines flatter the writing results.
+- What is real is still new: "AI models of a year or two ago would have failed at all these tasks."
 
-**The obstacles to target** (gen 83's training games, research-log S9 read, against human
-championship games):
+**The closest case to ours:** Claude Opus edited a trained DQN champion for a golf card game
+(vgainullin/golf, experiment 16).
+- **Method:** self-consistency checks with forward-pass budgets and fixed random deals found two
+  systematic valuation errors.
+- **Result** (24,000 held-out matches): win rate 38.9% → 42.8% with 1 weight changed, 43.2% with
+  22,876 changed.
+- A second round added almost nothing (42.9%).
+- So: modest, real gains from fixing how a value network misjudges positions, then diminishing
+  returns.
 
-| Indicator | Gen 83 | Humans |
-|---|---|---|
-| Techs by turn 20 | 6.6–7.2 | 9.2 |
-| Stars banked | 5.6–6.5 | 3.1 |
-| Catapults (share of units) | 16–20% | 5% |
+## 2. What that means for us
 
-- Plus the M4 weak matchups: Oumaji vs Vengir and vs Xin-xi, and Xin-xi vs Vengir.
-- No S9 track moved these gaps. Whether any of them is localized (one direction, or a few command
-  embeddings) is unknown. That is the first thing to measure.
+**What carries over:**
+- **The method:** measure the network's behaviour on chosen inputs, find a localized error, patch it
+  in closed form, check it on held-out data. That is interpretability-guided editing, with games as
+  the test budget.
+- **The targets:** defects (obstacles), not missing abilities. Gemma's failure and the golf round 2
+  both say an edit can't add skill.
 
-## 3. The plan
+**What doesn't:**
+- **Reading our network directly.** It has 5.9M weights in a 6-layer transformer, 34× the largest
+  network read raw. All reading here goes through forward passes and probes.
+- **Writing from scratch.** Opus 5.5, which would do the work, writes much worse networks than Astra
+  even at 20k weights.
 
-**Phase 0: kit and diagnosis (read-only, about half a day of agent time, light compute).**
-- A kit, `py/wsp/`:
-  - `diff`: per-tensor change and SVD, as above, for any two checkpoints;
-  - `probe`: activations of every layer's global token and of each chosen command's z (the vector
-    `cmd_out` scores), on ~20k held-out positions from self-play and human games, labelled with the
-    indicators (`py/indicators.py`);
-  - `prior`: each command's score by type and argument on real positions: gen 0, gen 83, and the human
-    frequency;
-  - `direction`: difference of means or a linear probe between contrast sets (the cheese-vector and
-    Qwen recipe);
-  - `edit`: applies a JSON edit spec and writes a checkpoint plus a manifest (hash, edits, weights
-    touched);
-  - `gate`: the measurement below.
-- **Questions:**
-  1. Is each habit linearly readable (probe accuracy) and steerable? I.e. does removing one direction
-     move the habit while the policy elsewhere changes little (KL)?
-  2. What do the top change directions of `layers.5.linear2` and the value head do: which positions
-     and commands do they move?
-- **Output:** a diagnosis section in this doc.
-- **Kill phase 2 if** no habit has a direction whose removal closes half its gap to humans at
-  KL < 0.05 (a guess, to be set from the data) on unrelated positions.
+**Why the critic first:**
+- The planner is our largest measured gain: 82–94% against unplanned networks (S9 read). It ranks 16
+  candidate turns by the critic's estimate after the opponent's reply.
+- A systematic critic error (e.g. valuing banked stars too highly, or tech too little) biases every
+  planned turn the same way. Through s10x it also biases training.
+- The habits that no training run fixed are the natural suspects:
 
-**Phase 1: weight arithmetic (no judgement in the weights; at the S10 read).**
-- **1a. Extrapolation (ExPO):** θ = θ₈₃ + α(θ₈₃ − θ₀) for α in {0.1, 0.25, 0.5}. Also a restricted
-  version that extrapolates only the top change directions of the late layers.
-- **1b. Track arithmetic at the S10 read:** gen 83 plus a scaled sum of the tracks' changes
-  (gen 95 − gen 83 for `s10p`, `s10t`, `s10x`). Compare it with the plain soup.
-- Cheap: an offline screen drops broken candidates before any games.
+  | Indicator (gen 83) | Agent | Humans |
+  |---|---|---|
+  | Stars banked | 5.6–6.5 | 3.1 |
+  | Techs by turn 20 | 6.6–7.2 | 9.2 |
+  | Catapults (share of units) | 16–20% | 5% |
 
-**Phase 2: targeted habit edits (the real test of the idea).**
-- One habit at a time, in this order:
-  1. star banking (my guess at the most localized: End Turn's score against the stars feature);
-  2. catapult share;
-  3. research tempo;
-  4. the weak tribe cells (tribe embedding rows in the global token).
-- **Method:**
-  1. Build contrast sets, e.g. turns ended with ≥ 5 stars and a useful buy available, against turns
-     that spent.
-  2. Find the direction u at the layer where the probe peaks.
-  3. Make a permanent rank-1 edit of that layer's output weights, W ← W − α·u(uᵀW), as in the Qwen
-     edit. For a command prior, shift that command's embedding row instead.
-  4. Sweep α offline by its KL budget, then check the indicators on 200 self-play games, then gate.
-- **The trap:** a habit that's bad against humans may be right against self-play, and the 55% bar is
-  a self-play bar.
-  - So every candidate also reports its results against crazyplus, from human positions and against
-    gen 0.
-  - An edit that fixes a habit but only draws head-to-head (45–55%) fails Ben's bar for the agent. It
-    could still be offered for his games: his call.
+- Critic errors are cheap to find with forward passes alone:
+  - calibration by phase, tribe, stars and fog;
+  - consistency across a turn: the estimate at the start of our turn against the one after the reply;
+  - counterfactuals: change the stars, techs or units in an observation and see how the estimate
+    moves, against what those changes are worth in real outcomes.
 
-**Phase 3: critic edits for the planner.**
-- The planner's +30 points rest on the fog critic ranking plans correctly.
-- A global recalibration of the value logit doesn't change which plan wins a turn. So edits here
-  target ranking: error analysis by game phase and fog, then the critic's low-rank change directions.
-- **Measures:**
-  1. pairwise ordering of positions against outcomes on held-out games;
-  2. held-out log loss;
-  3. the planner's win rate.
+**The policy's habits come second.** Unlike critic errors, they may be correct against self-play
+opponents while losing to humans. That is the trap in a self-play bar.
 
-**Phase 4 (not now): writing circuits by hand.**
-- For example, exact one-hit-kill detection from the verified damage formula, written into an
-  attention head.
-- The Go result says writing at 1.5M weights is possible. But it is the furthest from learned
-  judgement.
-- Only if phases 1–2 show that edits survive RL.
+## 3. What v1 got wrong
 
-## 4. Measurement (the gate)
+- **Weight arithmetic isn't weight-space programming.** Extrapolating along training's direction
+  (ExPO) or summing the S10 tracks' changes may still help (the S9 soup reached 55%). But it is a
+  cheap side test, with no judgement in it.
+- **The gen 0 → 83 diff is weak evidence.** I measured that self-play's change is concentrated in a
+  few directions in the value head (46% in the top one) and the last layer (40%). Fine-tuning updates
+  are low-rank in general (the reason LoRA works), so this says little about where defects live.
 
-1. **Offline screen:**
-   - KL to the unedited network on 5k held-out positions;
-   - human top-1 (R7 43.7%);
-   - value log loss on held-out games.
-   - Drop anything over a KL limit set in phase 0, or losing > 1 point of human top-1.
-2. **Indicators** on 200 self-play games.
-3. **Games:**
-   - 400 against the unedited network: paired seeds, sides swapped, planner off;
-   - 200 against gen 0;
-   - 100 against crazyplus (once validated);
-   - 200 from human positions.
-   - **Bar:** ≥ 55% against the unedited network (Ben). Proposed in addition: no drop of more than
-     3 points on the others.
-4. **Hygiene:**
-   - tune on one seed block and confirm on a fresh one, as crazyplus does;
-   - count every gate run as part of the budget;
-   - log every edit tried, failures included, in the research log, since selection effects were the
-     MIT post's weak spot.
-5. **Survival:** an accepted edit becomes the base of a 2-generation RL continuation. Does the habit
-   stay fixed and the gain hold? The MIT post didn't test compounding.
+## 4. The experiment: WSP-1 (pre-registered in the research log)
 
-## 5. Who, where, when, cost
+One Opus agent acts as the weight-space programmer, as in the MIT and golf setups: a Python sandbox on
+the PC, a declared budget of forward passes and games, and every edit logged.
 
-- **Who:** one Opus agent, or the lead, once tonight's builds (s10x, the human pass, crazyplus) are
-  done. No swarm.
-- **Where:**
-  - phase 0 on the PC's CPU or the Mac's GPU at night (a 5.9M network and 20k positions are light);
-  - gates on the PC beside S10, at 8 game processes.
-- **When (guessed):**
-  - phase 0 from tomorrow night;
-  - phase 1 at the S10 read (gen 95, about 1.5 days out);
-  - phase 2 after that.
-- **Cost (guessed):**
-  - phase 0, 4–6 agent hours;
-  - about 1 PC-hour per gated candidate;
-  - 3–6 candidates per phase.
+**Base:** `s9v` gen 83 with its fog critic `critic_g083.pt`. That is S10's base, and it has the
+measured planner results.
+
+**Part A: the critic.**
+1. **Audit, offline:** on held-out self-play and human positions, run
+   - calibration by phase, tribe, stars and fog;
+   - the within-turn consistency check;
+   - counterfactual probes on stars, techs and unit kinds.
+2. **Rank the errors** by size and by how often the planner's choice depends on them (positions where
+   the edited and unedited critic pick different plans).
+3. **Edit:** a closed-form fix of the largest error, e.g. a bias or a direction in the critic's input
+   or value head, the golf and Qwen kinds of edit. Screen it offline: held-out log loss must not get
+   worse.
+4. **Gate:** the planner with the edited critic against the planner with the original, on paired
+   seeds, sides swapped. The budget and settings are fixed before it runs.
+
+**Part B: one policy habit.** Star banking, with the same audit, edit and gate. The bar is Ben's:
+≥ 55% vs the unedited network over 400 games, plus no drop against gen 0 and CrazyPlus.
+
+**Control:** one ExPO extrapolation (α = 0.25) through the same raw gate. It is the "no judgement"
+weight change, to compare the edits with.
+
+**Hygiene:**
+- Tune on one seed block and gate on a fresh one.
+- At most 5 game gates in total.
+- Every edit tried goes in the log, failures included.
+
+**Expected (guessed):** a critic error of a few points of calibration in banking- or tech-heavy
+positions, and a +2–5-point planner gain from fixing it. That is below Ben's 55% bar, so the result
+will most likely be reported, not adopted.
+
+**Kill if:**
+- the audit finds no systematic error that changes the planner's choice on ≥ 5% of searched turns; or
+- no gate reaches 52%.
 
 ## Sources
 
 - Takehi, Teoh, Zhang, Khattab, [Sparks of Weight-Space Programming](https://rikiyat.github.io/blog/weight-space-programming/) (blog, 2026-11-02);
   logs: [RikiyaT/lm_understand-logs](https://github.com/RikiyaT/lm_understand-logs).
-- [VentureBeat summary](https://venturebeat.com/technology/like-gene-editing-for-neural-networks-mit-researchers-used-gpt-6-astra-to-edit-qwens-open-weights-directly-boosting-math-performance);
-  [kingy.ai summary](https://kingy.ai/blog/weight-space-programming-ai-agent-model-weights/) (the
-  Qwen edit's formula).
-- [weight-surgery](https://github.com/lorenzofamiglini/weight-surgery): an open agent skill after the
-  post (read weights, find a direction, closed-form edit, paired bootstrap on held-out data).
-- Mini et al. 2023, [Understanding and Controlling a Maze-Solving Policy Network](https://arxiv.org/abs/2310.08043)
-  (the cheese vector).
-- Zheng et al. 2024, [Weak-to-Strong Extrapolation Expedites Alignment](https://arxiv.org/abs/2404.16792) (ExPO).
-- The weight diff: `py/wsp/diff.py` (run on the PC with `s9v/gen000.pt s9v/gen083.pt`).
+- Honnibal, [The 'Astra can read and write weights to improve Qwen' post is misleading](https://honnibal.dev/blog/astra-read-write-misleading);
+  [Hacker News thread](https://news.ycombinator.com/item?id=50341174).
+- Replications:
+  - [alan-turing-institute/weights_editing](https://github.com/alan-turing-institute/weights_editing)
+    (Astra, Opus 5.5 and older models; shuffled-weight controls);
+  - [nihilistau/weight-space-claude](https://github.com/nihilistau/weight-space-claude);
+  - [Krentsel's reproduction](https://officechai.com/ai/ability-for-weight-space-programming-has-appeared-only-in-latest-models-says-google-researcher-alex-krentsel-who-reproduced-results/);
+  - [the authors' clarification of the loop fix](https://huggingnews.com/ai/replication-confirms-mit-weight-editing-study-as-authors-clarify-loop-fi-cd8a8f15).
+- The game-agent case: [vgainullin/golf, experiment 16](https://github.com/vgainullin/golf/pull/24).
+- Method kit: [lorenzofamiglini/weight-surgery](https://github.com/lorenzofamiglini/weight-surgery).
+- Earlier steering and extrapolation work:
+  - Mini et al. 2023, [Understanding and Controlling a Maze-Solving Policy Network](https://arxiv.org/abs/2310.08043);
+  - Zheng et al. 2024, [ExPO](https://arxiv.org/abs/2404.16792).
+- The v1 weight diff: `py/wsp/diff.py`.

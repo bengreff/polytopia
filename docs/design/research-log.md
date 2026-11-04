@@ -1745,3 +1745,36 @@ All measured; tests ran on 2026-11-03, 10:00–10:38, on `~/runs/hp1a/s2/best.pt
   steps.
 - **Arm B** (Continents) still waits for a game login. Given this read, it isn't worth running as
   planned.
+
+## WSP-1 — weight-space programming: fix the critic's systematic errors (pre-registered 2026-11-04, 13:40)
+- **Ben (2026-11-04):** "Weight space was somewhat misleading, do more research, it could still be a
+  decent path to try." Plan v2: `docs/design/weight-space.md`. His bar (2026-11-02): an edit goes
+  into the agent only at ≥ 55% vs the unedited network over 400 games, logged.
+- **Hypothesis:** the fog critic that scores the planner's turns has systematic errors (e.g. in how it
+  values banked stars, techs or unit kinds). A small closed-form edit fixing the largest one makes the
+  planner play better, as fixing two valuation errors did for a card-game DQN (38.9% → 42.8% win
+  rate, vgainullin/golf).
+- **Base:** `s9v` gen 83 and `critic_g083.pt` (S10's base, with the S9 planner results).
+- **Who:** one Opus agent as the weight-space programmer, in a Python sandbox on the PC. Every forward
+  pass batch and game gate counts against a declared budget.
+- **Part A, the critic:**
+  1. Offline audit on held-out positions (self-play games not used in training, and the 150
+     held-out human games):
+     - calibration by phase, tribe, stars and fog;
+     - consistency across a turn (our turn's start vs after the reply);
+     - counterfactual probes (stars, techs, unit kinds).
+  2. Rank the errors by size and by how often fixing them changes the planner's chosen plan.
+  3. A closed-form edit of the largest one. Offline screen: held-out log loss must not get worse.
+  4. Gate: the planner with the edited critic vs the planner with the original. Paired seeds from a
+     fresh block, sides swapped. Settings and game count are fixed in an addendum before it runs.
+- **Part B, one policy habit:** star banking, with the same audit, edit and gate. The gate is 400 raw
+  games vs the unedited network, plus 200 vs gen 0 and 100 vs CrazyPlus.
+- **Control:** ExPO, θ₈₃ + 0.25 (θ₈₃ − θ₀), through Part B's raw gate.
+- **Budget:** at most 5 game gates. Tune on seeds from 30,000,000; gate on seeds from 31,000,000.
+  Every edit tried is logged here, failures included.
+- **Expected (guessed):** a few points of critic miscalibration in banking- or tech-heavy positions;
+  a +2–5-point planner gain from the edit, i.e. 52–55% head-to-head. Below Ben's 55% bar, so most
+  likely reported rather than adopted.
+- **Falsifiers:**
+  - no systematic critic error that changes the planner's choice on ≥ 5% of searched turns;
+  - or no gate ≥ 52%.
