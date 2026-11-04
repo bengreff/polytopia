@@ -1778,3 +1778,178 @@ All measured; tests ran on 2026-11-03, 10:00–10:38, on `~/runs/hp1a/s2/best.pt
 - **Falsifiers:**
   - no systematic critic error that changes the planner's choice on ≥ 5% of searched turns;
   - or no gate ≥ 52%.
+
+### WSP-1 addendum: gate settings (2026-11-04, 14:15, before any gate)
+- **Gate A, the critic edit (planner against planner):**
+  - `turn_search.py --reply` with a new option, `--b_scorer`: side B plans too (defaults unchanged).
+    Both sides are `s9v` gen 83 with the S9 planner (16 plans, 2 fog-safe samples, T 0.5, replies
+    by gen 83 greedy). Side A scores with the edited critic, side B with `critic_g083.pt`.
+  - Seeds 31,000,000–31,000,199, each played twice with the seats swapped: **400 games**. Procs 4,
+    `--no_graphs` (less GPU memory; the same numbers).
+  - Result: A's win share with its Wilson 95% interval; also per seed pair (A wins both, split, B
+    wins both).
+  - Why this design: it is the direct comparison. The other option, both planners against raw
+    `s9c` gen 83 on the same seeds, costs the same (two one-sided planner games per seed against one
+    two-sided) and has about the same power at its ~85% win rates (derived: effect over standard
+    error ~1.1 for both, for a ~+20 Elo change), with a ceiling. 400 games give a ±4.9-point
+    interval: 80% power only for a +7-point effect (derived). The pre-registered expectation
+    (+2–5 points) is below that, so this gate can show a large gain or rule one out, not prove a
+    small one.
+- **Raw gate, used by Part B's edit and by the ExPO control** (`selfplay.py --match`, greedy both
+  sides; `script_eval.py --bot crazyplus` for CrazyPlus; procs 4):
+  - vs unedited `s9v` gen 83: seeds 31,100,000–31,100,199, **400 games**;
+  - vs gen 0 (`s9v/gen000.pt`): seeds 31,200,000–31,200,099, **200 games**;
+  - vs CrazyPlus: seeds 31,300,000–31,300,049, **100 games**.
+  - The unedited gen 83 plays the same gen-0 and CrazyPlus seeds once, as the baseline for both.
+    "No drop" means the edited network's win share is not below the baseline's with a paired 95%
+    interval (per seed and seat) that excludes 0.
+  - Adoption bar (Ben's): ≥ 55% vs the unedited network over the 400 games.
+- **Budget:** these are 3 of the 5 gates; 2 are spare. Tuning games, if any, use seeds from
+  30,000,000. Each edit's exact spec goes in the results section before its gate runs.
+- **Tuning data so far** (seeds 30,000,000–30,000,099, not gate games): 59 planner games
+  (planner vs raw gen 83) with every planned turn's lanes dumped (`turn_search.py --dump`).
+
+### WSP-1 results (2026-11-04)
+All numbers measured unless marked. Code: `py/wsp/` (positions, audit, probes, rescore, critic_edit,
+policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/--dump/--no_graphs`
+(defaults unchanged). PC files: `~/runs/wsp1` (checkpoints in `ckpt/`, each with a `.json` manifest).
+
+**Part A, the critic: falsifier 1 fires, and no gate was run.**
+- **Held-out data:** `s10c/games/g084`, gen 83's own 1,500 games at T 0.5 (not in `s9v`'s training):
+  62,829 turn starts. Plus the 150 held-out human games: 4,745 turn starts.
+- **Calibration:**
+  - Log loss at turn starts 0.383 (the policy's own head: 0.661); human games 0.502.
+  - Mean outcome − estimate −0.004 (SE 0.004). No phase, stars, fog or tribe group is off by more
+    than 2.5 SE, apart from two:
+    - self-play games (both seats recorded) are 1.5 points optimistic, a constant;
+    - the 0.7–0.9 band is 4.5 points optimistic.
+  - Calibration slope 0.87 (SE 0.05; humans 0.91, SE 0.12): the critic is overconfident.
+- **Consistency across a turn:** the mean change from turn start to the next turn start is +0.0004;
+  from turn end to after the reply it is −0.0041. Regressed on facts, the drift on stars is −0.00056
+  logit per star per turn (z −3.5).
+- **Outcome residuals** (critic logit as offset, SEs clustered by game):
+  - stars −0.0078 logit per star (SE 0.0027) with the other facts as covariates;
+  - units n.s.; techs n.s. apart from Forestry −0.29 (z −3.3; 1 of 20 techs tested);
+  - human games: stars +0.0054 (SE 0.0025), the opposite sign.
+- **Counterfactual probes** (3,000 self-play turn starts):
+  - +1 star moves the logit +0.024.
+  - Techs given free:
+    - military unlocks are valued +0.3 to +0.58 (Chivalry, Mathematics, Navigation, Forestry,
+      Smithery);
+    - economy techs are valued below their star cost;
+    - four are valued below zero: Riding −0.10, Spiritualism −0.07, Whaling −0.03, Shields −0.03.
+  - A Catapult is valued like a Giant (Catapult → Giant −0.007 logit on human positions) and far
+    above a Knight of the same cost.
+- **Ranking by the planner's choice:** 1,823 planned turns from 59 tuning games (planner vs raw
+  gen 83, seeds 30,000,000+), every lane re-scored offline (`rescore.py`).
+  - **Noise floor:** the CPU critic picks a different lane than the GPU run did on 7.2% of turns.
+    The median gap between the best and second-best lane is 0.0011.
+
+  | Correction (added to the critic's logit) | Holds up out of sample? | Planner choices changed |
+  |---|---|---|
+  | logit × 0.87 (overconfidence) | yes: better log loss on both halves (n.s.) | 0 / 1,823 |
+  | stars −0.0078 per star | no | 14.0% (the new lane banks ~11 fewer stars) |
+  | stars −0.005 per star | no | 10.8% |
+  | income +0.013 | no | 1.9% |
+  | free Riding raised to 0 / +0.25 | n.s. (residual +0.15, SE 0.15) | 0.8% / 3.1% |
+  | the four techs valued below zero raised to 0 | — | 1.0% |
+  | Forestry −0.29 | human sign opposite | 2.6% |
+
+- **Split-half check:** fitted on even-numbered games and tested on odd ones (and the reverse, and
+  on the human games), no fact-specific correction improves held-out log loss on both sides. That
+  covers stars alone, stars + income, all facts, star bins, and stars by phase. Only the logit scale
+  (0.83–0.90) improves both halves.
+- **Edit tried, `ckpt/critic_stardir2.pt` (failed the screen):** the star correction fitted on the
+  tuning half: c = −0.0055 logit per star, intercept +0.049.
+  - **Form:** no value-head hidden unit is active on most positions (every unit's 10th-percentile
+    pre-activation is below −0.69), so there is no linear path to shift. The edit repurposes the head's
+    least-used unit, #208, whose contribution varies by 1.5e-8 logit:
+    - input row c · u, where u is a ridge probe of stars from the final global token (R² 0.95
+      tuning, 0.85 held out);
+    - bias 40, which keeps GELU linear on it; output weight 1; `value.2.bias` adjusted.
+  - **Weights touched:** one row of `value.0.weight` (256 values), `value.0.bias[208]`,
+    `value.2.weight[0, 208]`, `value.2.bias`.
+  - **Realized:** −0.0050 logit per star (R² 0.85 held out); the +1 star probe goes from 0.024 to
+    0.018.
+  - **Screen** (real forward passes on every position):
+    - held-out half: log loss 0.3734 → 0.3744 (+0.0010, SE 0.0009);
+    - human games: 0.5019 → 0.5054 (+0.0034, SE 0.0016).
+    - It fails "must not get worse", so it was not gated.
+- **Reading:**
+  - The one error that moves ≥ 5% of the planner's choices (stars) doesn't hold up out of sample.
+    The one that holds up (overconfidence) moves none. So falsifier 1 fires.
+  - The critic is well calibrated on its own games. Its odd counterfactual valuations (free techs,
+    catapults) don't show up as outcome errors at a measurable size.
+- **Not tried:** the optimizer's curse (the planner picking the lane whose estimate is most
+  inflated). Lanes have no outcomes; measuring it needs a one-turn rollout of every lane (about
+  twice the planner's cost).
+
+**ExPO control** (θ₈₃ + 0.25 (θ₈₃ − θ₀), |Δθ|/|θ| 0.034, `ckpt/expo025.pt`), through the raw gate:
+- **vs unedited gen 83:** 161/400 = 40.3% (CI 35.6–45.1%).
+- **vs gen 0:** 115/200 = 57.5%, against the unedited network's 166/200 = 83.0% on the same games:
+  −25.5 points (paired CI −32.3 to −18.7).
+- **vs CrazyPlus:** 88/100, against the unedited network's 99/100.
+- **It fails every test:** extrapolating along training's direction hurts.
+
+**Part B, star banking: the audit moved the target from End Turn to Research.**
+- **End Turn:** gen 83 rates ending the turn *lower* than humans do at the same positions. The best
+  End Turn shift is +1.0 logit (humans end the turn at 8.4% of decisions, the policy predicts 5.8%),
+  at every star level. Gen 0 is calibrated (+0.05). So banking does not come from ending turns too
+  eagerly.
+- **By command group** (`policy_types.py`; one logit shift per group, Move fixed at 0; 9,335 held-out
+  human decisions):
+  - End Turn +0.94, Research +0.34 (+0.38 with ≥ 6 stars), Capture +0.37, Attack +0.29;
+  - Build −0.18, Train −0.10;
+  - gen 0: every group within ±0.2.
+  - The miscalibration that goes with banking is Research. With ≥ 6 stars the policy researches at
+    3.3% of decisions where humans do at 4.3%.
+- **Edit, `ckpt/research038.pt`:**
+  - **Form:** `cmd_type.weight` row 8 (Research; it reaches Research rows only) moved by 0.57 along
+    the unit mean gradient of the Research logits. That is 4.7% of the row's norm, 12.0 (derived).
+  - **Fit:** the secant search hit a mean +0.385 logit change on the Research group (SD 0.048,
+    5–95% 0.32–0.45), over 1,157 held-out human decisions. Target +0.38, from the ≥ 6 stars fit.
+  - **Weights touched:** 256 values.
+  - **Offline:** on the same human decisions the Research shift left over is −0.04, from +0.34.
+  - **Tuning check** (100 games vs unedited, seeds 30,100,000+): result below.
+  - **Gate:** the raw gate of the 14:15 addendum, gate 2 of 5.
+- **Part B tuning check (17:10):** `research038` vs unedited gen 83, 100 games, seeds 30,100,000+:
+  50/100 (CI 40–60%), 1 capped. Nothing broke; the gate runs as specified.
+- **Part B gate (`research038`, seeds 31,000,000+ as in the 14:15 addendum; gate 2 of 5):**
+
+  | Opponent | `research038` | Unedited gen 83, same games | Paired difference |
+  |---|---|---|---|
+  | unedited gen 83, 400 games | **220/400 = 55.0%** (CI 50.1–59.8%), 6 capped | — | — |
+  | gen 0, 200 games | 159/200 = 79.5% | 166/200 = 83.0% | −3.5 points (CI −8.9 to +1.9) |
+  | CrazyPlus, 100 games | 95/95 finished | 94 of the same 95 (99/100 overall) | — |
+
+  - **Per seed vs gen 83:** the edit won both seats on 44 seeds, split 132, and lost both on 24.
+    The 44 vs 24 sign test gives z = 2.4 (derived).
+  - **CrazyPlus:** my GPU guard stopped the run at 17:32 with 95 of 100 games played, when the
+    card's free memory fell to 1,989 MiB under S10 and evening use. The 5 missing games are seat 1
+    of seeds 31,300,044 and 046–049. Even if the edit lost all five, the paired difference would be
+    −4 points (CI about −9 to +1, derived): no drop either way.
+  - **Against the bar:**
+    - Ben's bar (≥ 55% over 400 games) is met exactly, at the point estimate. The interval's lower
+      end is 50.1%.
+    - "No drop" vs gen 0 and CrazyPlus holds by the pre-registered test: neither paired interval
+      excludes 0. Against gen 0 the point estimate is 3.5 points lower.
+    - The tuning check on other seeds was 50/100. Pooled with the gate: 270/500 = 54.0% (derived).
+  - **Reading:** a real but small gain against the unedited network is likely, not proven. It meets
+    the bar's letter, and nothing measured got worse beyond noise. It came from the planned habit
+    (banking) only indirectly: the audit found End Turn *under*-rated, so the edit fixes the
+    under-rated purchase (Research) instead. Adoption is Ben's call. A confirmation run on fresh
+    seeds (one of the 2 spare gates) would settle it.
+  - **Reach of the edit at the agent's own positions** (300 `s10c` g084 games, 5,784 decisions,
+    temperature 1): the mean probability of a Research row goes from 0.041 to 0.057. The edit's
+    effect on research counts and banked stars in games is not measured (the gate's matches record
+    no game files).
+- **Confirmation of `research038` (lead, pre-registered 2026-11-04, 17:50, before it runs):** its gate
+  result (220/400 = 55.0%, CI 50.1–59.8) sits exactly on Ben's bar, and its tuning check was 50/100.
+  - **Run:** 400 more games vs the unedited `s9v` gen 83, seeds 32,100,000–32,100,199, seats swapped.
+    Same command as the gate (`selfplay.py --match`, 4 processes). It waits on the PC until the GPU has
+    ≥ 4 GB free, under the same 2 GB guard.
+  - **Reading:**
+    - the confirmation alone ≥ 55%: recommend adoption to Ben, quoting the pooled 800;
+    - 52–55%: a small real gain is likely, but under the bar;
+    - < 52%: the gate's 55% was noise.
+  - This uses gate 3 of WSP-1's 5.

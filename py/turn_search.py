@@ -30,6 +30,16 @@ process and networks.
   there (the real hidden part differed), the rest of the turn is played by the raw policy.
 
     POLYHOST=linux python turn_search.py s9v/gen083.pt --reply --scorer s9v/critic_g083.pt --plans 16 --samples 2 --seeds 100
+
+**WSP-1 options (research log WSP-1; the defaults leave everything above unchanged):**
+- --b_scorer CKPT: side B (a checkpoint) plans too, with the same --reply planner, its own network
+  as policy and reply model, and CKPT as its scorer: planner against planner, e.g. the same network
+  with an edited critic against the original. B's planner statistics are reported as b_*.
+- --no_graphs: FastPolicy without CUDA graphs (less GPU memory per process; the same numbers).
+- --dump DIR: per game, A's planned turns as one .npz in DIR: every lane's position at the scoring
+  point (A's view at its next turn, after the reply; all samples), whether that lane ended the game
+  and who won, the scores and the chosen lane. For re-scoring the same lanes with another critic
+  offline (py/wsp/rescore.py).
 """
 import argparse
 import json
@@ -51,12 +61,19 @@ def worker(args, jobs, port, out_q):
     from selfplay import REGULAR_TRIBES, load_net
     end_turn = {v: k for k, v in polyenv.COMMAND_TYPES.items()}['EndTurn']
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    net_a = fast_infer.FastPolicy(load_net(args.net, dev), dev, bf16=False)
-    model = net_a if not args.model else fast_infer.FastPolicy(load_net(args.model, dev), dev, bf16=False)
-    scorer = net_a if not args.scorer else fast_infer.FastPolicy(load_net(args.scorer, dev), dev, bf16=False)
+    fp = lambda path: fast_infer.FastPolicy(load_net(path, dev), dev, bf16=False, graphs=not args.no_graphs)
+    net_a = fp(args.net)
+    model = net_a if not args.model else fp(args.model)
+    scorer = net_a if not args.scorer else fp(args.scorer)
     bot = int(args.b.split(':')[1]) if args.b.startswith('bot:') else None
-    net_b = net_a if args.b == args.net else (None if bot is not None else fast_infer.FastPolicy(load_net(args.b, dev), dev, bf16=False))
+    net_b = net_a if args.b == args.net else (None if bot is not None else fp(args.b))
     rng = np.random.default_rng(port)
+    if args.b_scorer:
+        if net_b is None:
+            raise SystemExit('--b_scorer needs side B to be a checkpoint')
+        scorer_b = fp(args.b_scorer)
+        model_b = net_b if not args.model else model
+    dump = []  # --dump: A's planned turns of the current game
 
     def infer(net, slots, sts, obs):
         logits, v = net(eval_vs_bot.batch_inputs(obs, [sts[s] for s in slots]))
@@ -70,8 +87,10 @@ def worker(args, jobs, port, out_q):
         hit = np.nonzero((st.legal == np.asarray(k, st.legal.dtype)).all(1))[0] if len(st.legal) else []
         return int(hit[0]) if len(hit) else -1
 
-    def search_reply(env, spec, a_id, stats, seed):
-        """The --reply planner: returns the real game's status after A's turn (End Turn played)."""
+    def search_reply(env, spec, a_id, stats, seed, side=None):
+        """The --reply planner: returns the real game's status after A's turn (End Turn played).
+        side: (policy, reply model, scorer) for a planning side B (--b_scorer); default A's."""
+        net_a_, model_, scorer_ = side if side is not None else (net_a, model, scorer)
         K, D = args.plans, args.samples
         slot = lambda d, k: 1 + d * K + k
         sts = {}
@@ -84,7 +103,7 @@ def worker(args, jobs, port, out_q):
         while active:
             ks = sorted(active)
             ids = [slot(0, k) for k in ks]
-            logits, _ = infer(net_a, ids, sts, env.observe([(i, 0) for i in ids]))
+            logits, _ = infer(net_a_, ids, sts, env.observe([(i, 0) for i in ids]))
             acts = []
             for j, k in enumerate(ks):
                 st = sts[ids[j]]
@@ -128,7 +147,7 @@ def worker(args, jobs, port, out_q):
         m = {i: 0 for i in replying}
         while replying:
             ids = sorted(replying)
-            logits, _ = infer(model, ids, sts, env.observe([(i, 0) for i in ids]))
+            logits, _ = infer(model_, ids, sts, env.observe([(i, 0) for i in ids]))
             acts = []
             for j, i in enumerate(ids):
                 st = sts[i]
@@ -146,7 +165,8 @@ def worker(args, jobs, port, out_q):
         live = [i for i, st in sts.items() if not st.ended]
         est = {}
         if live:
-            _, v = infer(scorer, live, sts, env.observe([(i, a_id) for i in live]))
+            live_obs = env.observe([(i, a_id) for i in live])
+            _, v = infer(scorer_, live, sts, live_obs)
             est = dict(zip(live, v))
         score = {}
         for k in range(K):
@@ -156,6 +176,23 @@ def worker(args, jobs, port, out_q):
                 vals.append((1.0 if st.winner == a_id else 0.0) if st.ended else float(est[slot(d, k)]))
             score[k] = float(np.mean(vals))
         best = max(score, key=lambda k: score[k])
+        if args.dump and side is None:
+            ob = {i: o for i, o in zip(live, live_obs)} if live else {}
+            o0 = next(iter(ob.values())) if ob else None
+            shp = o0.tiles.reshape(-1, o0.tiles.shape[-1]).shape if o0 is not None else (0, 0)
+            rec = dict(turn=int(env_turn[0]), seat=a_id, best=best, scores=np.array([score[k] for k in range(K)], np.float32),
+                       est=np.array([est.get(slot(d, k), np.nan) for d in range(D) for k in range(K)], np.float32),
+                       ended=np.array([sts[slot(d, k)].ended for d in range(D) for k in range(K)], bool),
+                       won=np.array([sts[slot(d, k)].ended and sts[slot(d, k)].winner == a_id for d in range(D) for k in range(K)], bool),
+                       n_cmds=np.array([len(plans[k]) for k in range(K)], np.int16))
+            if o0 is not None:
+                rec['tiles'] = np.stack([ob[slot(d, k)].tiles.reshape(shp) if slot(d, k) in ob else np.zeros(shp, o0.tiles.dtype)
+                                         for d in range(D) for k in range(K)])
+                rec['globals'] = np.stack([ob[slot(d, k)].globals if slot(d, k) in ob else np.zeros_like(o0.globals)
+                                           for d in range(D) for k in range(K)])
+                rec['techs'] = np.stack([ob[slot(d, k)].techs if slot(d, k) in ob else np.zeros_like(o0.techs)
+                                         for d in range(D) for k in range(K)])
+            dump.append(rec)
         stats['planned'] += 1
         stats['greedy_best'] += best == 0
         stats['gain'] += score[best] - score[0]
@@ -172,7 +209,7 @@ def worker(args, jobs, port, out_q):
                 return real
         k = 0
         while not real.ended and real.current == a_id and k < COMMANDS_PER_TURN_CAP:
-            logits, _ = infer(net_a, [0], {0: real}, env.observe([(0, 0)]))
+            logits, _ = infer(net_a_, [0], {0: real}, env.observe([(0, 0)]))
             a = int(np.argmax(logits[0][:len(real.legal)]))
             if real.legal[a][0] == end_turn:
                 return env.step([(0, a)])[0][1]
@@ -222,6 +259,7 @@ def worker(args, jobs, port, out_q):
             st = env.step([(0, int(ends[0]))])[0][1] if len(ends) else st
         return st
 
+    env_turn = [0]
     with polyenv.launch(port) as env:
         for seed, seat in jobs:
             tribes = tuple(int(t) for t in np.random.default_rng(seed).choice(REGULAR_TRIBES, 2))
@@ -230,10 +268,15 @@ def worker(args, jobs, port, out_q):
             spec = polyenv.Spec(tribes=tribes, bots=bots, seed=seed)
             st = env.new(0, spec)
             stats = dict(planned=0, greedy_best=0, gain=0.0, spread=0.0, broken=0)
+            stats_b = dict(planned=0, greedy_best=0, gain=0.0, spread=0.0, broken=0)
+            dump.clear()
             t0, b_turn, n_b = time.time(), -1, 0
             while not st.ended and st.turn < TURN_CAP:
+                env_turn[0] = st.turn
                 if st.current == a_id:
                     st = search_reply(env, spec, a_id, stats, seed * 1000 + st.turn) if args.reply else search_turn(env, spec, a_id, stats)
+                elif args.b_scorer:  # --b_scorer: B plans with the same planner and its own scorer
+                    st = search_reply(env, spec, 3 - a_id, stats_b, seed * 1000 + st.turn, side=(net_b, model_b, scorer_b))
                 else:  # B: one greedy move at a time (a bot seat plays inside the engine)
                     if st.turn != b_turn:
                         b_turn, n_b = st.turn, 0
@@ -246,7 +289,18 @@ def worker(args, jobs, port, out_q):
                         a = int(ends[0])
                     st = env.step([(0, a)])[0][1]
             res = 'win' if st.ended and st.winner == a_id else 'loss' if st.ended else 'cap'
-            out_q.put(dict(seed=seed, seat=seat, res=res, turns=st.turn, seconds=round(time.time() - t0), **stats))
+            if args.dump and dump:
+                keys = set().union(*dump)
+                arrs = {k: np.stack([r[k] for r in dump if k in r]) for k in keys if k not in ('tiles', 'globals', 'techs')}
+                has = np.array(['tiles' in r for r in dump])
+                arrs['has_obs'] = has
+                if has.any():
+                    for k in ('tiles', 'globals', 'techs'):
+                        arrs[k] = np.stack([r[k] for r in dump if k in r])
+                np.savez_compressed(f'{args.dump}/{seed}_s{seat + 1}.npz', seed=seed, a_seat=seat, res=res, game_turns=st.turn,
+                                    tribes=np.array(tribes), **arrs)
+            extra = {f'b_{k}': v for k, v in stats_b.items()} if args.b_scorer else {}
+            out_q.put(dict(seed=seed, seat=seat, res=res, turns=st.turn, seconds=round(time.time() - t0), **stats, **extra))
 
 
 def main():
@@ -265,7 +319,13 @@ def main():
     ap.add_argument('--samples', type=int, default=2, help='--reply: determinized samples each plan is scored on')
     ap.add_argument('--scorer', default=None, help='--reply: checkpoint whose value head scores plans (default: the planner\'s own)')
     ap.add_argument('--model', default=None, help='--reply: the network that plays the opponent\'s reply (default: the planner\'s own)')
+    ap.add_argument('--b_scorer', default=None, help='--reply: side B plans too, scored by this checkpoint (docstring, WSP-1)')
+    ap.add_argument('--no_graphs', action='store_true', help='no CUDA graphs (less GPU memory per process, slower)')
+    ap.add_argument('--dump', default=None, help='--reply: write A\'s planned turns (every lane\'s scored position) to this dir')
     args = ap.parse_args()
+    if args.dump:
+        import os
+        os.makedirs(args.dump, exist_ok=True)
     args.b = args.b or args.net
     jobs = [(args.first_seed + k, seat) for k in range(args.seeds) for seat in (0, 1)]
     ctx = mp.get_context('spawn')
@@ -297,7 +357,8 @@ def main():
     w = sum(r['res'] == 'win' for r in results)
     lo, hi = eval_vs_bot.wilson(w, n)
     print('SUMMARY ' + json.dumps(dict(a=args.net, b=args.b, plans=args.plans, temperature=args.temperature, reply=args.reply,
-                                       samples=args.samples, scorer=args.scorer, games=n, a_wins=w,
+                                       samples=args.samples, scorer=args.scorer, **({'b_scorer': args.b_scorer} if args.b_scorer else {}),
+                                       first_seed=args.first_seed, games=n, a_wins=w,
                                        a_rate=w / max(n, 1), ci=[lo, hi], capped=sum(r['res'] == 'cap' for r in results),
                                        seconds=round(time.time() - t0))), flush=True)
 
