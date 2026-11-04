@@ -17,6 +17,7 @@
 // (default 8131), with the same observation and legal list the bot interface gives Python.
 //   GET  /gamedata       the game's GameLogicData JSON, for names and stats
 
+#include <thread>
 #include <arpa/inet.h>
 #include <csignal>
 #include <dirent.h>
@@ -46,6 +47,7 @@ struct Session {
     uint64_t games = 0;
     bool netOpponent = false;  // seat 2 is played by py/agent_server.py
     int agentFd = -1;
+    env::Spec spec;  // the current game's settings (sent to the agent server with POLY_AGENT_STATE)
 
     // Watch mode: a recorded game replayed command by command from its start state and the final
     // state's command stack (env::Match::loadReplay), the whole map visible or one player's view.
@@ -214,7 +216,7 @@ struct Session {
     void start(int tribe, int opponent, int difficulty, int mode, int mapPreset, int mapSize) {
         if (match && !watching && match->turn() > 0) recordPlay("unfinished");
         watching = false;
-        env::Spec spec;
+        spec = env::Spec();
         spec.seats[0] = {tribe, -1};
         netOpponent = difficulty < 0;
         spec.seats[1] = {opponent, netOpponent ? -1 : difficulty};
@@ -277,8 +279,20 @@ struct Session {
         int32_t choice = -1;
         bool ok = sendAll(agentFd, wh, sizeof wh) && sendAll(agentFd, &n, sizeof n) &&
                   sendAll(agentFd, tiles.data(), tiles.size() * sizeof(int16_t)) && sendAll(agentFd, globals, sizeof globals) &&
-                  sendAll(agentFd, techs, sizeof techs) && sendAll(agentFd, match->legal.data(), n * sizeof(env::Cmd)) &&
-                  readAll(agentFd, &choice, sizeof choice);
+                  sendAll(agentFd, techs, sizeof techs) && sendAll(agentFd, match->legal.data(), n * sizeof(env::Cmd));
+        // With POLY_AGENT_STATE (py/agent_server.py --planner): also the game's settings and its saved
+        // state, which the planner loads into its own engine and plans on fog-safe samples of, as the
+        // evaluations do (py/turn_search.py --reply). i32 tribe, bot per seat, mode, map, size; u64 seed;
+        // u32 length, then the state.
+        if (ok && std::getenv("POLY_AGENT_STATE")) {
+            int32_t sp[7] = {spec.seats[0].tribe, spec.seats[0].bot, spec.seats[1].tribe, spec.seats[1].bot,
+                             spec.mode, spec.mapPreset, spec.mapSize};
+            std::string blob = match->save();
+            uint32_t len = uint32_t(blob.size());
+            ok = sendAll(agentFd, sp, sizeof sp) && sendAll(agentFd, &spec.seed, sizeof spec.seed) &&
+                 sendAll(agentFd, &len, sizeof len) && sendAll(agentFd, blob.data(), blob.size());
+        }
+        ok = ok && readAll(agentFd, &choice, sizeof choice);
         if (!ok) { close(agentFd); agentFd = -1; return -1; }
         return choice;
     }
@@ -288,6 +302,10 @@ struct Session {
     void agentMoves() {
         for (int k = 0; netOpponent && !match->ended() && match->currentPlayer() == 2 && k < 2000; ++k) {
             int i = askAgent();
+            for (int retry = 0; i < 0 && retry < 30; ++retry) {  // the agent server restarting: wait, don't hand the seat to the AI
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                i = askAgent();
+            }
             if (i < 0 || i >= int(match->legal.size())) {
                 lastError = "agent server not reachable on POLY_AGENT_PORT; the game's AI moved instead";
                 i = match->botChoice();

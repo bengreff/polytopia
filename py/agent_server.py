@@ -211,10 +211,31 @@ def main():
     ap.add_argument('--stats_port', type=int, default=8132, help='the network panel\'s JSON (0: off)')
     ap.add_argument('--temperature', type=float, default=0.0)
     ap.add_argument('--device', default='mps' if torch.backends.mps.is_available() else 'cpu')
+    ap.add_argument('--planner', action='store_true', help='plan each turn (py/plan_agent.py); serve needs POLY_AGENT_STATE=1')
+    ap.add_argument('--scorer', default=None, help='--planner: the checkpoint whose value scores plans (the fog critic)')
+    ap.add_argument('--plans', type=int, default=16)
+    ap.add_argument('--samples', type=int, default=2)
+    ap.add_argument('--plan_temperature', type=float, default=0.5)
+    ap.add_argument('--env_port', type=int, default=8135, help='--planner: the planner\'s own engine process')
+    ap.add_argument('--env_bin', default=os.path.join(polyenv.REPO, 'build', 'polyhost-mac-det'))
     args = ap.parse_args()
     net, step = eval_vs_bot.load_policy(args.checkpoint, args.device)
     info = checkpoint_info(args.checkpoint, net, args.device)
     info['temperature'] = args.temperature
+    planner = None
+    if args.planner:
+        import contextlib
+        import plan_agent
+        os.environ['POLYHOST'], os.environ['POLYHOST_BIN'] = 'mac', args.env_bin
+        polyenv.NATIVE = True
+        env_stack = contextlib.ExitStack()  # held for the server's life: the engine closes with it
+        env = env_stack.enter_context(polyenv.launch(args.env_port))
+        planner = plan_agent.Planner(env, args.checkpoint, args.scorer, args.device, args.plans, args.samples,
+                                     args.plan_temperature)
+        info['planner'] = dict(plans=args.plans, samples=args.samples, temperature=args.plan_temperature,
+                               scorer=os.path.abspath(args.scorer) if args.scorer else None)
+        print(f'agent: planner on, {args.plans} plans x {args.samples} samples at T {args.plan_temperature}, '
+              f'scorer {args.scorer}, engine {args.env_bin} on {args.env_port}', flush=True)
     stats = Stats(info)
     if args.stats_port:
         serve_stats(stats, args.stats_port)
@@ -230,6 +251,7 @@ def main():
         conn, _ = srv.accept()
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         decisions = 0
+        queue, queue_turn, fallback = [], None, False  # --planner: this turn's planned commands
         try:
             while True:
                 w, h, n = struct.unpack('<HHI', read(conn, 8))
@@ -237,6 +259,12 @@ def main():
                 glob = np.frombuffer(read(conn, NG * 4), '<i4')
                 techs = np.frombuffer(read(conn, polyenv.TECH_SLOTS), np.uint8)
                 legal = np.frombuffer(read(conn, n * 8), '<i2').reshape(n, 4)
+                if planner is not None:  # the game's settings and saved state (POLY_AGENT_STATE)
+                    sp = struct.unpack('<7i', read(conn, 28))
+                    seed, = struct.unpack('<Q', read(conn, 8))
+                    blob = read(conn, struct.unpack('<I', read(conn, 4))[0])
+                    spec = polyenv.Spec(tribes=(sp[0], sp[2]), bots=tuple(None if b < 0 else b for b in (sp[1], sp[3])),
+                                        mode=sp[4], map_preset=sp[5], map_size=sp[6], seed=seed)
                 if (w, h) != (14, 14) or n == 0:  # the network only knows Small maps
                     choice = -1
                 else:
@@ -255,6 +283,28 @@ def main():
                     else:
                         q = np.exp(z / args.temperature)
                         choice = int(rng.choice(n, p=q / q.sum()))
+                    plan_info = None
+                    if planner is not None:
+                        turn = int(glob[M.G['turn']])
+                        if queue_turn != turn:  # the turn's first decision: plan the whole turn
+                            queue_turn, fallback = turn, False
+                            try:
+                                queue, plan_info = planner.plan_turn(spec, blob)
+                                print(f'agent: turn {turn}: plan {plan_info}', flush=True)
+                            except Exception:  # never hand the seat to the game's AI: the raw network plays this turn
+                                import traceback
+                                traceback.print_exc()
+                                queue, plan_info, fallback = [], dict(turn=turn, error=True), True
+                                print(f'agent: turn {turn}: PLANNER FAILED; the raw network plays this turn', flush=True)
+                            stats.info['last_plan'] = plan_info
+                        if queue and not fallback:
+                            hit = np.nonzero((legal == np.asarray(queue[0], legal.dtype)).all(1))[0]
+                            if len(hit):
+                                choice = int(hit[0])
+                                queue.pop(0)
+                            else:  # can't happen if the copy matches the game; the raw policy then finishes the turn
+                                fallback = True
+                                print(f'agent: turn {turn}: planned command {queue[0]} not legal here; raw policy for the rest of the turn', flush=True)
                     top = np.argsort(-p)[:6]
                     entropy = max(0.0, float(-(p * np.log(np.clip(p, 1e-12, 1))).sum()))
                     share = own.mean(0)
