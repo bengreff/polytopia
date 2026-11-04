@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-03, morning: S10 with four tracks, HP1 and CrazyPlus running)
+# Handoff: Polytopia AI (2026-11-04: S10 recovered, HP1 failed, WSP-1 running)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -30,41 +30,30 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-03, 08:20): four S10 tracks, HP1 and CrazyPlus all running on the PC
+## Now (2026-11-04, 13:50): S10 recovered from a 17 h GPU hang; HP1 failed; WSP-1 launched
 
-- **S10:** `s10c s10x s10p s10t` rotate on the PC (`~/runs/sp/tracks.list`, round-robin).
-  - At 08:00: s10c at gen 86, the others at gen 85; s10x's gen 86 runs.
-  - Read at gen 95. Each round now includes a slow s10x generation (~2 h at night, guessed), so the
-    read is roughly 2 days out (guessed).
-  - **s10x, search in the loop** (research log S10 addendum):
-    - the planner plays 25% of the learner's turns, its lane drawn by softmax(score/0.02);
-    - those decisions get a constant PPO advantage;
-    - 4 inference shards, since a planner shard holds ~2 GB of GPU.
-  - **Evaluations use CrazyPlus from gen 87** (all four tracks), in place of RuleBot.
-    - Its engine ops are in `~/polylinux/polyhost-cp`.
-    - The networks should win most games; a drop is the signal.
-  - Backups of the pre-s10x shared files are in `~/poly/stage_x`; delete them after the read.
-- **HP1, the fresh human pass** (research log HP1):
-  - **Arm A** (`~/runs/hp1a`, 22M network with z): stage 1 is done.
-    - Stage 2 hit fragmentation OOMs six times overnight and stalled from 03:32.
-    - It was relaunched at 08:09 from step ~15,000 with micro-batch 32 × 8 (same 256 per step).
-    - ETA ~10:00 (derived). `~/poly/hp/hp_after.sh` then runs T1–T4 by itself
-      (`~/runs/hp1a/tests/`).
-  - **Arm B** (with Continents) waits for Ben: the saved game token got HTTP 401. Once he logs in,
-    run `TOKEN_FILE=<jwtToken file> nohup tools/hp_continents.sh &`. Only ~1–3k Continents games
-    are likely to load (guessed).
-  - **Known flaw:** the value head reads the result through z. Use z = 0 for value and search.
-- **CrazyPlus** (`py/crazyplus/`, `docs/design/crazyplus.md`): validation from a person seat, 200
-  games each: Crazy 94.0%, Hard 98.5%, Normal 100%. It loses to networks (r4 at 20k won 18/20),
-  because its simulations assume a Crazy reply.
-  - About 780 MB of recorded games in `runs/crazyplus/` can be deleted; the `.jsonl` files hold every
-    result.
-- **Weight-space programming plan:** `docs/design/weight-space.md`. Phase 0 (the diagnosis kit)
-  waits for Ben's go.
-  - Measured: gen 0 → 83's change is low-rank in the value head and the last trunk layer.
-  - Phases: diagnosis, weight arithmetic at the S10 read, habit edits, critic edits.
-  - Every edit is gated at ≥ 55% vs the unedited network over 400 games.
-- **Everything is committed and pushed.** No agents are running.
+- **S10** (`s10c s10x s10p s10t`, read at gen 95, roughly 2 days out, guessed):
+  - **The hang:** s10x's gen 89 froze from 20:32 on 2026-11-03 to 13:08 on 2026-11-04. Its 4
+    inference shards had grown to ~3.7 GB each and hung the GPU.
+  - **Fixes:** s10x now runs 3 shards. `~/poly/py_sp/sp_watchdog.sh` (repo `tools/sp_watchdog.sh`)
+    kills a track's self-play after 45 min without a new game. Its log is `~/runs/sp/watchdog.log`;
+    stop it with `touch ~/runs/sp/WATCHDOG_STOP`.
+  - **Gen 88 vs `s10c`:** s10x 52%, s10p 51%, s10t 48% (200 games each, no separation yet).
+  - **Gen 87 vs CrazyPlus:** 96–100/100; vs Crazy: 194–198/200. CrazyPlus doesn't separate the
+    tracks.
+- **HP1 arm A failed every pre-registered test** (research log "HP1 read"): top-1 40.8% vs R7's
+  43.7%, z followed 15–36% of the gap, 25% vs R7, 75% vs Crazy. It is mostly a training-budget result
+  (36k steps vs ~140k). Arm B isn't worth running as planned.
+- **Weight-space programming, plan v2** (`docs/design/weight-space.md`):
+  - the MIT post overstates its case (critique and replications);
+  - what carries over is defect-fixing with forward passes.
+- **WSP-1** (research log WSP-1): an Opus agent audits `s9v` gen 83's fog critic for systematic
+  errors, edits the largest, and gates it with the planner. Then star banking, and an ExPO control.
+  - At most 5 game gates. Status: `runs/agents/wsp1_status.md`.
+  - The lead commits its work when it reports.
+- **CrazyPlus:** validated (Crazy 94%, Hard 98.5%, Normal 100% from a person seat). It's in S10's
+  evaluations; about 780 MB of recorded games in `runs/crazyplus/` can be deleted.
+- **Waiting for Ben:** a game login (only needed if arm B or other downloads are wanted).
 
 ## Now (2026-11-02, 21:15): S10 running; search works; an improved Crazy-based bot is being built
 
