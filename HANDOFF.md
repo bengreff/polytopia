@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-04 evening: S10 running, Ben playing the planner, research038 being confirmed)
+# Handoff: Polytopia AI (2026-11-05 morning: S10 near its read, planner v2 built, WSP-1 closed)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -32,7 +32,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 
 ## Now (2026-11-04, 13:50): S10 recovered from a 17 h GPU hang; HP1 failed; WSP-1 launched
 
-- **S10** (`s10c s10x s10p s10t`, read at gen 95, roughly 2 days out, guessed):
+- **S10** (`s10c s10x s10p s10t`, at gens 91–92 on 2026-11-05 06:00, read at gen 95, about a day out, guessed):
   - **The hang:** s10x's gen 89 froze from 20:32 on 2026-11-03 to 13:08 on 2026-11-04. Its 4
     inference shards had grown to ~3.7 GB each and hung the GPU.
   - **Fixes:** s10x now runs 3 shards. `~/poly/py_sp/sp_watchdog.sh` (repo `tools/sp_watchdog.sh`)
@@ -47,16 +47,8 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - **Weight-space programming, plan v2** (`docs/design/weight-space.md`):
   - the MIT post overstates its case (critique and replications);
   - what carries over is defect-fixing with forward passes.
-- **WSP-1 results** (research log WSP-1):
-  - **Critic:** no robust error; the Part A falsifier fired. Float noise alone flips 7.2% of the
-    planner's choices, since the best two plans differ by a median of 0.0011.
-  - **ExPO 0.25:** 40.3% vs gen 83.
-  - **`research038`** (gen 83 with the Research command-type embedding moved +0.385 logit; 256
-    weights; `~/runs/wsp1/ckpt/research038.pt`): 220/400 = 55.0% (CI 50.1–59.8) vs the unedited
-    network. Its tuning check was 50/100.
-  - **Confirmation** (400 games, seeds 32,100,000+): `~/runs/wsp1/confirm038.sh`, started 17:46. It
-    waits for GPU headroom. Status: `~/runs/wsp1/gates/research038_confirm.status`.
-  - **Adopting it is Ben's call** after the confirmation.
+- **WSP-1 is closed** (research log): no critic edit; ExPO loses; `research038` gave 55.0% at the
+  gate but 51.75% on confirmation (pooled 53.4% over 800). Not adopted.
 - **Playing Ben with the planner:** `SCORER=runs/sp/s9v/critic_g083.pt tools/play.sh runs/sp/s9v/gen083.pt`
   (`py/plan_agent.py`, `agent_server.py --planner`, `build/polyhost-mac-play`).
   - Running since 2026-11-04 16:55 for Ben's 3–5 games, on http://localhost:8123; log `runs/play_planner.log`.
@@ -67,13 +59,19 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     scouted well early, then stalled at 6 cities.
   - It meets knights (13%) and long games in self-play, so the gap is adapting, plus the planner's
     single greedy reply, which never models a knight chain.
-  - **Ben chose option 1, plus hard-coded tactics** (decision log 2026-11-04): planner v2 in
-    `py/tactics/` and `plan_agent` options (off by default), `agent_server.py --tactical`.
-    - It adds kill-chain search for its own turn (extra lanes), the opponent's best tactical reply in
-      the scoring, and defensive repairs (spacing, blocking).
-    - An Opus agent is building it; status `runs/agents/tactics_status.md`.
-    - Adoption bar for Ben's games: ≥ 50% vs v1 over 400 games (CI lower bound ≥ 45%), plus a
-      tactical suite. The lead restarts Ben's server with v2 only after that.
+  - **Planner v2 is built and committed** (`py/tactics/`; research log, planner v2 sections).
+    - **Results:** vs v1 209/400 = 52.25% (CI 47.4–57.1); vs gen 0 93.5%.
+    - **Tactical suite:** defence better (+1.58 stars, CI +0.24 to +2.92); offence +0.27 (n.s.,
+      since v1 already plays most chains).
+    - **Ben's chain positions:** the best reply against it fell from 78 to 17 stars (turn 35) and from
+      51 to 16 (turn 27).
+    - **Time:** median 4.35 s per turn on the Mac, max 9.4 s.
+    - **Bar:** it misses the pre-registered "clearly better offence" part only, so **adopting it is
+      Ben's call.**
+    - Run it with `TACTICAL=1 SCORER=runs/sp/s9v/critic_g083.pt tools/play.sh runs/sp/s9v/gen083.pt`
+      (stop the v1 server on 8123/8131 first).
+    - The CrazyPlus check is still running on the PC (`~/runs/tac/driver6.sh`, results in
+      `~/runs/tac/crazyplus.jsonl`).
   - The play server is still up for his next games.
 - **CrazyPlus:** validated (Crazy 94%, Hard 98.5%, Normal 100% from a person seat). It's in S10's
   evaluations; about 780 MB of recorded games in `runs/crazyplus/` can be deleted.
