@@ -67,10 +67,13 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     scouted well early, then stalled at 6 cities.
   - It meets knights (13%) and long games in self-play, so the gap is adapting, plus the planner's
     single greedy reply, which never models a knight chain.
-  - **Options put to Ben:**
-    1. robust replies in the planner (several sampled replies, worst case or average);
-    2. after the S10 read, a track aimed at adaptation and long games;
-    3. research038's confirmation.
+  - **Ben chose option 1, plus hard-coded tactics** (decision log 2026-11-04): planner v2 in
+    `py/tactics/` and `plan_agent` options (off by default), `agent_server.py --tactical`.
+    - It adds kill-chain search for its own turn (extra lanes), the opponent's best tactical reply in
+      the scoring, and defensive repairs (spacing, blocking).
+    - An Opus agent is building it; status `runs/agents/tactics_status.md`.
+    - Adoption bar for Ben's games: ≥ 50% vs v1 over 400 games (CI lower bound ≥ 45%), plus a
+      tactical suite. The lead restarts Ben's server with v2 only after that.
   - The play server is still up for his next games.
 - **CrazyPlus:** validated (Crazy 94%, Hard 98.5%, Normal 100% from a person seat). It's in S10's
   evaluations; about 780 MB of recorded games in `runs/crazyplus/` can be deleted.
