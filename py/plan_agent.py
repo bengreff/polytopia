@@ -32,7 +32,12 @@ END_TURN = {v: k for k, v in polyenv.COMMAND_TYPES.items()}['EndTurn']
 
 
 class Planner:
-    def __init__(self, env, net_path, scorer_path, device, plans=16, samples=2, temperature=0.5, model_path=None, seed=None):
+    def __init__(self, env, net_path, scorer_path, device, plans=16, samples=2, temperature=0.5, model_path=None, seed=None,
+                 tactical=None):
+        """tactical: None plans as v1 (the default, unchanged); a dict (possibly empty) plans with planner
+        v2's tactics (py/tactics/planner2.py: tactical lanes, the opponent's tactical reply, defensive
+        repairs), the dict overriding planner2.DEFAULTS."""
+        self.tactical = tactical
         self.env, self.device = env, device
         self.K, self.D, self.temperature = plans, samples, temperature
         self.net = fast_infer.FastPolicy(load_net(net_path, device), device, bf16=False)
@@ -56,6 +61,9 @@ class Planner:
     def plan_turn(self, spec, blob):
         """Loads the real game (blob) and plans the current player's turn. Returns (the commands to play,
         as (type, a, b, arg) rows, End Turn included; a dict about the search)."""
+        if self.tactical is not None:
+            from tactics import planner2
+            return planner2.plan_turn(self, spec, blob, self.tactical)
         env, K, D = self.env, self.K, self.D
         t0 = time.time()
         real = env.load(0, spec, blob)

@@ -1954,6 +1954,13 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     - < 52%: the gate's 55% was noise.
   - This uses gate 3 of WSP-1's 5.
 
+- **Confirmation result (2026-11-04, 18:19; measured):** `research038` vs the unedited gen 83 won
+  207/400 = 51.75% (CI 46.9–56.6) on seeds 32,100,000+ (6 games capped, 665 s).
+  - Pre-registered reading: below 52%, so the gate's 55.0% was most likely noise.
+  - Pooled over 800 games: 427/800 = 53.4%.
+  - **Not adopted.** WSP-1 ends with no edit passing Ben's bar. The one robust finding is that gen 83
+    under-rates Research against humans (+0.34 logit), which is a training target, not an edit.
+
 ## Ben vs `s9v` gen 83 with the planner (2026-11-04): Ben won in 42 turns
 - **Setup:** `tools/play.sh` with the planner (16 plans, 2 samples, `critic_g083.pt`). Championship
   format (Might, Lakes, Small, fog). Ben Imperius in seat 1 (moves first), the network Xin-xi.
@@ -1999,3 +2006,211 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   - What failed is adapting: against a stalemate it doubled its catapult share and never changed
     plan. Its one-turn planner cannot find multi-turn plans (a knight chain, a naval flank).
 - **Next:** see the options put to Ben (2026-11-04).
+
+## Planner v2 — hand-coded tactics for kill chains (pre-registered 2026-11-04, 19:05)
+- **Ben (decision log, 2026-11-04):** hard-coded logic that finds knight chains (an entry from which
+  a knight kills everything in its path in one turn) and scans for the same risk to our own pieces,
+  blocking with swordsmen or spacing units; "or go more general, that is always better". The learned
+  critic still scores the plans: the hand-coded logic only proposes candidates and models replies.
+- **Design** (`py/tactics/`; everything on the planner's fog-safe samples, never the true state):
+  - `search.py`: a beam search over attack sequences for the side to move. Steps: an Attack, a Move
+    then an Attack (dash units), a Capture; a knight's next attack after a kill is just the next
+    Attack the game lists. Every step is played by the engine on a copy. The objective is material
+    in stars (evalfn's unit and city values, mine minus theirs, our losses against). The combat
+    formula only ranks and prunes the steps, plus a lookahead (the formula's estimate of the chain
+    still available) that lets a softening hit outrank a small kill.
+  - `planner2.py`, v1 plus:
+    1. **offence:** the 3 best sequences of the planner's own search on sample 0 become extra lanes
+       (the sequence, then the network's top move to the end of the turn);
+    2. **threat:** after End Turn, besides the greedy reply, the opponent's best sequence, then its
+       network finishes the turn. Checked for the 6 lanes with the best greedy-reply score and every
+       tactical and repair lane; searched on sample 0, played on sample 1;
+    3. **repairs:** for the 2 best lanes whose threat takes ≥ 2 stars, up to 4 candidate moves:
+       a threatened unit to its safest tile, or the sturdiest unit that can reach an attacker's entry
+       tile onto it. Played either after the lane, or at the start of the turn with the network
+       finishing. A repair is kept if a quick re-search cuts the threat by ≥ 1 star (≤ 2 per lane).
+    4. The best lane among the threat-checked ones is played. All its commands apply, or the
+       missing ones are skipped (as on the samples), then End Turn.
+  - `plan_agent.Planner(tactical=None)`: v1, unchanged (the default); a dict turns v2 on.
+    `agent_server.py --tactical`. `tactics/match.py` plays planner against planner.
+- **Settings** (`planner2.DEFAULTS`):
+  - offence search: depth 14, beam 6, branch 10, ≤ 600 simulations;
+  - threat search: depth 8, beam 2, branch 6, ≤ 80 simulations;
+  - repair re-check: depth 6, beam 2, branch 5, ≤ 50 simulations.
+  - Calibrated before this entry on Ben's game's 127 turn starts (not a test;
+    `runs/tactics/calib_ben.log`, measured). Against a large search (depth 16, beam 8, ≤ 2,500
+    simulations):
+    - the threat setting finds 94.5% of its stars, in 0.07 s mean and 0.37 s max (Mac);
+    - the offence setting finds 98.6%.
+  - Base for every test: `s9v` gen 83 and `critic_g083.pt`, 16 plans, 2 samples, T 0.5.
+- **Tests:**
+  - **(a) Tactical suite** (`tactics/suite.py`):
+    - Positions: turn starts from turn 8 of 40 greedy self-play games of gen 83 (seeds
+      41,000,000–039; at most 3 of each kind per game), plus every turn start of Ben's game.
+    - Each is labelled on the true state by the large search:
+      - *offence*: the side to move has a sequence with ≥ 2 kills;
+      - *defence*: if it ended its turn at once, the opponent would have one.
+    - v1 and v2 each plan the turn once (fixed seed per position). The commands are played on the
+      true state, which measures:
+      - kills and stars gained;
+      - after End Turn, the opponent's best reply by the large search (stars and units we lose).
+    - Reported for v1 and v2, for all positions and for Ben's game alone:
+      - offence: the share with ≥ 2 kills played, the share matching the label's kills, stars
+        gained;
+      - defence: stars and units lost to the best reply, and the share still facing a ≥ 2-kill
+        reply.
+  - **(b) Tuning (not a gate): the combine rule.** `min` (the worse of the two replies) vs `mix`
+    (their mean), each 40 games vs v1 on the same seeds 39,100,000–019, seats swapped. The rule with
+    the higher win share is used; a tie goes to `min`. The rule is fixed in an addendum here before
+    the gate starts.
+  - **(c) Games** (PC, `tactics/match.py`, 4 processes, v2 as side A, seeds new to this log):
+    - v2 vs v1: seeds 42,000,000–199, each played twice with the seats swapped: **400 games**;
+    - v2 vs gen 0 (R7 step 20k, = `s9v/gen000.pt`): seeds 42,100,000–099, **200 games**;
+    - v2 vs CrazyPlus: seeds 42,200,000–049, **100 games**.
+    - The last two check for a collapse against opponents the planner doesn't model. v1's numbers
+      for them are on other seeds: S9 read part 4 (gen 0 94.0%, Crazy 154/155).
+  - **(d) Time:** v2 on the Mac (MPS, Ben's settings) on all of the network seat's turn starts in
+    Ben's game: median ≤ 10 s, max ≤ 25 s per turn. The PC's per-turn times from (c) are reported
+    too.
+- **Adoption bar for Ben's games** (Ben asked for this logic, so it only has to not make the player
+  weaker):
+  - v2 ≥ 50% vs v1 over the 400 games, with the Wilson 95% lower bound ≥ 45%;
+  - the time bar (d) met;
+  - and the suite clearly better, which means both of these (paired by position, mean difference
+    with a 95% interval above 0):
+    - stars gained on offence positions;
+    - stars lost to the best reply on defence positions (v2 lower).
+- **Expected (guessed):**
+  - the suite clearly better on both;
+  - the gate 50–56%, since v1 already scores most of its lanes after the greedy reply and the
+    network finds many chains itself (on Ben's turn 28, v1 found 6–7 kills, v2 8; Mac test);
+  - no collapse vs gen 0 or CrazyPlus.
+- **Falsifiers:** the gate < 50% or its lower bound < 45%; or the suite not better on either
+  measure.
+
+### Planner v2 addendum 1 (2026-11-04, 19:25, before any gate): tuning try 1 stopped, one change
+- **Try 1** (seeds 39,100,000–002, 5 games per rule, measured): v2 won 1 of 5 with `min` and 1 of 5
+  with `mix`. Too early to mean much, but it pointed to a difference from v1 in how a turn ends.
+- **The likely cause** (found by reading the code):
+  - v2 played End Turn right after the chosen lane's commands.
+  - v1 instead lets the raw policy play on until it picks End Turn. A sampled lane ends at a
+    sampled End Turn, so in v1 the greedy policy fills the rest of the turn; v2 dropped that fill.
+- **Changed** (`planner2.DEFAULTS`):
+  - `end_after_plan='post'`: End Turn right after the lane only for a repair played after it (so the
+    policy can't undo the repair); otherwise v1's behaviour.
+  - `skip_broken=False`: after a command that isn't legal in the real game, the raw policy finishes
+    the turn (v1's behaviour).
+- **Checks** (Mac, 3 of Ben's positions, measured):
+  - v2 with every tactic off gives exactly v1's commands and scores;
+  - v1's code path gives the same commands as the committed planner.
+- **Tuning restarted** on seeds 39,200,000–019, 40 games per rule. Try 1's games are not used.
+- **Suite measure, defined before any suite result** (the pre-registration said "stars gained"): the
+  offence test uses the stars of enemy units and cities destroyed or taken this turn ("dealt").
+  The net material swing also counts the planner's own new units, which says nothing about tactics;
+  it is reported too.
+- **Suite labels:** they use the offence-size search (600 simulations, 98.6% of the large search on
+  Ben's game), not the large one. The measurement after each turn uses the large one.
+
+### Planner v2 addendum 2 (2026-11-04, 21:40, before the gate): the combine rule
+- **Tuning** (seeds 39,200,000–019, 40 games per rule vs v1, seats swapped, measured):
+
+  | Rule | v2 wins | Share (95% CI) |
+  |---|---|---|
+  | `min` | 20/40 | 50.0% (35.2–64.8) |
+  | `mix` | 17/40 | 42.5% (28.5–57.8) |
+
+  - The pre-registered rule picks `min`.
+  - Neither is distinguishable from 50% at this size.
+- **Gate settings:** `planner2.DEFAULTS` as of addendum 1 (`combine='min'`), via `tactics/match.py`.
+  - 4 GPU processes, no CUDA graphs (less GPU memory; the same numbers).
+  - The 2 GB guard is on. It stopped the tuning twice (19:15 and 20:56, free GPU memory 286 and 373
+    MiB, S10's peaks); after a stop the run resumes, skipping finished games.
+  - Seeds and game counts as pre-registered.
+
+### Planner v2 results (2026-11-04)
+- **(a) Tactical suite** (measured; `runs/tactics/suite_results.jsonl`, summaries
+  `suite_summary_v2min.json` / `_v2mix.json`). 178 positions: Ben's 58, plus 120 from 40 self-play
+  games (≤ 3 per game, spread over its turns). One plan per planner and position.
+
+  | v2 = `min` | Offence, all (131) | Offence, Ben (49) | Defence, all (112) | Defence, Ben (40) |
+  |---|---|---|---|---|
+  | ≥ 2 kills played, v1 → v2 | 81.7% → 84.7% | 83.7% → 89.8% | | |
+  | as many kills as the label, v1 → v2 | 71.0% → 75.6% | 69.4% → 75.5% | | |
+  | stars dealt, v1 → v2 | 11.79 → 12.06 | 17.68 → 18.34 | | |
+  | stars lost to the best reply, v1 → v2 | | | 14.96 → 13.38 | 21.34 → 18.66 |
+  | units lost to it, v1 → v2 | | | 2.29 → 2.05 | 2.85 → 2.50 |
+  | a ≥ 2-kill reply still there, v1 → v2 | | | 70.5% → 67.0% | 82.5% → 85.0% |
+  | paired v2 − v1 (95% CI) | +0.27 (−0.15, +0.69) | +0.66 (−0.39, +1.71) | **+1.58 (+0.24, +2.92)** | +2.68 (−0.92, +6.27) |
+  | same outcome | 102 of 131 | 35 of 49 | 71 of 112 | 20 of 40 |
+
+  - **Defence is better** (the interval excludes 0). **Offence is not clearly better.**
+  - Why offence barely moves: v1 already plays a ≥ 2-kill turn in 82% of the positions that have one.
+    In most of the rest the tactical lane exists but the critic scores it no higher. Examples
+    (debug run):
+    - Ben's turn 11: the 2-kill lane scores 0.62–0.64 against 0.66 for a network lane, whose units
+      are less exposed;
+    - in decided games every lane scores 0.996–1.0, so the choice is a tie.
+  - `mix` gave the same picture: offence +0.29 (−0.13, +0.70), defence +1.34 (+0.05, +2.63).
+  - **Ben's own chain turns** (one plan each; stars by the large search on the true state):
+
+    | Turn (side to move) | Label | v1 | v2 |
+    |---|---|---|---|
+    | 28 (Ben's seat, offence) | 8 kills, 62 stars | 7 kills, 55 stars dealt | 8 kills, 62 |
+    | 30 (Ben's seat, offence) | 8 kills, 50 | 3 kills, 22 | 6 kills, 45 |
+    | 36 (Ben's seat, offence) | 9 kills, 52 | 13 kills, 80 | 14 kills, 83 |
+    | 27 (network, before Ben's turn-28 chain) | reply 8 kills, 59 | reply 7 kills, 51 stars | reply 2 kills, 16 (a repair lane) |
+    | 29 (network) | reply 7 kills, 49 | 7 kills, 41 | 6 kills, 39 (a repair lane) |
+    | 35 (network, before turn 36) | reply 9 kills, 58 | 12 kills, 78 | 3 kills, 17 (a repair lane) |
+
+- **(d) Time per turn** (Mac, MPS, `polyhost-mac-det`, Ben's settings; the network seat's 42 turn
+  starts of Ben's game; measured with the final code; `runs/tactics/timing_mac.jsonl`):
+  - median 4.35 s, p90 7.47 s, max 9.4 s. **The bar is met.**
+  - v1 on the same machine: 2–4 s.
+  - Chosen lanes there: network 33, repair 7, tactical 2.
+  - On the PC (tuning games, GPU shared with S10): median turn 2.3–2.5 s, max 26 s (v1: 2.1 s).
+- **(b) Tuning:** see addendum 2.
+  - In the tuning games v2 chose a network lane on 84% of its turns, a tactical lane on 10%, a
+    repair on 6%.
+- **(c) Games:** the gate started 21:35 on the PC (`~/runs/tac/gate.jsonl`, `gate.log`,
+  `driver.status`). gen 0 and CrazyPlus follow it.
+  - **Execution change (00:05, at 107 games; the same code, settings and seeds).** S10's self-play
+    phases take 11.8–15.7 GB of the GPU, which left the gate at about 0.4 games/min. It is now split:
+    - the PC plays seeds 42,000,000–149, adapting to S10 (`driver5.sh`: 4 processes at ≥ 8 GB free,
+      2 at ≥ 4 GB);
+    - the Mac plays 42,000,150–199 overnight with 2 processes (`runs/tactics/gate_mac.sh`,
+      `polyhost-mac-det`, MPS). It stops at 05:45 at the latest; the PC then plays whatever is
+      missing.
+    - 01:26, the same again: the PC now plays 42,000,000–099 (`driver6.sh`). The Mac plays 100–149
+      after its first share (`gate_mac2.sh`). A duplicate game, if any, keeps the PC's result.
+    - What happened:
+      - the PC played 200 games plus the 8 the Mac didn't reach by 05:45;
+      - the Mac played 192 (`runs/tactics/gate_mac.jsonl`);
+      - no duplicates, no errors, no capped games. Results: `~/runs/tac/gate.jsonl`.
+  - **v2 vs v1 (the gate), measured: 209/400 = 52.25%, Wilson 95% CI 47.4–57.1%.**
+    - By seat: 120/200 moving first, 89/200 moving second.
+    - Seed pairs: v2 won both 35, split 139, v1 won both 26.
+    - Mean game length 31.7 turns.
+    - v2's lanes over its 12,963 turns: network 84.9%, tactical 9.5%, repair 5.7%.
+    - The parts:
+      - PC seeds 000–099: 107/200;
+      - Mac 150–199: 52/100;
+      - Mac 100–149: 44/92;
+      - the 8 PC fill games: 6/8.
+  - **v2 vs gen 0, measured: 187/200 = 93.5% (89.2–96.2).** v1 had 94.0% on other seeds (S9 read
+    part 4): no collapse.
+  - **v2 vs CrazyPlus:** running on the PC since 06:05 (`~/runs/tac/crazyplus.jsonl`).
+  - Turn times in these games:
+    - PC, with S10 filling the CPU (load average 28 of 28 threads) and the GPU: median of the
+      per-game medians 3.1 s, max 48.6 s;
+    - Mac, 2 games at once: 2.85 s, max 24.5 s; v1 there: 2.4 s, max 10.2 s.
+    - Ben's single game is test (d): max 9.4 s.
+- **Against the adoption bar:**
+  - the gate: met (52.25% ≥ 50%, lower bound 47.4% ≥ 45%);
+  - the time: met;
+  - the suite: half met. Defence is clearly better (+1.58 stars, 95% CI +0.24 to +2.92).
+    Offence is not (+0.27, −0.15 to +0.69).
+  - **So the pre-registered bar is not met**, on the offence clause alone. v2 doesn't make the
+    player weaker, and it defends better against chains, most on Ben's own chain turns (27 and 35:
+    the best reply falls from 51 and 78 stars to 16 and 17). On offence it adds little, because the
+    network already plays most chains itself.
+  - Whether to use it for Ben's games anyway is Ben's call.
