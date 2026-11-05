@@ -62,6 +62,16 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - Running since 2026-11-04 16:55 for Ben's 3–5 games, on http://localhost:8123; log `runs/play_planner.log`.
   - Games are recorded in `runs/games/play_2026-11-04/`.
   - Ben always moves first in this app.
+- **Ben beat gen 83 + planner in 42 turns** (research log "Ben vs s9v gen 83", 2026-11-04).
+  - Catapults were 38% of its units; it trained no knights or defenders and researched 9 techs. It
+    scouted well early, then stalled at 6 cities.
+  - It meets knights (13%) and long games in self-play, so the gap is adapting, plus the planner's
+    single greedy reply, which never models a knight chain.
+  - **Options put to Ben:**
+    1. robust replies in the planner (several sampled replies, worst case or average);
+    2. after the S10 read, a track aimed at adaptation and long games;
+    3. research038's confirmation.
+  - The play server is still up for his next games.
 - **CrazyPlus:** validated (Crazy 94%, Hard 98.5%, Normal 100% from a person seat). It's in S10's
   evaluations; about 780 MB of recorded games in `runs/crazyplus/` can be deleted.
 - **Waiting for Ben:** a game login (only needed if arm B or other downloads are wanted).
