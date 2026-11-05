@@ -1953,3 +1953,49 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     - 52–55%: a small real gain is likely, but under the bar;
     - < 52%: the gate's 55% was noise.
   - This uses gate 3 of WSP-1's 5.
+
+## Ben vs `s9v` gen 83 with the planner (2026-11-04): Ben won in 42 turns
+- **Setup:** `tools/play.sh` with the planner (16 plans, 2 samples, `critic_g083.pt`). Championship
+  format (Might, Lakes, Small, fog). Ben Imperius in seat 1 (moves first), the network Xin-xi.
+  - The planner planned all 42 turns: median 2.3 s per turn, max 3.8 s, mean gain 0.038; 2 broken
+    plans finished by the raw policy; no failures (measured).
+  - Recording: `runs/games/play_2026-11-04/163906`.
+- **Ben's account:**
+  - "a decent challenge with an effective early game"; its catapult/giant rush almost overwhelmed him
+    in the midgame.
+  - The land war locked into a stalemate once he had catapults. The map had no big oceans and no open
+    areas.
+  - "they spammed catapults so hard (training even more than were needed)"; he wiped them out with
+    knight chains, the second one decisive.
+  - "Couldn't sustain strategy late game." Asks for knight-chain defence, a more balanced army,
+    adapting to the board, and a check on scouting and expansion.
+- **The replay** (measured):
+
+  | | Ben | Network |
+  |---|---|---|
+  | Units trained | 87: swordsman 26, warrior 25, knight 16, catapult 12, archer 8 | 85: swordsman 44, **catapult 32 (38%)**, warrior 9; no knight, rider, defender or archer |
+  | Techs researched | 13 | 9 |
+  | Attacks / captures | 193 / 12 | 117 / 5 |
+  | Cities at turns 12 / 21 / 33 / 42 | 5 / 6 / 7 / 12 | 4 / 6 / 6 / 1 |
+  | Tiles explored at turns 12 / 21 / end | 91 / 154 / 190 | 129 / 165 / 170 |
+
+- **Against its usual play** (measured: `py/indicators.py`, s10c gen 89's 425 player-games vs 800
+  human ones):
+
+  | | Self-play | Humans |
+  |---|---|---|
+  | Catapults | 16% | 5% |
+  | Knights | 13% | ~0% |
+  | Techs by turn 20 | 7.2 | 9.2 |
+  | Stars banked | 6.1 | 3.1 |
+  | Cities at turns 10 / 20 | 4.0 / 5.7 | 3.9 / 5.8 |
+
+  23.5% of its 1,500 training games reach turn 35.
+- **Reading:**
+  - Scouting was not the problem early: it had seen more of the map than Ben until turn ~27, but then
+    stopped exploring and held 6 cities from turn 18.
+  - It meets knights and long games in self-play, so the missing defence is not from never seeing
+    them.
+  - What failed is adapting: against a stalemate it doubled its catapult share and never changed
+    plan. Its one-turn planner cannot find multi-turn plans (a knight chain, a naval flank).
+- **Next:** see the options put to Ben (2026-11-04).
