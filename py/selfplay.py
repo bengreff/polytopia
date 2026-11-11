@@ -197,6 +197,8 @@ class Inference:
                 print(f'warning: fast inference for {key} chose differently from Net.forward on '
                       f'{int((ref.argmax(1) != logits.argmax(1)).sum())} of {len(obs)} positions', flush=True)
         value = torch.sigmoid(v.float()).cpu().numpy()
+        if temperature is None:  # the scores themselves, padded (planner v2 in the loop, py/search_v2.py)
+            return logits.float().cpu().numpy(), np.zeros(len(obs), np.float32), value
         if temperature <= 0:
             return logits.argmax(1).cpu().numpy(), np.zeros(len(obs), np.float32), value
         lp = torch.log_softmax(logits / temperature, 1)
@@ -240,6 +242,10 @@ def main():
                     help='--search_share: the played lane is drawn from the sampled lanes with probability softmax(score / tau); '
                          '0: the best of all lanes')
     ap.add_argument('--search_slots', type=int, default=100, help='--search_share: first scratch slot (each thread group uses 50)')
+    ap.add_argument('--search_v2', default=None,
+                    help='--search_share: plan with planner v2 (py/search_v2.py, py/tactics/planner2.py) instead of py/search_loop.py; '
+                         'its options as JSON ("{}": its defaults) or a JSON file; it plays its best lane (--search_tau unused); '
+                         'needs POLYHOST_BIN=polyhost-cp on the PC')
     ap.add_argument('--shards', type=int, default=0, help='child processes to split the games across (0: one per 10 game processes)')
     ap.add_argument('--shard', default=None, help=argparse.SUPPRESS)  # i/K: this child's share (set by the parent)
     args = ap.parse_args()
@@ -286,6 +292,11 @@ def main():
     search = None
     if args.search_share > 0 and not match:
         import search_loop as search  # py/search_loop.py
+        if args.search_v2 is not None:
+            import search_v2 as search  # py/search_v2.py
+            v2 = args.search_v2
+            args.search_v2 = json.load(open(v2)) if os.path.exists(v2) else json.loads(v2)
+            print(f'search in the loop: planner v2, options {json.dumps(args.search_v2)}', flush=True)
         nets['C'] = load_net(args.search_scorer or args.net, args.device)
         if args.search_plans * args.search_samples > search.SLOT_STRIDE:
             ap.error(f'--search_plans x --search_samples must be at most {search.SLOT_STRIDE}')
@@ -298,7 +309,7 @@ def main():
     if search:  # the scorer's estimates in fp32: lanes differ by a few hundredths
         infer.fast['C'] = fast_infer.FastPolicy(nets['C'], args.device, bf16=False)
         infer.checked.add('C')
-    s_count = dict(turns=0, seconds=0.0, gain=0.0, chosen_gain=0.0, kl=0.0, broken=0, commands=0, forced=0)
+    s_count = dict(turns=0, seconds=0.0, gain=0.0, chosen_gain=0.0, kl=0.0, broken=0, commands=0, forced=0, tac=0, rep=0)
 
     results, log_lock = [], threading.Lock()
     out = open(args.results, 'a') if args.results else None
@@ -331,7 +342,8 @@ def main():
         t = max(c['turns'], 1)
         return (f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each; best lane - top-move lane {c['gain'] / t:.3f}, "
                 f"drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) {c['kl'] / t:.3f}, "
-                f"broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played")
+                f"broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played"
+                + (f", lanes played: tactical {c['tac'] / t:.1%}, repair {c['rep'] / t:.1%}" if args.search_v2 is not None else ''))
 
     def new_game(env, slot):
         with jobs_lock:
@@ -371,6 +383,7 @@ def main():
             g['rec'].opp = []
             if search:
                 g['rec'].searched, g['plan'], g['pturn'], g['search'] = [], [], None, []
+                g['spec'] = spec
         if g['human_start']:
             with open(g['human_start']['file'], 'rb') as f:
                 g['st'] = env.load(slot, spec, f.read())
@@ -451,13 +464,18 @@ def main():
             if g['pturn'] != (st.turn, st.current):
                 g['pturn'], g['plan'] = (st.turn, st.current), []
                 if search.pick(g['seed'], st.turn, st.current, args.search_share):
-                    g['plan'], info = search.plan_turn(env, infer, s, st.current, base, args.search_plans, args.search_samples,
-                                                       args.temperature, args.search_tau, g['seed'] * 1000 + st.turn * 4 + st.current, rng)
+                    if args.search_v2 is not None:  # this thread group's slots: search_v2.OFFSET * (group + 1) ...
+                        g['plan'], info = search.plan_turn(env, infer, s, g['spec'], args.search_v2, search.OFFSET * (slots[0] % 2 + 1),
+                                                           args.search_plans, args.search_samples, args.temperature, rng)
+                    else:
+                        g['plan'], info = search.plan_turn(env, infer, s, st.current, base, args.search_plans, args.search_samples,
+                                                           args.temperature, args.search_tau, g['seed'] * 1000 + st.turn * 4 + st.current, rng)
                     info.update(turn=st.turn, player=st.current)
                     g['search'].append(info)
                     with log_lock:
                         for k, x in (('turns', 1), ('seconds', info['seconds']), ('gain', info['best'] - info['top']),
-                                     ('chosen_gain', info['chosen'] - info['top']), ('kl', info['kl']), ('commands', len(g['plan']))):
+                                     ('chosen_gain', info['chosen'] - info['top']), ('kl', info['kl']), ('commands', len(g['plan'])),
+                                     ('tac', info.get('kind') == 1), ('rep', info.get('kind') == 2)):
                             s_count[k] += x
             if g['plan']:
                 r = search.find(st, g['plan'][0])
@@ -645,7 +663,9 @@ def run_shards(args, k):
             t = max(c['turns'], 1)
             print(f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each (per thread); best lane - top-move lane "
                   f"{c['gain'] / t:.3f}, drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) "
-                  f"{c['kl'] / t:.3f}, broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played", flush=True)
+                  f"{c['kl'] / t:.3f}, broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played"
+                  + (f", lanes played: tactical {c.get('tac', 0) / t:.1%}, repair {c.get('rep', 0) / t:.1%}" if args.search_v2 is not None else ''),
+                  flush=True)
         print(f'{n} games ({summary}), {decisions} decisions, {el:.0f} s, {decisions / el:.0f} decisions/s, '
               f'{k} shards, GPU busy {np.mean([p["busy"] for p in parts]) / el:.0%} per shard, '
               f'{sum(p["positions"] for p in parts) / max(sum(p["batches"] for p in parts), 1):.0f} positions/batch', flush=True)

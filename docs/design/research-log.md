@@ -2239,3 +2239,71 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
 - **Reading:** the S9/S10 recipe has stopped improving. Of the three changes only search in the
   loop points up, and not by the bar. Neither bot ladder nor self-play rates can see the weaknesses
   Ben found (no answer to knight chains, no change of plan in a stalemate, 9 techs to his 13).
+
+## S11 — planner v2 in the loop on half the learner's turns (pre-registered 2026-11-10, 20:00, before the launch)
+- **Ben's decision (2026-11-10, after the S10 read):** continue only `s10x`, with planner v2 in its
+  training loop and the planner's share of the learner's turns raised from 25% to about 50%
+  ("Yes, go. You can stop whatever else is running on backhouse").
+- **Why:** of S10's three changes only search in the loop pointed up (53.2% vs `s10c`, CI
+  49.8–56.7). Self-play without search is flat (`s10c` vs gen 0: 80.5% at gen 83, 81.5% at gen 95).
+  Planner v2 is the player Ben meets, and it defends better against kill chains (suite +1.58 stars).
+- **Track `s11x`** (`tools/s11_setup.sh`), from `s10x` gen 95 and its fog critic `critic_g095.pt`:
+  - **Searched turns** are planned by planner v2 (`py/search_v2.py` running `py/tactics/planner2.py`
+    with its defaults, which are the gate's settings):
+    - 16 network lanes, 2 fog-safe samples, 3 tactical lanes;
+    - the opponent's greedy and tactical replies, combined with `min`; defensive repairs;
+    - scored by the run's fog critic of the previous generation.
+  - **It plays its best lane.** `s10x`'s v1 planner drew among its sampled lanes by
+    softmax(score / 0.02) instead.
+  - **Search share 0.5** (`s10x`: 0.25). `--search_adv 1.0`, as in `s10x`.
+  - **Everything else as `s10x`:** GAE λ 0.97, entropy 0, KL anchor to R7 0.03, lr 3e-5, KL limit
+    0.05, temperature 0.5, 1,500 games per generation, 30% of non-bot games from human positions,
+    pool self 0.5 plus the last 7 generations, 28 game processes, 3 inference shards. Binary
+    `polyhost-cp` (fog-safe samples plus the tactics ops).
+  - **Code:** planner v2's slots take an offset (default 0, so `plan_agent` is unchanged), and
+    selfplay's batched inference returns the logits for temperature None.
+- **No concurrent control.** `s10c`, `s10p`, `s10t` and `s10x` stay stopped at gen 95.
+  - `s10c`'s last 12 generations gained about +12 Elo vs gen 0. That is about 51.7% head-to-head
+    (derived), so frozen opponents are the baseline.
+  - A gain can still be partly just more training; that drift bounds it.
+- **Evaluations, each generation:**
+  - vs its start (`s10x95`, the frozen rival: every later generation is `s10x` gen 95);
+  - vs the previous generation and vs gen 0;
+  - from human positions, vs gen 0 and vs `s10x95`;
+  - every third generation, vs Crazy and CrazyPlus;
+  - indicators.
+- **Read at gen 107**, with a look at gen 101 (no decision there):
+  1. **Raw network vs its start:** gens 104–107 vs `s10x` gen 95, 800 games. Better > 55%, worse
+     < 45%.
+  2. **vs `s10c` gen 95:** the same generations, 800 games, comparable to the S10 read.
+  3. **With the planner, as Ben plays it:** gen 107 + v2 (its own critic) vs `s10x` gen 95 + v2
+     (`critic_g095`), 200 games. This needs `--b_net` / `--b_scorer` in `tactics.match`, to be added
+     and checked before the read.
+  4. **Indicators vs gen 95:** techs by turn 20, catapult and knight shares, stars banked, cities at
+     turns 10 and 20. In Ben's game it had 9 techs, 38% catapults and no knights.
+  5. **Ben's games** against gen 107 + v2.
+- **Expected (guessed):** (1) 56–62%; (3) at least 55%; (4) fewer catapults and more techs by turn
+  20 than gen 95.
+- **Falsifier:** (1) below 52%, which is no more than `s10c`'s own drift; or (3) below 50%.
+- **Smoke test** (PC, 20:00–20:22, CPU in the evening cap: E-cores only, BelowNormal; measured):
+  - Setup: `s10x` gen 95, 2 game processes × 4 slots, 8 games, share 0.5 (`~/runs/s11_smoke`).
+  - All 8 games finished with no errors. 295 searched turns made 47.6% of the 10,528 decisions,
+    and 5,009 of 5,009 planned commands were played.
+  - Planner v2's own broken plans (finished by the raw policy) were 13 of 295.
+  - Lanes played: network 254, tactical 25 (8.5%), repair 16 (5.4%); the gate had 9.5% and 5.7%.
+    The best lane beat the top-move lane by 0.032 on average.
+  - **12.2 s per searched turn** (median 11.5, p90 23.0, max 33.6). Two thread groups share each
+    engine process, and the tactics search is engine-bound.
+- **Cost (guessed from the smoke test and the gate's 3.1 s per turn at full load):** about 37
+  searched turns per game, so about 55k per generation. That is about 2–3 h per generation at full
+  speed and roughly twice that in the 17:00–22:00 cap, so the read at gen 107 is about 2–3 days out.
+  `s10x` took about 1.3 h per generation. Gen 96's log will give the measured figure.
+- **Launched 2026-11-10 20:23** (`tracks.sh` with `tracks.list` = `s11x`).
+  - The watchdog was restarted with `LIMIT=120`: with v2 the first games can take about 45 minutes
+    in the evening cap, which is the old limit.
+  - Also on the PC:
+    - crucible's `t1_f run development` (5.5 days on one core) is paused with SIGSTOP, not killed
+      (pid 14835 in distro `Ubuntu`; `kill -CONT 14835` resumes it);
+    - the evening CPU throttle (`~/throttle/throttled.sh`), dead since 2026-10-23, is running again.
+  - Left alone: Roblox in active use (3.4 GB of GPU memory), an idle Minecraft (0.5 GB), LM Studio
+    (no GPU memory). S10's gens 90–95 ran beside the same set.

@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-10 evening: S10 read, self-play flat, PC idle)
+# Handoff: Polytopia AI (2026-11-10 evening: S10 read; S11 running, planner v2 in the loop)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -30,17 +30,31 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-10, 20:00): S10 read done; the PC is idle; next steps are Ben's call
+## Now (2026-11-10, 20:30): S11 running (`s11x`, planner v2 in the loop on half the turns)
 
-- **S10 finished gen 95 on 2026-11-05 and the PC has been idle since** (nothing of ours running).
 - **S10 read** (research log "S10 read"): vs `s10c` over gens 92–95, `s10x` 53.2%, `s10p` 50.0%,
   `s10t` 44.5% (falsified). None passes 55%. The control vs gen 0: 80.5% at gen 83, 81.5% at
-  gen 95, so self-play has flattened. Every track 97.5–100% vs Crazy and CrazyPlus.
-- **Planner v2 vs CrazyPlus: 100/100.** Adopting v2 for Ben's games is still his call.
-- **The play server is not running** (port 8123 free). Restart with the TACTICAL=1 line below.
-- **Options put to Ben (2026-11-10):** continue `s10x` alone with planner v2 and a larger search
-  share; robust (multi-reply) planner; a track aimed at economy and long games; Ben plays 2–3
-  games vs v2 for a human-strength reading.
+  gen 95, so self-play without search has flattened. Every track scores 97.5–100% vs Crazy and
+  CrazyPlus. Planner v2 vs CrazyPlus: 100/100.
+- **S11** (research log "S11", pre-registered; Ben, 2026-11-10: "Yes, go"):
+  - **The track:** `s11x` from `s10x` gen 95 (`tools/s11_setup.sh`). Planner v2 plans half the
+    learner's turns (`py/search_v2.py`, `selfplay --search_v2 {}`, binary `polyhost-cp`). Otherwise
+    as `s10x`.
+  - **Evaluations:** each generation vs its frozen start `s10x95`, vs previous, vs gen 0 and from
+    human positions.
+  - **Read at gen 107:** includes planner vs planner, which needs `--b_net`/`--b_scorer` added to
+    `tactics.match` first.
+  - **Cost:** about 2–3 h per generation at full speed (guessed); check gen 96's games time in
+    `~/runs/sp/s11x/loop.log`.
+  - **Watchdog:** `LIMIT=120`.
+  - **Stop:** `touch ~/runs/sp/s11x/STOP` (after the current step) or `~/runs/sp/TRACKS_STOP`.
+- **On the PC:**
+  - crucible's job is paused (`kill -CONT 14835` in distro `Ubuntu` resumes it);
+  - the evening throttle is running again;
+  - Roblox, Minecraft and LM Studio were left open.
+- **Play server is not running** (port 8123 free). For Ben's games, use
+  `TACTICAL=1 SCORER=<critic> tools/play.sh <gen>` with the newest `s11x` generation and its
+  critic.
 
 ## Now (2026-11-04, 13:50): S10 recovered from a 17 h GPU hang; HP1 failed; WSP-1 launched
 

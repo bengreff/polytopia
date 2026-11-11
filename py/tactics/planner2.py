@@ -84,13 +84,25 @@ def find(st, k):
 
 
 class V2:
-    def __init__(self, P, spec, blob, opt):
+    def __init__(self, P, spec, blob, opt, off=0):
+        """off: every slot this planner uses is shifted by off (the real game's copy at off, lanes from
+        off + 1, ...), so several planners can share one game process (py/selfplay.py --search_v2)."""
         self.P, self.env, self.spec, self.blob = P, P.env, spec, blob
+        self.off = off
+        self.real = off
+        self.scratch = range(off + SCRATCH.start, off + SCRATCH.stop)
+        self.check = off + CHECK
         self.o = dict(DEFAULTS, **(opt or {}))
         for k in ('offence', 'threat', 'check'):
             self.o[k] = dict(DEFAULTS[k], **((opt or {}).get(k) or {}))
         self.t0 = time.time()
         self.times = {}
+
+    def ls(self, d, k):
+        return self.off + lane_slot(d, k)
+
+    def tss(self, d, k):
+        return self.off + ts_slot(d, k)
 
     def lap(self, name):
         t = time.time()
@@ -102,11 +114,11 @@ class V2:
         """Lockstep on sample 0: lane k plays the planner's turn by its policy (argmax, or sampled at the
         temperature for k in sample_ks) until it picks End Turn (not played). Appends to self.plans."""
         P, env, sts = self.P, self.env, self.sts
-        active = {k for k in ks if not sts[lane_slot(0, k)].ended and sts[lane_slot(0, k)].current == self.a_id}
+        active = {k for k in ks if not sts[self.ls(0, k)].ended and sts[self.ls(0, k)].current == self.a_id}
         n = {k: 0 for k in ks}
         while active:
             kk = sorted(active)
-            ids = [lane_slot(0, k) for k in kk]
+            ids = [self.ls(0, k) for k in kk]
             logits, _ = P.infer(P.net, ids, sts, env.observe([(i, 0) for i in ids]))
             acts = []
             for j, k in enumerate(kk):
@@ -187,7 +199,7 @@ class V2:
         ids = [(d, k) for k in ks for d in range(D)]
         acts = []
         for d, k in ids:
-            s = lane_slot(d, k)
+            s = self.ls(d, k)
             st = sts[s]
             if not st.ended and st.current == a_id:
                 e = end_row(st)
@@ -195,18 +207,18 @@ class V2:
                     acts.append((s, e))
         for (s, _), (ok, st) in zip(acts, env.step(acts) if acts else []):
             sts[s] = st
-        post = {(d, k): env.save(lane_slot(d, k)) for d, k in ids if not sts[lane_slot(d, k)].ended}
+        post = {(d, k): env.save(self.ls(d, k)) for d, k in ids if not sts[self.ls(d, k)].ended}
         self.lap('end_turn')
-        self.reply([lane_slot(d, k) for d, k in ids])
-        sc = self.score([lane_slot(d, k) for d, k in ids])
+        self.reply([self.ls(d, k) for d, k in ids])
+        sc = self.score([self.ls(d, k) for d, k in ids])
         for d, k in ids:
-            self.g[(d, k)] = sc[lane_slot(d, k)]
+            self.g[(d, k)] = sc[self.ls(d, k)]
         self.lap('greedy_reply')
         # the threat, for the chosen lanes
         always = set(always)
         mean_g = {k: np.mean([self.g[(d, k)] for d in range(D)]) for k in ks if k not in always}
         chk = sorted(mean_g, key=lambda k: -mean_g[k])[:o['threat_lanes']] + [k for k in ks if k in always]
-        tac = Tactician(env, self.spec, SCRATCH, **o['threat'])
+        tac = Tactician(env, self.spec, self.scratch, **o['threat'])
         replies = []
         for k in chk:
             self.checked.add(k)
@@ -214,7 +226,7 @@ class V2:
                 self.t[(d, k)], self.loss[(d, k)], self.tseq[(d, k)] = self.g[(d, k)], 0.0, []
                 if (d, k) not in post:
                     continue
-                s = ts_slot(d, k)
+                s = self.tss(d, k)
                 st = env.load(s, self.spec, post[(d, k)])
                 obs = env.observe([(s, st.current), (s, a_id)])
                 key = state_key(*obs)
@@ -250,10 +262,10 @@ class V2:
                 replies.append((d, k))
         self.lap('threat_search')
         if replies:
-            self.reply([ts_slot(d, k) for d, k in replies])
-            sc = self.score([ts_slot(d, k) for d, k in replies])
+            self.reply([self.tss(d, k) for d, k in replies])
+            sc = self.score([self.tss(d, k) for d, k in replies])
             for d, k in replies:
-                self.t[(d, k)] = sc[ts_slot(d, k)]
+                self.t[(d, k)] = sc[self.tss(d, k)]
         self.lap('threat_reply')
 
     def combined(self, k):
@@ -266,10 +278,10 @@ class V2:
 
     # ---- defensive repairs
     def _board(self, blob):
-        st = self.env.load(CHECK, self.spec, blob)
+        st = self.env.load(self.check, self.spec, blob)
         if st.ended or st.current != self.a_id:
             return None, st
-        obs_me, obs_op = self.env.observe([(CHECK, self.a_id), (CHECK, 3 - self.a_id)])
+        obs_me, obs_op = self.env.observe([(self.check, self.a_id), (self.check, 3 - self.a_id)])
         return Board(obs_me, obs_op, st.legal), st
 
     def _moves_for(self, board, legal, threatened, entries):
@@ -334,23 +346,23 @@ class V2:
     def threat_after(self, slot_blob, tac):
         """The threat's gain after End Turn from a pre-End-Turn position (None: can't end the turn)."""
         env = self.env
-        st = env.load(CHECK, self.spec, slot_blob)
+        st = env.load(self.check, self.spec, slot_blob)
         if st.ended:
             return 0.0
         e = end_row(st)
         if e < 0:
             return None
-        ok, st = env.step([(CHECK, e)])[0]
+        ok, st = env.step([(self.check, e)])[0]
         if st.ended:
             return 0.0
-        res = tac.search(CHECK, st)
+        res = tac.search(self.check, st)
         return res[0]['obj'] if res else 0.0
 
     def repairs(self):
         """Step 5: repair lanes for the best lanes with a real threat; returns their info."""
         env, spec, o, D = self.env, self.spec, self.o, self.D
         ranked = sorted(self.checked, key=lambda k: -self.combined(k))[:o['repair_lanes']]
-        ctac = Tactician(env, spec, SCRATCH, **o['check'])
+        ctac = Tactician(env, spec, self.scratch, **o['check'])
         cands = []  # (new lane, parent lane, kind, rows, sample, base loss)
         for k in ranked:
             losses = [self.loss.get((d, k), 0.0) for d in range(D)]
@@ -366,26 +378,26 @@ class V2:
                 if kind == 'post':
                     self.plans[j] = self.plans[k] + rows
                     for dd in range(D):
-                        self.sts[lane_slot(dd, j)] = env.load(lane_slot(dd, j), spec, self.pre[(dd, k)])
+                        self.sts[self.ls(dd, j)] = env.load(self.ls(dd, j), spec, self.pre[(dd, k)])
                 else:
                     self.plans[j] = list(rows)
                     for dd in range(D):
-                        self.sts[lane_slot(dd, j)] = env.load(lane_slot(dd, j), spec, self.root_blobs[dd])
+                        self.sts[self.ls(dd, j)] = env.load(self.ls(dd, j), spec, self.root_blobs[dd])
                 cands.append((j, k, kind, rows, d, self.loss[(d, k)]))
         if not cands:
             return []
         # the repair rows on every sample, then the network finishes the 'pre' lanes on sample 0
-        self.replay_rows([(lane_slot(dd, j), rows) for j, k, kind, rows, d, b in cands for dd in range(D)])
+        self.replay_rows([(self.ls(dd, j), rows) for j, k, kind, rows, d, b in cands for dd in range(D)])
         pre_ks = [j for j, k, kind, rows, d, b in cands if kind == 'pre']
         if pre_ks:
             self.plan_lanes(pre_ks, set())
             for j in pre_ks:
                 for dd in range(1, D):
-                    self.sts[lane_slot(dd, j)] = env.load(lane_slot(dd, j), spec, self.root_blobs[dd])
-            self.replay_rows([(lane_slot(dd, j), self.plans[j]) for j in pre_ks for dd in range(1, D)])
+                    self.sts[self.ls(dd, j)] = env.load(self.ls(dd, j), spec, self.root_blobs[dd])
+            self.replay_rows([(self.ls(dd, j), self.plans[j]) for j in pre_ks for dd in range(1, D)])
         for j, *_ in cands:
             for dd in range(D):
-                self.pre[(dd, j)] = env.save(lane_slot(dd, j))
+                self.pre[(dd, j)] = env.save(self.ls(dd, j))
         self.lap('repair_build')
         # the quick check on the sample where the threat was found; keep the repairs that cut it most
         kept, info = {}, []
@@ -415,7 +427,7 @@ class V2:
         P, env, spec, o = self.P, self.env, self.spec, self.o
         K, D = P.K, P.D
         self.D = D
-        real = env.load(0, spec, self.blob)
+        real = env.load(self.real, spec, self.blob)
         self.a_id = a_id = real.current
         turn = int(real.turn)
         seed = int(P.rng.integers(1 << 30))
@@ -424,25 +436,25 @@ class V2:
         self.n_threat = 0
         roots = []
         for d in range(D):
-            st = env.determinize(0, ROOT + d, a_id, seed * 1000 + d)
-            roots.append((env.save(ROOT + d), st))
+            st = env.determinize(self.real, self.off + ROOT + d, a_id, seed * 1000 + d)
+            roots.append((env.save(self.off + ROOT + d), st))
         self.root_blobs = [r[0] for r in roots]
         self.lap('samples')
         # 1. network lanes on sample 0
         for k in range(K):
-            self.sts[lane_slot(0, k)] = env.load(lane_slot(0, k), spec, roots[0][0])
+            self.sts[self.ls(0, k)] = env.load(self.ls(0, k), spec, roots[0][0])
             self.plans[k], self.kind[k] = [], 'net'
         self.plan_lanes(range(K), set(range(1, K)))
         self.lap('net_lanes')
         # 2. tactical lanes
         tac_info = []
         if o['lanes'] > 0:
-            tac = Tactician(env, spec, SCRATCH, **o['offence'])
-            res = tac.search(ROOT, roots[0][1])
+            tac = Tactician(env, spec, self.scratch, **o['offence'])
+            res = tac.search(self.off + ROOT, roots[0][1])
             ks = []
             for r in res[:o['lanes']]:
                 k = K + len(ks)
-                self.sts[lane_slot(0, k)] = env.load(lane_slot(0, k), spec, r['blob'])
+                self.sts[self.ls(0, k)] = env.load(self.ls(0, k), spec, r['blob'])
                 self.plans[k], self.kind[k] = list(r['seq']), 'tac'
                 ks.append(k)
                 tac_info.append(dict(obj=r['obj'], kills=r['kills'], lost=r['lost'], n=len(r['seq'])))
@@ -454,11 +466,11 @@ class V2:
         # 3. the other samples
         for d in range(1, D):
             for k in lanes:
-                self.sts[lane_slot(d, k)] = env.load(lane_slot(d, k), spec, roots[d][0])
-        self.replay_rows([(lane_slot(d, k), self.plans[k]) for d in range(1, D) for k in lanes])
+                self.sts[self.ls(d, k)] = env.load(self.ls(d, k), spec, roots[d][0])
+        self.replay_rows([(self.ls(d, k), self.plans[k]) for d in range(1, D) for k in lanes])
         for d in range(D):
             for k in lanes:
-                self.pre[(d, k)] = env.save(lane_slot(d, k))
+                self.pre[(d, k)] = env.save(self.ls(d, k))
         self.lap('replay')
         # 4. replies and threats
         tks = [k for k in lanes if self.kind[k] == 'tac']
@@ -475,6 +487,8 @@ class V2:
         played, broken = self.play(best)
         info = dict(turn=turn, plans=K, samples=D, version=2, lanes=len(self.plans), tac_lanes=len(tks), repair_lanes=n_rep,
                     best=int(best), kind=self.kind[best], best_score=round(score[best], 4),
+                    mean_score=round(float(np.mean(list(score.values()))), 4),
+                    spread=round(float(np.std(list(score.values()))), 4),
                     greedy_best=int(max(g_mean, key=lambda k: g_mean[k])), top_move_score=round(score.get(0, g_mean.get(0, 0.0)), 4),
                     threat_loss=round(float(np.mean([self.loss.get((d, best), 0.0) for d in range(D)])), 2),
                     threat_loss_top_move=round(float(np.mean([self.loss.get((d, 0), 0.0) for d in range(D)])), 2),
@@ -487,7 +501,7 @@ class V2:
         for a repair played after the lane (end_after_plan 'post'); otherwise, as v1, the raw policy plays
         on until it picks End Turn (it fills the turn after a sampled lane's End Turn)."""
         P, env, a_id = self.P, self.env, self.a_id
-        real = env.load(0, self.spec, self.blob)
+        real = env.load(self.real, self.spec, self.blob)
         played, broken = [], False
         for c in self.plans[best]:
             r = find(real, c)
@@ -497,7 +511,7 @@ class V2:
                     continue
                 break
             played.append(P.key(real.legal[r]))
-            real = env.step([(0, r)])[0][1]
+            real = env.step([(self.real, r)])[0][1]
             if real.ended:
                 return played, broken
         eap = self.o['end_after_plan']
@@ -509,10 +523,10 @@ class V2:
                 return played, broken
         k = 0
         while not real.ended and real.current == a_id and k < COMMANDS_PER_TURN_CAP:
-            logits, _ = P.infer(P.net, [0], {0: real}, env.observe([(0, 0)]))
+            logits, _ = P.infer(P.net, [self.real], {self.real: real}, env.observe([(self.real, 0)]))
             a = int(np.argmax(logits[0][:len(real.legal)]))
             played.append(P.key(real.legal[a]))
-            real = env.step([(0, a)])[0][1]
+            real = env.step([(self.real, a)])[0][1]
             if played[-1][0] == END_TURN:
                 break
             k += 1
@@ -523,5 +537,5 @@ class V2:
         return played, broken
 
 
-def plan_turn(P, spec, blob, opt):
-    return V2(P, spec, blob, opt).run()
+def plan_turn(P, spec, blob, opt, off=0):
+    return V2(P, spec, blob, opt, off).run()
