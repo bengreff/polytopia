@@ -2214,3 +2214,28 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     the best reply falls from 51 and 78 stars to 16 and 17). On offence it adds little, because the
     network already plays most chains itself.
   - Whether to use it for Ben's games anyway is Ben's call.
+
+### S10 read (2026-11-10): no track beats the control; self-play has flattened
+- All four tracks stopped at gen 95 on 2026-11-05 (s10t last, 21:42). The PC then sat idle until
+  this read; the planner-version comparisons pre-registered for the read were not run.
+- **Head-to-head vs `s10c`, gens 92–95, 800 games each (measured; Wilson 95% CI):**
+
+  | Track | Wins | Rate | CI | Pre-registered bar | Verdict |
+  |---|---|---|---|---|---|
+  | `s10x` search in the loop | 426/800 | 53.2% | 49.8–56.7 | expected 55–60%, falsifier < 52% | between: not falsified, not shown better |
+  | `s10p` privileged critic | 400/800 | 50.0% | 46.5–53.5 | expected > 55% with a clearly lower critic loss | not met; loss 0.292 vs the fog critic's 0.307 at gen 95 (about 5% lower, not "clearly") |
+  | `s10t` turn-clock credit | 356/800 | 44.5% | 41.1–48.0 | falsifier < 45% | **falsified: worse** |
+
+  - `s10x` gen 95 vs `s10c` gen 95 alone: 112/200 = 56%.
+  - The planner's gain on `s10x` vs `s10c` (the second half of s10x's test) was not measured.
+- **The control against gen 0 (R7), 200 games each (measured; Elo derived as 400·log10(p/(1−p))):**
+  gen 71 73.5% (+177), gen 83 80.5% (+246), gen 95 81.5% (+258, CI +196 to +320). Gens 83→95
+  added about +12, inside the noise. `s10c` gen-to-gen over gens 89–95 averages 49.9%.
+- **Bots are saturated:** every track at gens 90 and 93 scores 97.5–99.5% vs Crazy and 99–100% vs
+  CrazyPlus. From human positions vs gen 0 the control scores 66.5–70.5%, below its 81.5% from
+  normal starts.
+- **Planner v2 vs CrazyPlus** (the check left running on 2026-11-05): 100/100 (measured,
+  `~/runs/tac/crazyplus.jsonl`).
+- **Reading:** the S9/S10 recipe has stopped improving. Of the three changes only search in the
+  loop points up, and not by the bar. Neither bot ladder nor self-play rates can see the weaknesses
+  Ben found (no answer to knight chains, no change of plan in a stalemate, 9 techs to his 13).

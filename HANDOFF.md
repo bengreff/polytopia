@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-05 morning: S10 near its read, planner v2 built, WSP-1 closed)
+# Handoff: Polytopia AI (2026-11-10 evening: S10 read, self-play flat, PC idle)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -29,6 +29,18 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     `tools/setup_pc_games.sh`). No Steam is needed. It's bit-identical to the Mac (`py/parity_hosts.py`)
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
+
+## Now (2026-11-10, 20:00): S10 read done; the PC is idle; next steps are Ben's call
+
+- **S10 finished gen 95 on 2026-11-05 and the PC has been idle since** (nothing of ours running).
+- **S10 read** (research log "S10 read"): vs `s10c` over gens 92–95, `s10x` 53.2%, `s10p` 50.0%,
+  `s10t` 44.5% (falsified). None passes 55%. The control vs gen 0: 80.5% at gen 83, 81.5% at
+  gen 95, so self-play has flattened. Every track 97.5–100% vs Crazy and CrazyPlus.
+- **Planner v2 vs CrazyPlus: 100/100.** Adopting v2 for Ben's games is still his call.
+- **The play server is not running** (port 8123 free). Restart with the TACTICAL=1 line below.
+- **Options put to Ben (2026-11-10):** continue `s10x` alone with planner v2 and a larger search
+  share; robust (multi-reply) planner; a track aimed at economy and long games; Ben plays 2–3
+  games vs v2 for a human-strength reading.
 
 ## Now (2026-11-04, 13:50): S10 recovered from a 17 h GPU hang; HP1 failed; WSP-1 launched
 
