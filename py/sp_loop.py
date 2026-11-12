@@ -121,8 +121,10 @@ def apply_overrides(run, args):
 
 def free_procs(cap, floor=8):
     """Game processes for the next step. The PC is shared: Ben's other projects (crucible) run only
-    10pm-6am, so the loop takes up to `cap` in the daytime and half of it at night."""
-    return cap if 6 <= time.localtime().tm_hour < 22 else max(floor, cap // 2)
+    10pm-6am, and 5pm-10pm the throttle (tools/throttled.sh) keeps the VM on the 12 E-cores, so the
+    loop takes up to `cap` 6am-5pm and half of it otherwise. (On the E-cores alone, s11x played 0.084
+    games/s with 14 game processes and 0.055 with 28: gen 97 against gen 98, 2026-11-11.)"""
+    return cap if 6 <= time.localtime().tm_hour < 17 else max(floor, cap // 2)
 
 
 RIVAL_KINDS = ('rival', 'hrival')

@@ -30,7 +30,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-10, 20:30): S11 running (`s11x`, planner v2 in the loop on half the turns)
+## Now (2026-11-11, 19:45): S11 running again at gen 98 (`s11x`, planner v2 in the loop on half the turns)
 
 - **S10 read** (research log "S10 read"): vs `s10c` over gens 92–95, `s10x` 53.2%, `s10p` 50.0%,
   `s10t` 44.5% (falsified). None passes 55%. The control vs gen 0: 80.5% at gen 83, 81.5% at
@@ -48,10 +48,22 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     `~/runs/sp/s11x/loop.log`.
   - **Watchdog:** `LIMIT=120`.
   - **Stop:** `touch ~/runs/sp/s11x/STOP` (after the current step) or `~/runs/sp/TRACKS_STOP`.
+- **2026-11-11 (research log "S11" run notes):**
+  - A Windows sign-out at about 15:30 stopped the distro mid-gen 98. Relaunched 19:38 with
+    `bash ~/poly/py_sp/sp_resume.sh` (watchdog + rotation if not running; self-play resumes).
+    After any sign-out or restart, run it again. An `@reboot` crontab entry that runs it
+    automatically was blocked by the permission check: Ben's call.
+  - The evening throttle is now a Windows process (`tools/throttle.ps1`; pid 1932 on 2026-11-11;
+    log `C:\Users\ben\polytopia_throttle.log`). The WSL one (`~/throttle/throttled.sh`) can't
+    change the VM's affinity once the ssh session that started it ends; don't use it. A Windows
+    restart stops the new one too: start it again from ssh (command in the script's header).
+  - Gens 96–98 ran on the E-cores alone (the old throttle never unpinned at 22:00): 8.7 h and
+    5.6 h per generation (measured), so those are not the full-speed cost.
+  - gen 96 / 97 vs their start: 52.5% / 52.0% (200 games each; read at 104–107).
 - **On the PC:**
-  - crucible's job is paused (`kill -CONT 14835` in distro `Ubuntu` resumes it);
-  - the evening throttle is running again;
-  - Roblox, Minecraft and LM Studio were left open.
+  - crucible's job restarted itself after the sign-out (its own `CrucibleResume` task; one core,
+    nice); left running;
+  - Roblox, LM Studio, Chrome and Discord came back with the sign-in; Minecraft didn't.
 - **Play server is not running** (port 8123 free). For Ben's games, use
   `TACTICAL=1 SCORER=<critic> tools/play.sh <gen>` with the newest `s11x` generation and its
   critic.

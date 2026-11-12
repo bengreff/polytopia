@@ -2307,3 +2307,28 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     - the evening CPU throttle (`~/throttle/throttled.sh`), dead since 2026-10-23, is running again.
   - Left alone: Roblox in active use (3.4 GB of GPU memory), an idle Minecraft (0.5 GB), LM Studio
     (no GPU memory). S10's gens 90–95 ran beside the same set.
+- **Run notes, 2026-11-11 (measured unless marked):**
+  - **The throttle never unpinned.** It pinned the VM to the 12 E-cores at 19:52 on 2026-11-10 and
+    failed at 22:01 ("UtilAcceptVsock: accept4 failed 110"), so gens 96–98 ran on the E-cores alone,
+    at BelowNormal priority. A detached WSL job reaches Windows only through a live wsl.exe session.
+    The ssh session that started it had ended, and the keepalive's session isn't elevated ("Access
+    is denied" on vmmemWSL's affinity). The throttle is now a Windows process (`tools/throttle.ps1`,
+    started from ssh through WMI, in the Services session); 19:40 peak, BelowNormal 0xFFF0000.
+  - **Gen 96:** 8 h 42 min in all. Its games hung at 15.6 GB of GPU memory, and the watchdog killed
+    them at 00:16 after 123 min without a game; the retry finished them. Learning took 20 min and
+    the evaluations 46 min. Gen 97: 5 h 36 min (games 4 h 56 min on 14 game processes, learning
+    26 min, evaluations 13 min).
+  - **A Windows sign-out at about 15:30 stopped the distro.** The keepalive's wsl.exe ended, and
+    WSL killed every job in Ubuntu-22.04 at gen 98's game 960 of 1500. Windows didn't restart
+    (last boot 2026-10-23). The user's apps and both keepalive tasks came back at 15:32–15:33,
+    but nothing restarted the rotation. Relaunched at 19:38 with `tools/sp_resume.sh`; self-play
+    resumes from the games on disk. Lost: about 4 h 10 min, plus the games in flight.
+  - **Game processes:** on the E-cores, gen 97 played 0.084 games/s on 14 game processes and gen 98
+    0.055 on 28, so `free_procs` now takes the full cap only 06:00–17:00 and half of it otherwise.
+  - **Evaluations so far** (200 games each, too few to read):
+    - gen 96 vs its start: 52.5% (CI 45.6–59.3); gen 97 vs its start: 52.0% (45.1–58.8);
+    - vs gen 0: 78.5% and 81.0%;
+    - gen 96: vs Crazy 99.0%, vs CrazyPlus 100/100, from human positions 72.0% vs gen 0 and 48.0%
+      vs its start.
+  - **Read ETA (guessed):** about 4–5 h per generation off the E-cores, so gen 107 around Friday
+    2026-11-13 and the read's games by Saturday.
