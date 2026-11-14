@@ -2351,3 +2351,9 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   - **Relaunched Sat 12:58:** the Windows throttle (pid 13352, mode full) and `sp_resume.sh`.
     Gen 98 finishes from game 1,473. This is S11's first time on all 28 threads. Lost: Wed 21:41
     to Sat 12:58.
+- **Correction, 2026-11-14 13:20:** Ben found the PC's power strip switched off on Saturday
+  morning, so Friday's 19:55 shutdown was a power cut. Wednesday's 21:41 has the same signature:
+  Kernel-Power 41 with no bugcheck and no dump, the PC off until someone switched it on. Its boot
+  error record (generic sections, no part named) is something firmware can also write after a
+  sudden power cut (guessed). So both were probably the strip, not a failing CPU. The microcode
+  note above stands, but it no longer explains the crashes.
