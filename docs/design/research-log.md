@@ -2357,3 +2357,33 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   error record (generic sections, no part named) is something firmware can also write after a
   sudden power cut (guessed). So both were probably the strip, not a failing CPU. The microcode
   note above stands, but it no longer explains the crashes.
+- **Run notes, 2026-11-14 afternoon:**
+  - **Gen 98** (200 games each): vs its start 50.5% (CI 43.6–57.4), vs gen 97 52.5%, vs gen 0
+    82.0%.
+  - **Gen 99 at full speed** (all 28 threads): 10.1–10.4 s per searched turn and 50–56 decisions/s
+    per shard, against 16–19 on the E-cores (measured over the first 200 games).
+  - **14:13:51, another stop:** winlogon started a power-off on behalf of SYSTEM. Windows' fast
+    startup then signed the user out and hibernated, with sleep logged at 14:13:53. The PC was off
+    for about 33 s and resumed; the sign-in was at 14:14:46 and Roblox started at 14:15:05.
+    Wednesday 15:31 has the same signature, so it's probably the PC's power button pressed
+    (guessed), with the distro killed along with the session.
+  - **Starter (Ben, 2026-11-14: "You may add the starter, make sure it throttles when something
+    else is running (if minecraft or roblox is on) and only starts when we have training we are
+    doing"):**
+    - the Windows task `PolytopiaTrainingStarter` (`tools/throttle_task.ps1`) runs 2 min after
+      Ben signs in, elevated and hidden;
+    - it runs `tools/throttle.ps1 -Start`, which asks `sp_resume.sh check` whether any track has
+      generations left and exits if not;
+    - otherwise it throttles first, then runs `sp_resume.sh`;
+    - the throttle is on 17:00–22:00 and whenever Roblox or Minecraft is open, checked every
+      minute;
+    - it exits, restoring the full CPU, once the training has been stopped for 15 minutes;
+    - `sp_loop.free_procs` reads its status, so a throttled generation uses half the game
+      processes.
+  - **Tested:**
+    - the task restarted gen 99 at 14:29:52 on 14 game processes, with Roblox open (BelowNormal
+      0xFFF0000);
+    - `check` was right in all four cases on a fake run directory, and with nothing pending the
+      start did nothing.
+    - Gen 99's first start, at 14:27, raced the throttle's first status and took 28 processes, so
+      it was stopped and restarted through the task. The 200 finished games were kept.

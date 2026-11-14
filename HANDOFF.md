@@ -30,7 +30,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-14, 13:20): S11 running again at gen 98 after two power cuts (`s11x`, planner v2 in the loop on half the turns)
+## Now (2026-11-14, 14:35): S11 at gen 99; the starter restarts training after any sign-in (`s11x`, planner v2 in the loop on half the turns)
 
 - **The PC crashed twice** (research log "S11" run notes, 2026-11-14):
   - Wed 21:41, under S11's load, with a fatal hardware error reported at boot;
@@ -42,8 +42,19 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     Loss: Power On"; an automatic relaunch after boot (crontab `@reboot` + a logon task for the
     throttle). A BIOS update for the newer microcode is optional.
   - Relaunched Sat 12:58: the Windows throttle (pid 13352) and `sp_resume.sh`.
-- **After any restart:** start the Windows throttle (command in `tools/throttle.ps1`), then run
-  `DELAY=0 bash ~/poly/py_sp/sp_resume.sh` in Ubuntu-22.04.
+- **Starter (Ben approved, 2026-11-14):**
+  - The Windows task `PolytopiaTrainingStarter` runs 2 min after Ben signs in. If training is
+    pending (`sp_resume.sh check`), it throttles and restarts it; otherwise it does nothing.
+  - Throttle (`tools/throttle.ps1`): 17:00–22:00 and whenever Roblox or Minecraft is open. A
+    throttled generation uses 14 game processes.
+  - By hand: `Start-ScheduledTask PolytopiaTrainingStarter` from ssh, while Ben is signed in.
+  - Log: `C:\Users\ben\polytopia_throttle.log`.
+  - Remove: `Unregister-ScheduledTask PolytopiaTrainingStarter`.
+- **Stops seen:**
+  - the power strip switched off (Wed and Fri nights);
+  - a power-off at 14:13 Sat and 15:31 Wed, probably the power button (fast startup signs out
+    and hibernates).
+  - The starter now covers both once someone signs in.
 
 
 - **S10 read** (research log "S10 read"): vs `s10c` over gens 92–95, `s10x` 53.2%, `s10p` 50.0%,
