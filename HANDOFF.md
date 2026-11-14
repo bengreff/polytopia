@@ -30,7 +30,19 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-11, 19:45): S11 running again at gen 98 (`s11x`, planner v2 in the loop on half the turns)
+## Now (2026-11-14, 13:05): S11 running again at gen 98 after two PC crashes (`s11x`, planner v2 in the loop on half the turns)
+
+- **The PC crashed twice** (research log "S11" run notes, 2026-11-14):
+  - Wed 21:41, under S11's load, with a fatal hardware error reported at boot;
+  - Fri 19:55, with nothing of ours running.
+  - Each time it stayed off until someone started it (19.5 h, 12 h). The CPU is an i7-14700K on
+    microcode 0x129 (BIOS 1.C0, 2024-08-13).
+  - Ben's call: a BIOS update to Intel's newer microcode / Intel Default Settings, and whether
+    heavy runs continue meanwhile.
+  - Relaunched Sat 12:58: the Windows throttle (pid 13352) and `sp_resume.sh`.
+- **After any restart:** start the Windows throttle (command in `tools/throttle.ps1`), then run
+  `DELAY=0 bash ~/poly/py_sp/sp_resume.sh` in Ubuntu-22.04.
+
 
 - **S10 read** (research log "S10 read"): vs `s10c` over gens 92–95, `s10x` 53.2%, `s10p` 50.0%,
   `s10t` 44.5% (falsified). None passes 55%. The control vs gen 0: 80.5% at gen 83, 81.5% at

@@ -2332,3 +2332,22 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
       vs its start.
   - **Read ETA (guessed):** about 4–5 h per generation off the E-cores, so gen 107 around Friday
     2026-11-13 and the read's games by Saturday.
+- **Run notes, 2026-11-14 (measured from the Windows event log unless marked):**
+  - **Wed 2026-11-11 about 21:41:** the PC crashed under S11's load. Gen 98's last game was written at
+    21:41:31, with 1,473 of 1,500 played. At the next boot the firmware reported "A fatal hardware
+    error has occurred". The record is a boot error record with three generic sections, so it
+    names no part. Kernel-Power 41 logged no bugcheck and there is no minidump. The PC stayed off
+    until someone started it on Thu 17:14 (19.5 h).
+  - **Fri 2026-11-13 about 19:55:** a second unexpected shutdown, with nothing of ours running
+    (only crucible's one-core job, and whatever was in use on Windows). Kernel-Power 41 again,
+    with no bugcheck and no WHEA record. It was off until Sat 08:09.
+  - **The CPU:** i7-14700K, microcode 0x129, MSI MPG Z790I EDGE WIFI, BIOS 1.C0 (2024-08-13).
+    0x129 is Intel's August 2024 interim fix for the 13th/14th-gen instability; later microcode
+    (0x12B, 0x12F) covers more cases. A degrading CPU fits two crashes in three days, after 19 days
+    of S3–S10 load without one, but so do power, memory or GPU faults (guessed; not tested).
+  - **Wed 15:31 (corrects "sign-out" above):** winlogon started a power-off on behalf of SYSTEM
+    (reason 0x500ff), which ended the user session. Windows didn't actually restart. The trigger
+    is unknown.
+  - **Relaunched Sat 12:58:** the Windows throttle (pid 13352, mode full) and `sp_resume.sh`.
+    Gen 98 finishes from game 1,473. This is S11's first time on all 28 threads. Lost: Wed 21:41
+    to Sat 12:58.
