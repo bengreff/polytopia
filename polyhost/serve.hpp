@@ -125,6 +125,7 @@ struct Session {
     void reload() {
         log.clear();
         match = std::make_unique<env::Match>(api);
+        match->replayLabels = false;  // watching needs no legal lists (a 5,400-command game opens in 0.2 s, was 10.7 s)
         match->loadReplay(env::Spec(), watchStart, watchFinal);
         watchBase = watchAt = match->replayAt;
         watchTotal = match->replayCount;

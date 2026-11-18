@@ -646,6 +646,10 @@ public:
     // state's command stack is played one command at a time through ActionManager.
     Pin replayStack;
     int replayAt = 0, replayCount = 0;
+    // false: replayStep skips the labels (no legal list after each command; label = kNoDecision).
+    // Watching a game in the web app needs no legal moves, and computing them is most of a step's
+    // time (a 5,400-command game took 10.7 s to open, 0.2 s without them).
+    bool replayLabels = true;
 
     static int blobVersion(const std::string& blob) {
         if (blob.size() < 4) die("replay blob too short");
@@ -675,6 +679,10 @@ public:
         *player = get<uint8_t>(cmd, "<PlayerId>k__BackingField");
         *recorded = encode(cmd);
         bool endMatch = object_get_class(cmd) == api.cEndMatch;
+        if (!replayLabels) {
+            *label = kNoDecision;
+            return run(cmd);
+        }
         if (seatOf(*player) < 0 || endMatch) *label = kNoDecision;
         else if (*player != currentPlayer()) *label = kOutOfTurn;
         else {

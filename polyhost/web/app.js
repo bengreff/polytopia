@@ -657,7 +657,7 @@ function renderGameList() {
     r.innerHTML = `<span class="res ${res}">${res}</span><span class="when">${g.time || ''}</span>${spark(g.leads)}<span class="swing">${sw}</span>`
       + `<span>${name(1)} (${g.players?.[1] || 'player 1'}) vs ${name(2)} (${g.players?.[2] || 'player 2'}), ${g.turns ?? '?'} turns`
       + ` <span class="muted">${g.path}</span>${note ? ` <span class="note">${note}</span>` : ''}</span>`;
-    r.onclick = () => watchGame(g);
+    r.onclick = () => watchGame(g, true);
     return r;
   };
   const key = $('gsort').value, filt = $('gfilter').value, tag = $('gtag').value;
@@ -685,21 +685,30 @@ async function openWatchList() {
   $('watchview').style.display = 'flex';
 }
 for (const id of ['gsort', 'gfilter', 'gtag']) $(id).onchange = renderGameList;
-async function watchGame(g) {
+// A click in the list plays the game (play = true); the #watch= link starts autoplay itself.
+async function watchGame(g, play = false) {
   stopAutoplay(); sel = null; centeredFor = null; watchMeta = g;
+  $('watchview').style.display = 'none';  // answer the click at once: loading a long game takes a moment
+  toast(g.jump ? `Loading ${g.path} at turn ${g.jump.turn}…` : `Loading ${g.path}…`);
   state = await api(`/watch?path=${encodeURIComponent(g.path)}`, 'POST');
   if (g.jump) await jumpTo(g.jump.turn, g.jump.player);
-  $('watchview').style.display = 'none';
+  clearTimeout(toastTimer); $('toast').style.opacity = 0;
   fitBoard();
   resize(); render();
+  if (play) toggleAutoplay();
 }
-// Seeks a watched game to the start of `player`'s turn `turn` (the turn starts the server found).
+// Seeks a watched game to the start of `player`'s turn `turn` (the turn starts the server found): the
+// first turn start whose (turn, player) is at or past it. Two players alternate, so it is about turn start
+// 2t + p - 1: start one before that and step forward (2 requests, not one per turn). Stepping back is
+// rare and slower (the server replays from the start).
 async function jumpTo(turn, player) {
-  for (const ts of state.watch.turnStarts) {
-    const s = await api(`/wstep?to=${ts}`, 'POST');
-    if (s.turn > turn || (s.turn === turn && (!player || s.currentPlayer === player))) { state = s; return; }
-    state = s;
-  }
+  const ts = state.watch.turnStarts, at = k => api(`/wstep?to=${ts[k]}`, 'POST');
+  const hit = s => s.turn > turn || (s.turn === turn && (!player || s.currentPlayer === player));
+  let k = Math.max(0, Math.min(ts.length - 1, 2 * turn + (player ? player - 1 : 0) - 1));
+  let s = await at(k);
+  while (hit(s) && k > 0) s = await at(--k);
+  while (!hit(s) && k < ts.length - 1) s = await at(++k);
+  state = s;
 }
 $('watchgames').onclick = openWatchList;
 $('wlist').onclick = openWatchList;
