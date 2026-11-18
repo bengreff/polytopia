@@ -56,6 +56,12 @@ DEFAULTS = dict(
     skip_broken=False,     # a planned command not legal in the real game: skipped (True), or the raw
                            # policy finishes the turn from there (False, v1)
     budget=18.0,           # seconds: past this, the optional steps (repairs) are skipped
+    # Exploration lanes (research log S12, Ben 2026-11-18: find new strategies for the situation): candidate
+    # turns from outside the learner's habits, judged by the same critic as every other lane.
+    hot_lanes=0,           # lanes sampled from the learner at hot_temp instead of the usual temperature
+    hot_temp=1.0,
+    prior_lanes=0,         # lanes sampled from the prior network (P.prior, e.g. gen 0, trained on the human
+    prior_temp=0.5,        # games) at prior_temp; skipped if the agent has no prior network
 )
 
 MAXL = 64           # lane slots per sample
@@ -110,22 +116,24 @@ class V2:
         self._t = t
 
     # ---- lockstep play with the networks
-    def plan_lanes(self, ks, sample_ks):
+    def plan_lanes(self, ks, sample_ks, net=None, temp=None):
         """Lockstep on sample 0: lane k plays the planner's turn by its policy (argmax, or sampled at the
-        temperature for k in sample_ks) until it picks End Turn (not played). Appends to self.plans."""
+        temperature for k in sample_ks) until it picks End Turn (not played). Appends to self.plans.
+        net/temp: another network key or temperature for these lanes (the exploration lanes)."""
         P, env, sts = self.P, self.env, self.sts
+        net, temp = net or P.net, temp or P.temperature
         active = {k for k in ks if not sts[self.ls(0, k)].ended and sts[self.ls(0, k)].current == self.a_id}
         n = {k: 0 for k in ks}
         while active:
             kk = sorted(active)
             ids = [self.ls(0, k) for k in kk]
-            logits, _ = P.infer(P.net, ids, sts, env.observe([(i, 0) for i in ids]))
+            logits, _ = P.infer(net, ids, sts, env.observe([(i, 0) for i in ids]))
             acts = []
             for j, k in enumerate(kk):
                 st = sts[ids[j]]
                 row = logits[j][:len(st.legal)]
                 if k in sample_ks:
-                    z = (row - row.max()) / P.temperature
+                    z = (row - row.max()) / temp
                     p = np.exp(z) / np.exp(z).sum()
                     a = int(P.rng.choice(len(p), p=p))
                 else:
@@ -446,14 +454,28 @@ class V2:
             self.plans[k], self.kind[k] = [], 'net'
         self.plan_lanes(range(K), set(range(1, K)))
         self.lap('net_lanes')
+        # 1b. exploration lanes: the learner sampled hotter, and the prior network (DEFAULTS)
+        n_hot = int(o['hot_lanes'])
+        n_pri = int(o['prior_lanes']) if getattr(P, 'prior', None) else 0
+        for ks, kind, net, temp in ((range(K, K + n_hot), 'hot', None, o['hot_temp']),
+                                    (range(K + n_hot, K + n_hot + n_pri), 'pri', getattr(P, 'prior', None), o['prior_temp'])):
+            if not ks:
+                continue
+            for k in ks:
+                self.sts[self.ls(0, k)] = env.load(self.ls(0, k), spec, roots[0][0])
+                self.plans[k], self.kind[k] = [], kind
+            self.plan_lanes(ks, set(ks), net=net, temp=temp)
+        if n_hot + n_pri:
+            self.lap('explore_lanes')
         # 2. tactical lanes
         tac_info = []
         if o['lanes'] > 0:
             tac = Tactician(env, spec, self.scratch, **o['offence'])
             res = tac.search(self.off + ROOT, roots[0][1])
             ks = []
+            base = max(self.plans) + 1
             for r in res[:o['lanes']]:
-                k = K + len(ks)
+                k = base + len(ks)
                 self.sts[self.ls(0, k)] = env.load(self.ls(0, k), spec, r['blob'])
                 self.plans[k], self.kind[k] = list(r['seq']), 'tac'
                 ks.append(k)

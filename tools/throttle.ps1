@@ -3,8 +3,10 @@
 # when we have training we are doing").
 #
 # Throttle: the WSL VM runs on the 12 E-core logical CPUs (16-27) at BelowNormal priority from 17:00 to
-# 22:00, and at any hour while Roblox or Minecraft is open; on all 28 logical CPUs at Normal priority
-# otherwise. Checked every minute. It exits, giving the VM the full CPU back, once the training has
+# 22:00, and at any hour while Roblox or Minecraft is in use: open, with keyboard or mouse input at the
+# PC in the last 10 minutes (Ben, 2026-11-18: throttle when it's in use, not just open; before that, any
+# open game counted, and Roblox left running for days kept training at half speed). On all 28 logical
+# CPUs at Normal priority otherwise. Checked every minute. It exits, giving the VM the full CPU back, once the training has
 # not been running for 15 minutes. It has to be a Windows process: changing vmmemWSL's affinity needs
 # an elevated process, which a detached WSL job can't reach (2026-11-10: the WSL throttle pinned the VM
 # at 19:52 and never unpinned it).
@@ -28,15 +30,43 @@ $wsl = "$env:WINDIR\System32\wsl.exe"
 $resume = '/home/greff/poly/py_sp/sp_resume.sh'
 $games = 'RobloxPlayerBeta', 'RobloxStudioBeta', 'Minecraft.Windows'  # plus Java Minecraft (javaw with "minecraft" in its command line)
 
+$idleLimit = 10  # minutes: a game counts as in use if someone touched the keyboard or mouse this recently (Ben, 2026-11-18)
+
+Add-Type -Namespace Poly -Name Input -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+[DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO p);
+[DllImport("kernel32.dll")] public static extern uint WTSGetActiveConsoleSessionId();
+public static double IdleMinutes() {
+    var i = new LASTINPUTINFO(); i.cbSize = (uint)Marshal.SizeOf(i);
+    if (!GetLastInputInfo(ref i)) return -1;
+    return unchecked((uint)Environment.TickCount - i.dwTime) / 60000.0;
+}
+'@
+
 function Log($m) { Add-Content $log "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" }
 function Wsl([string[]]$a) { & $wsl -d Ubuntu-22.04 -- @a 2>&1 | Out-Null; return $LASTEXITCODE }
+# Minutes since the last keyboard or mouse input at the PC, or -1 if this process can't tell: only a
+# process in the signed-in console session sees it (the starter task runs there). `query user` reports
+# the console's idle time as the time since sign-in (4 days on 2026-11-18 while Roblox ran), so it isn't used.
+function Idle {
+    if ((Get-Process -Id $PID).SessionId -ne [Poly.Input]::WTSGetActiveConsoleSessionId()) { return -1 }
+    return [Poly.Input]::IdleMinutes()
+}
+# The game being played, or '': Roblox or Minecraft open AND someone at the PC in the last $idleLimit
+# minutes (an open game nobody has touched doesn't count). If idle time can't be read, open counts.
 function Game {
+    $g = ''
     $p = Get-Process -Name $games -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($p) { return $p.ProcessName }
-    $j = Get-CimInstance Win32_Process -Filter "Name = 'javaw.exe' OR Name = 'java.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match 'minecraft' } | Select-Object -First 1
-    if ($j) { return 'Minecraft' }
-    return ''
+    if ($p) { $g = $p.ProcessName }
+    else {
+        $j = Get-CimInstance Win32_Process -Filter "Name = 'javaw.exe' OR Name = 'java.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'minecraft' } | Select-Object -First 1
+        if ($j) { $g = 'Minecraft' }
+    }
+    if (-not $g) { return '' }
+    $i = Idle
+    if ($i -ge $idleLimit) { return '' }
+    return $(if ($i -lt 0) { "$g(open)" } else { "$g(idle $([int]$i) min)" })
 }
 function Apply($mask, $pri) {
     $p = Get-Process vmmemWSL -ErrorAction Stop
@@ -62,10 +92,11 @@ while (-not (Test-Path "$dir\polytopia_throttle.stop")) {
     $g = Game
     if ($h -ge 17 -and $h -lt 22) { $why = 'evening' } elseif ($g) { $why = $g } else { $why = '' }
     if ($why) { $mode = 'peak'; $mask = 0x0FFF0000; $pri = 'BelowNormal' } else { $mode = 'full'; $mask = 0x0FFFFFFF; $pri = 'Normal' }
+    $key = "$mode $($why -replace '\(.*\)', '')"  # the idle minutes in $why change every minute: not a mode change
     try {
         $out = Apply $mask $pri
-        if ("$mode $why" -ne $last) { Log "mode $mode $why -> $out" }
-        $last = "$mode $why"; $failed = $false
+        if ($key -ne $last) { Log "mode $mode $why -> $out" }
+        $last = $key; $failed = $false
     } catch {
         $out = "FAILED: $($_.Exception.Message)"
         if (-not $failed) { Log "mode $mode $why $out" }

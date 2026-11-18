@@ -3,6 +3,9 @@
 # championship human games (human_full), both with strategy conditioning z. Resumable: rerun this
 # script and each stage resumes from its last.pt; a finished stage has a DONE file. Stop: touch STOP.
 # Usage: hp1_chain.sh <run_dir>   (env: MB micro-batch, ACC accumulation, CAP GPU cap in GB)
+# Research log S12, item 7 (HP1 finished, run hp1d): stage 1 continues arm A's stage 1 to R7's budget, then a
+# fresh stage 2, then the HP1 tests:
+#   S1_INIT=~/runs/hp1a/s1/last.pt S1_STEPS=88000 S2_STEPS=40000 TESTS=1 hp1_chain.sh ~/runs/hp1d
 # Lives on the PC as ~/poly/hp/hp1_chain.sh (with copies of py/ in ~/poly/hp); this is the repo copy.
 R=${1:-$HOME/runs/hp1a}
 MB=${MB:-64}; ACC=${ACC:-4}; CAP=${CAP:-2.5}
@@ -39,7 +42,11 @@ run_stage() {  # name data steps lr extra...
   done
   return 1
 }
-run_stage s1 $HOME/polydata/m1v2 ${S1_STEPS:-12000} 2e-4 --val_games 10 --val_every 2000 --save_every 5000 || exit 1
-run_stage s2 $HOME/polydata/human_full 24000 1e-4 --init $R/s1/last.pt --val_games 40 --val_every 1000 --save_every 4000 --value_val_games 400 || exit 1
+run_stage s1 $HOME/polydata/m1v2 ${S1_STEPS:-12000} 2e-4 --val_games 10 --val_every 2000 --save_every 5000 ${S1_INIT:+--init $S1_INIT} || exit 1
+run_stage s2 $HOME/polydata/human_full ${S2_STEPS:-24000} 1e-4 --init $R/s1/last.pt --val_games 40 --val_every 1000 --save_every 4000 --value_val_games 400 || exit 1
 touch $R/ALL_DONE
+if [ -n "$TESTS" ] && [ ! -f $R/tests/DONE_all ]; then  # T1 (held-out imitation) and T3 (vs R7), tools/hp_tests.sh
+    echo "$(date '+%F %T') tests on $R/s2/best.pt" >> $R/chain.log
+    bash $HOME/poly/hp/hp_tests.sh $R/s2/best.pt $R/tests all
+fi
 echo "$(date '+%F %T') all stages done" >> $R/chain.log

@@ -52,6 +52,12 @@ PPO's clipped objective with the game's outcome as the only reward, plus a behav
   a x -grad KL(pi' || pi), and which stops once a row's probability is 1 + --clip times pi_old's. They
   are left out of the advantage normalization and of the KL early stop (`kl` is over the other
   decisions; `kl_search` is theirs). The critics train on every decision.
+- **Research log S12:** `--search_ce w` adds w x the cross-entropy toward the planner's choices (copy
+  them directly, as expert iteration does; the clipped term alone stops at a ratio of 1 + clip).
+  `--kl_exact`: the early stop watches the exact KL(pi_start || pi) over the legal rows, from a frozen
+  copy of the starting network (with the planner choosing every move, there are no sampled decisions
+  for the usual estimate). `--cap_loss`: games stopped at the turn cap count as a loss for both players
+  instead of being skipped, so a stalemate teaches something.
 
     python train_rl.py <init.pt> <rl_dir[,rl_dir2...]> <out_dir> --bc human1:0.5,m1v2:0.5 [--epochs 2]
 """
@@ -73,17 +79,20 @@ import train_bc
 MAX_LEGAL = 1024  # train_bc.collate's default max_legal
 
 
-def game_targets(files, turn_cost=0.0):
+def game_targets(files, turn_cost=0.0, cap_loss=False):
     """Per (file, player) of the agent seats of finished games: (advantage with the per-opponent
     baseline, outcome, reward z); and the per-opponent baseline. The reward of a win at turn T is
-    max(0.5, 1 - turn_cost T), of a loss 0."""
+    max(0.5, 1 - turn_cost T), of a loss 0. cap_loss: games stopped at the turn cap (the only unfinished
+    games selfplay.py saves) count as a loss for both players, instead of being skipped (research log S12)."""
     rows = []
     for f in files:
         z = np.load(f)
-        if not bool(z['ended']) or int(z['winner']) not in (1, 2):
+        ended = bool(z['ended']) and int(z['winner']) in (1, 2)
+        if not ended and not cap_loss:
             continue
         start = int(z['start_turn']) if 'start_turn' in z.files else 0
-        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner']), int(z['turns']) - start))
+        rows.append((f, int(z['opponent']), [int(p) for p in z['agent_seats']], int(z['winner']) if ended else 0,
+                     int(z['turns']) - start))
     win_z = lambda turns: max(0.5, 1.0 - turn_cost * turns)
     by_opp = {}
     for f, opp, seats, w, turns in rows:
@@ -279,6 +288,13 @@ def main():
     ap.add_argument('--turn_lambda', type=float, default=None, help='turn-clock credit: lambda 1 within a turn, this between turns')
     ap.add_argument('--search_adv', type=float, default=None,
                     help='search in the loop: the planner\'s decisions (selfplay.py --search_share) get this constant advantage (docstring)')
+    ap.add_argument('--search_ce', type=float, default=0.0,
+                    help='search in the loop: weight of a cross-entropy toward the planner\'s choices (its decisions\' played rows), '
+                         'beside --search_adv\'s clipped term: copies the planner directly (needs --search_adv)')
+    ap.add_argument('--kl_exact', action='store_true',
+                    help='--target_kl watches the exact KL(pi_start || pi) over the legal rows, from a frozen copy of the starting '
+                         'network, instead of the sampled-decision estimate (which says nothing when the planner chose every move)')
+    ap.add_argument('--cap_loss', action='store_true', help='games stopped at the turn cap count as a loss for both players (game_targets)')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -288,6 +304,14 @@ def main():
     cfg = ck.get('config', dict(d=256, layers=6))
     net = M.Net(**cfg).to(dev)
     net.load_state_dict(ck['model'])
+    if args.search_ce > 0 and args.search_adv is None:
+        ap.error('--search_ce needs --search_adv (the batches carry the planner\'s decisions only then)')
+    old = None
+    if args.kl_exact:  # the starting policy, frozen: the exact KL the early stop watches
+        old = M.Net(**cfg).to(dev).eval()
+        old.load_state_dict(ck['model'])
+        for prm in old.parameters():
+            prm.requires_grad_(False)
     ref = None
     if args.anchor and args.anchor_weight > 0:
         rk = torch.load(args.anchor, map_location='cpu')
@@ -299,7 +323,7 @@ def main():
 
     list_dir = lambda d: [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.npz') and not f.endswith('.tmp.npz')]
     files = [f for d in args.rl_dirs.split(',') for f in list_dir(d)]
-    adv, base, counts = game_targets(files, args.turn_cost)
+    adv, base, counts = game_targets(files, args.turn_cost, args.cap_loss)
     critics = []  # dict(name, net, privileged, opt, vals, out, src)
     for name, path, priv in (('critic', args.critic, False), ('pcritic', args.pcritic, True)):
         if not path:
@@ -342,7 +366,7 @@ def main():
                 gres.extend(g[~np.isnan(g) & (on if on is not None else True)].tolist())
         if args.search_adv is not None:
             print(f'search in the loop: {n_searched} decisions chosen by the planner get advantage {args.search_adv}', flush=True)
-        value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0)
+        value_norm = (float(np.mean(res)), float(np.std(res)) or 1.0) if res else (0.0, 1.0)  # none: the planner chose every move
         print(f'value baseline: {len(res)} decisions, mean z - v_old {value_norm[0]:.3f}, sd {value_norm[1]:.3f}, '
               f'squared error {np.mean(np.square(res)):.3f} (outcome variance {np.var([w for _, w, _ in adv.values()]):.3f} per game)',
               flush=True)
@@ -373,7 +397,7 @@ def main():
             wfiles = [f for f in wfiles if has_opp(f)]
         if wfiles:
             tc = time.time()
-            cadv.update(game_targets(wfiles, args.turn_cost)[0])
+            cadv.update(game_targets(wfiles, args.turn_cost, args.cap_loss)[0])
             for c in critics:
                 c['vals'] = dict(c['vals'], **critic_values(c['net'], wfiles, dev, args.workers, c['privileged']))
             cfiles += wfiles
@@ -442,6 +466,17 @@ def main():
         ent = -(p * logp_all.masked_fill(~b['mask'], 0)).sum(1).mean()  # padding is -inf: keep NaN out of the gradient
         val = F.binary_cross_entropy_with_logits(v.float(), b['won'])
         loss = pg - args.entropy * ent + args.value_weight * val
+        ce = torch.zeros((), device=dev)
+        if args.search_ce > 0:  # copy the planner's choices: -log pi(the row it played), its decisions only
+            sw = b['searched'].float()
+            ce = -(logp * sw).sum() / sw.sum().clamp(min=1)
+            loss = loss + args.search_ce * ce
+        klx = torch.zeros((), device=dev)
+        if old is not None:
+            with torch.no_grad(), train_bc.autocast(dev):
+                ologits, _, _ = old(b['tiles'], b['globals'], b['techs'], b['legal'], b['mask'])
+            ologp = torch.log_softmax(ologits.float() / args.temperature, 1)
+            klx = (ologp.exp() * (ologp - logp_all.detach()).masked_fill(~b['mask'], 0)).sum(1).mean()
         anc = torch.zeros((), device=dev)
         if ref is not None:  # KL(pi_ref || pi) on these positions
             with torch.no_grad(), train_bc.autocast(dev):
@@ -463,7 +498,8 @@ def main():
         step += 1
         with torch.no_grad():
             m = dict(pg=pg, ent=ent, value=val, bc=bcl, ratio=ratio.mean(), clipfrac=((ratio - 1).abs() > args.clip).float().mean(),
-                     kl=(b['logp'] - logp).mean(), anchor=anc)
+                     kl=(b['logp'] - logp).mean(), anchor=anc, **({'kl_exact': klx} if old is not None else {}),
+                     **({'ce_search': ce} if args.search_ce > 0 else {}))
             if args.search_adv is not None:  # the early stop watches the sampled decisions only
                 on = (~sm).float()
                 m.update(kl=((b['logp'] - logp) * on).sum() / on.sum().clamp(min=1),
@@ -483,9 +519,10 @@ def main():
             print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + '\n')
             log.flush()
-            if args.target_kl and rec['kl'] > args.target_kl:  # PPO's early stop: the policy has moved enough
-                print(f'stopping at step {step}: KL {rec["kl"]} > {args.target_kl}', flush=True)
-                log.write(json.dumps(dict(step=step, stopped='target_kl', kl=rec['kl'])) + '\n')
+            kl_key = 'kl_exact' if old is not None else 'kl'
+            if args.target_kl and rec[kl_key] > args.target_kl:  # PPO's early stop: the policy has moved enough
+                print(f'stopping at step {step}: {kl_key} {rec[kl_key]} > {args.target_kl}', flush=True)
+                log.write(json.dumps(dict(step=step, stopped='target_kl', kl=rec[kl_key])) + '\n')
                 break
     torch.save(dict(model=net.state_dict(), step=ck.get('step', 0), rl_from=args.init, config=cfg),
                os.path.join(args.out_dir, 'policy.pt'))

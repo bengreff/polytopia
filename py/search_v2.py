@@ -18,7 +18,7 @@ from search_loop import INFO as INFO_V1, find, pick  # noqa: F401 (find and pick
 from tactics import planner2
 
 INFO = INFO_V1 + ('kind',)
-KINDS = {'net': 0, 'tac': 1, 'rep': 2}
+KINDS = {'net': 0, 'tac': 1, 'rep': 2, 'hot': 3, 'pri': 4}  # hot, pri: the exploration lanes (S12)
 OFFSET = 1000
 SLOT_STRIDE = 10 ** 9  # no limit on plans x samples (planner v2 has 64 lane slots per sample)
 
@@ -27,8 +27,9 @@ class Agent:
     """What planner v2 reads from py/plan_agent.Planner, on top of selfplay's Inference: the learner
     ('A') makes the lanes and the replies, the fog critic ('C') scores them."""
 
-    def __init__(self, env, infer, plans, samples, temperature, rng):
+    def __init__(self, env, infer, plans, samples, temperature, rng, prior=None):
         self.env, self.q = env, infer
+        self.prior = prior  # the prior network's key ('H', loaded by selfplay) for the exploration lanes, or None
         self.K, self.D, self.temperature, self.rng = plans, samples, temperature, rng
         self.net = self.model = 'A'
         self.scorer = 'C'
@@ -45,7 +46,8 @@ class Agent:
 
 def plan_turn(env, infer, src, spec, opt, off, plans, samples, temperature, rng):
     """Plans the current player's turn in slot src. Returns (commands, info with INFO's fields)."""
-    played, v = planner2.plan_turn(Agent(env, infer, plans, samples, temperature, rng), spec, env.save(src), opt, off)
+    prior = 'H' if (opt or {}).get('prior_lanes', 0) > 0 else None
+    played, v = planner2.plan_turn(Agent(env, infer, plans, samples, temperature, rng, prior), spec, env.save(src), opt, off)
     info = dict(top=v['top_move_score'], chosen=v['best_score'], best=v['best_score'], mean=v['mean_score'], kl=0.0,
                 commands=len(played), broken=int(v['broken']), seconds=v['seconds'], lane=v['best'], spread=v['spread'],
                 noise=0.0, kind=KINDS[v['kind']], tac_lanes=v['tac_lanes'], repair_lanes=v['repair_lanes'])

@@ -2424,3 +2424,74 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   - (3) uses the new `tactics.match --b_net/--b_scorer` and runs from `~/poly/py_read`, a copy of
     the repo's py/, because `py_sp` has no `plan_agent.py`. A 2-game test there capped at 4 turns
     ran without errors.
+- **(2) vs `s10c` gen 95, gens 104–107 (measured, 2026-11-18 15:22–15:44, 200 games each):** 123 +
+  122 + 129 + 122 = **496/800 = 62.0%**, Wilson CI 58.6–65.3, about +85 Elo (derived, CI +60 to
+  +110). The S10 read had `s10x` vs `s10c` at 53.2%.
+- **Gen 107 vs gen 0 (rerun, measured):** 168/200 = 84.0% (CI 78.3–88.4).
+- **(3)** was at 142 of 200 games at 17:34, 51–52% so far (interim, not a result).
+- **The watch app** (2026-11-18): a click in the list now plays the game; the server skips legal
+  lists while watching, so a 150-turn game opens in 0.2 s instead of 10.7 s (measured, same final
+  board). Eight gen 107 vs gen 106 games are in its "Sent by Claude" list. Two hit the 150-turn cap
+  and 12 of 200 went past 50 turns, with the border frozen for 50–110 turns: neither network can
+  break a stalemate. None of gen 107's 1,500 training games was capped (sampled play at
+  temperature 0.5 rarely stalls; greedy play does).
+
+## S12 — the planner on every turn, exploration lanes, stalemate cost, exploiters, strategy starts (pre-registered 2026-11-18, before the launch)
+- **Ben's decision (2026-11-18, after the S11 read's tests 1 and 2):** "The biggest lever I think is
+  encouraging the model to find new strategies based on the situation it is in... Do 1+2+3+4+5+6
+  (not just knight chains, that is ONE strategy of MANY, look in human games), plus 7. Go."
+- **What goes in (the seven items):**
+  1. **Planner v2 on every learner turn** (`search_share` 1.0) and the network trained to copy the
+     planner's choices: `train_rl --search_ce 1.0` (cross-entropy toward the played lane's rows) beside
+     `--search_adv 1.0`. With no sampled decisions left, the KL early stop watches the exact
+     KL(pi_start || pi) over the legal rows (`--kl_exact`, a frozen copy of the starting network), at
+     0.05 per generation. **Exploration lanes** (Ben's lever): besides its 16 network lanes and 3 tactical
+     lanes, the planner makes 4 lanes sampled from the learner at temperature 1.0 and 4 from gen 0 (R7,
+     the human-trained network) at 0.5 (`planner2` `hot_lanes`/`prior_lanes`; off by default, so Ben's
+     play server is unchanged). The critic judges them like any other lane, so a turn from outside the
+     learner's habits gets played, and then copied, only where it scores best.
+  2. **Stalemates cost something:** a game stopped at the 150-turn cap counts as a loss for both
+     (`--cap_loss`; before, capped games were skipped), and a win at turn T is worth max(0.5,
+     1 − 0.005 T) (`turn_cost`; only ever tried bundled with three other changes, in S3b).
+  3. **A search-based exploiter and a league:** track `e12` plays only `s12`'s latest generation, with
+     the same planner, 500 games a generation, no anchor, KL limit 0.1; it resets to `s12`'s latest after
+     4 generations (or after beating it by 65%). `s12` plays `e12`'s 2 latest generations in 15% of its
+     games.
+  4. **The throttle counts a game as in use** only with keyboard or mouse input at the PC in the last 10
+     minutes (`tools/throttle.ps1`); 17:00–22:00 stays throttled.
+  5. **Throughput:** a separate piece of work on planner-in-the-loop self-play speed; merged between
+     generations only if it doesn't change what gets played.
+  6. **Strategy starts:** training positions from human games a little before a player starts a
+     recognisable strategy, balanced over many kinds (`docs/design/strategy-starts.md`). They replace
+     `human_starts_big` as the training starts (share 0.3 → 0.4) from the first generation after they
+     are built; until then `human_starts_big` as in S11. The evaluation positions stay the same.
+  7. **The human pass finished (`hp1d`):** HP1 arm A's stage 1 continued to R7's budget (12k + 88k
+     steps on the AI-teacher games), then a fresh 40k-step stage 2 on the championship games, then HP1's
+     tests T1 and T3 against R7. Running beside S12 (started 17:32).
+- **Tracks** (`tools/s12_setup.sh`), both from `s11x` gen 107 and `critic_g107.pt`, run in step in the
+  rotation (`s12` gen g, then `e12` gen g against it). `s11x107` is the frozen yardstick (every later
+  generation is gen 107). Everything not listed is as `s11x`: GAE λ 0.97 (now only for the few
+  decisions the planner didn't choose), entropy 0, KL anchor to R7 0.03, lr 3e-5, temperature 0.5,
+  1,500 games, pool self 0.5 plus gen 0 and the last 7 generations, 3 inference shards. Read at gen 119.
+- **No attribution:** the items go in together (Ben's call), as in S3b, so the read says whether the
+  bundle beats S11's end, not which item did it. What can be seen inside the run: how often an
+  exploration lane is the one played, the share of long and capped games, and the exploiter's rates.
+- **Evaluations, each generation:** `s12` vs `s11x107` (the yardstick), vs the previous generation, vs
+  gen 0; from human positions vs gen 0 and vs `s11x107`; every third generation vs Crazy and
+  CrazyPlus; indicators. `e12` vs `s12`'s same generation.
+- **Read at gen 119:**
+  1. **Raw network vs gen 107:** gens 116–119 vs `s11x107`, 800 games. Better > 55%, worse < 45%.
+  2. **With the planner, as Ben plays it:** gen 119 + v2 (its critic) vs gen 107 + v2 (`critic_g107`),
+     200 games, `tactics.match --b_net/--b_scorer`.
+  3. **Stalemates:** in the `prev` and yardstick evaluations of gens 116–119, the share of games past
+     50 turns (gen 107 vs gen 106: 12/200 = 6%) and capped games (2/200).
+  4. **Exploitability:** `e12`'s best rate against its target in gens 116–119 vs in gens 108–111.
+  5. **Strategy:** indicators vs gen 107 (techs by turn 20, unit mix, stars banked, win turn), and
+     the share of turns where an exploration lane was played, by generation.
+  6. **Ben's games** against gen 119 + v2.
+- **Expected (guessed):** (1) 56–65%; (2) at least 55%; (3) under 3% past 50 turns, no capped games;
+  (4) lower at the end than at the start; (5) exploration lanes played on 5–20% of turns at first,
+  falling as the network absorbs what they find.
+- **Falsifier:** (1) at or below 52% (about S11's per-12-generation drift without search), or (2) below
+  50%. If the exploration lanes are almost never played (< 1% of turns), they aren't finding anything
+  and are the first thing to drop.

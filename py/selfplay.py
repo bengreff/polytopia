@@ -298,6 +298,9 @@ def main():
             args.search_v2 = json.load(open(v2)) if os.path.exists(v2) else json.loads(v2)
             print(f'search in the loop: planner v2, options {json.dumps(args.search_v2)}', flush=True)
         nets['C'] = load_net(args.search_scorer or args.net, args.device)
+        if args.search_v2 is not None and args.search_v2.get('prior_lanes', 0) > 0:  # planner v2's exploration lanes (S12)
+            nets['H'] = load_net(args.search_v2['prior'], args.device)
+            print(f"search in the loop: {args.search_v2['prior_lanes']} prior lanes from {args.search_v2['prior']}", flush=True)
         if args.search_plans * args.search_samples > search.SLOT_STRIDE:
             ap.error(f'--search_plans x --search_samples must be at most {search.SLOT_STRIDE}')
     if args.shard:
@@ -309,7 +312,7 @@ def main():
     if search:  # the scorer's estimates in fp32: lanes differ by a few hundredths
         infer.fast['C'] = fast_infer.FastPolicy(nets['C'], args.device, bf16=False)
         infer.checked.add('C')
-    s_count = dict(turns=0, seconds=0.0, gain=0.0, chosen_gain=0.0, kl=0.0, broken=0, commands=0, forced=0, tac=0, rep=0)
+    s_count = dict(turns=0, seconds=0.0, gain=0.0, chosen_gain=0.0, kl=0.0, broken=0, commands=0, forced=0, tac=0, rep=0, hot=0, pri=0)
 
     results, log_lock = [], threading.Lock()
     out = open(args.results, 'a') if args.results else None
@@ -343,7 +346,8 @@ def main():
         return (f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each; best lane - top-move lane {c['gain'] / t:.3f}, "
                 f"drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) {c['kl'] / t:.3f}, "
                 f"broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played"
-                + (f", lanes played: tactical {c['tac'] / t:.1%}, repair {c['rep'] / t:.1%}" if args.search_v2 is not None else ''))
+                + (f", lanes played: tactical {c['tac'] / t:.1%}, repair {c['rep'] / t:.1%}, "
+                   f"hot {c.get('hot', 0) / t:.1%}, prior {c.get('pri', 0) / t:.1%}" if args.search_v2 is not None else ''))
 
     def new_game(env, slot):
         with jobs_lock:
@@ -475,7 +479,8 @@ def main():
                     with log_lock:
                         for k, x in (('turns', 1), ('seconds', info['seconds']), ('gain', info['best'] - info['top']),
                                      ('chosen_gain', info['chosen'] - info['top']), ('kl', info['kl']), ('commands', len(g['plan'])),
-                                     ('tac', info.get('kind') == 1), ('rep', info.get('kind') == 2)):
+                                     ('tac', info.get('kind') == 1), ('rep', info.get('kind') == 2),
+                                     ('hot', info.get('kind') == 3), ('pri', info.get('kind') == 4)):
                             s_count[k] += x
             if g['plan']:
                 r = search.find(st, g['plan'][0])
@@ -664,7 +669,8 @@ def run_shards(args, k):
             print(f"searched {c['turns']} turns, {c['seconds'] / t:.2f} s each (per thread); best lane - top-move lane "
                   f"{c['gain'] / t:.3f}, drawn lane - top-move lane {c['chosen_gain'] / t:.3f}, KL(weights || uniform) "
                   f"{c['kl'] / t:.3f}, broken {c['broken'] / t:.1%}, {c['forced']} of {c['commands']} planned commands played"
-                  + (f", lanes played: tactical {c.get('tac', 0) / t:.1%}, repair {c.get('rep', 0) / t:.1%}" if args.search_v2 is not None else ''),
+                  + (f", lanes played: tactical {c.get('tac', 0) / t:.1%}, repair {c.get('rep', 0) / t:.1%}, "
+                     f"hot {c.get('hot', 0) / t:.1%}, prior {c.get('pri', 0) / t:.1%}" if args.search_v2 is not None else ''),
                   flush=True)
         print(f'{n} games ({summary}), {decisions} decisions, {el:.0f} s, {decisions / el:.0f} decisions/s, '
               f'{k} shards, GPU busy {np.mean([p["busy"] for p in parts]) / el:.0%} per shard, '
