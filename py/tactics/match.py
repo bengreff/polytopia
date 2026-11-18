@@ -7,7 +7,8 @@ py/turn_search.py. Side A and side B are each one of:
   --a_opts / --b_opts overriding planner2.DEFAULTS;
 - net:<checkpoint>: the network playing greedily from its own view (no planning);
 - crazyplus: the CrazyPlus bot (py/crazyplus, full view, as in the S10 evaluations).
-Both planners use the same --net (policy and reply model) and --scorer; a planner's turn is planned
+Both planners use --net (policy and reply model) and --scorer, unless --b_net / --b_scorer give side
+B its own (research log S11 read: gen 107 + v2 against s10x gen 95 + v2); a planner's turn is planned
 on a saved copy of the game (exactly as agent_server.py does for Ben), and the commands it returns
 are played in the game.
 
@@ -134,19 +135,25 @@ def worker(args, jobs, port, out_q, device=None):
     todo = list(jobs)
     while todo:
         with polyenv.launch(port) as env:  # a game process that dies is started again for the next game
-            base = None
-            if any(k in ('v1', 'v2') for k in (args.a, args.b)):
-                base = plan_agent.Planner(env, args.net, args.scorer, dev, args.plans, args.samples, args.temperature)
+            def planner(net, scorer):
+                p = plan_agent.Planner(env, net, scorer, dev, args.plans, args.samples, args.temperature)
                 if not args.graphs:  # no CUDA graphs: less GPU memory per process (the same numbers, a little slower)
-                    for f in (base.net, base.model, base.scorer):
+                    for f in (p.net, p.model, p.scorer):
                         f.graphs = False
+                return p
+            b_nets = (args.b_net or args.net, args.b_scorer or args.scorer)
+            own_b = b_nets != (args.net, args.scorer) and args.b in ('v1', 'v2')
+            base = planner(args.net, args.scorer) if args.a in ('v1', 'v2') or (args.b in ('v1', 'v2') and not own_b) else None
+            base_b = planner(*b_nets) if own_b else base
+            if own_b and port == args.port:
+                print(f'side B plans with its own networks: {b_nets[0]}, critic {b_nets[1]}', flush=True)
             while todo:
                 seed, seat = todo.pop(0)
                 tribes = tribes_for(seed)
                 spec = polyenv.Spec(tribes=tribes, bots=(None, None), seed=seed)
                 a_id = seat + 1
                 A = Side(args.a, a_opts, base, env, dev, seed * 2 + 0)
-                B = Side(args.b, b_opts, base, env, dev, seed * 2 + 1)
+                B = Side(args.b, b_opts, base_b, env, dev, seed * 2 + 1)
                 st = env.new(GAME, spec)
                 A.start(spec, a_id)
                 B.start(spec, 3 - a_id)
@@ -182,6 +189,8 @@ def main():
     ap.add_argument('--b_opts', default=None)
     ap.add_argument('--net', required=True)
     ap.add_argument('--scorer', required=True)
+    ap.add_argument('--b_net', default=None, help="side B's policy and reply model, if not --net")
+    ap.add_argument('--b_scorer', default=None, help="side B's critic, if not --scorer")
     ap.add_argument('--plans', type=int, default=16)
     ap.add_argument('--samples', type=int, default=2)
     ap.add_argument('--temperature', type=float, default=0.5)
@@ -240,7 +249,7 @@ def main():
     w = sum(r['res'] == 'win' for r in results)
     lo, hi = wilson(w, n)
     print('SUMMARY ' + json.dumps(dict(a=args.a, b=args.b, a_opts=args.a_opts, b_opts=args.b_opts, net=args.net, scorer=args.scorer,
-                                       first_seed=args.first_seed, games=n, a_wins=w, a_rate=w / max(n, 1), ci=[lo, hi],
+                                       b_net=args.b_net, b_scorer=args.b_scorer, first_seed=args.first_seed, games=n, a_wins=w, a_rate=w / max(n, 1), ci=[lo, hi],
                                        capped=sum(r['res'] == 'cap' for r in results),
                                        a_wins_by_seat=[sum(r['res'] == 'win' for r in results if r['seat'] == s) for s in (0, 1)],
                                        seconds=round(time.time() - t0))), flush=True)

@@ -30,7 +30,18 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-14, 14:35): S11 at gen 99; the starter restarts training after any sign-in (`s11x`, planner v2 in the loop on half the turns)
+## Now (2026-11-18, 15:40): S11 done (gen 107); the read is running on the PC
+
+- **Test (1) passes:** gens 104–107 vs their start, 477/800 = 59.6% (CI 56.2–63.0). Research log
+  "S11 read".
+- **Running:** `tools/s11_read.sh` (results in `~/runs/s11_read`, `read.log`, `DONE` when
+  finished):
+  - (2) vs `s10c` gen 95;
+  - gen 107 vs gen 0;
+  - (3) planner vs planner.
+- **Throttle:** pid 12428, started from ssh without `-Start`. With nothing pending, the starter
+  task does nothing. The throttle exits 15 min after the read's last python job.
+- Then: Ben's games against gen 107 + v2. (`s11x`, planner v2 in the loop on half the turns)
 
 - **The PC crashed twice** (research log "S11" run notes, 2026-11-14):
   - Wed 21:41, under S11's load, with a fatal hardware error reported at boot;

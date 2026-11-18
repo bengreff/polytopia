@@ -7,7 +7,9 @@
 #                         track rotation (tools/tracks.sh), each only if it isn't already running
 #   sp_resume.sh check    exit 0 if training is pending: no ~/runs/sp/TRACKS_STOP, and a track in
 #                         tracks.list without STOP that hasn't reached its LAST generation
-#   sp_resume.sh status   exit 0 if the rotation or an sp_loop is running
+#   sp_resume.sh status   exit 0 if any Polytopia job is running: the rotation, or anything on the
+#                         project's python (~/polyvenv: sp_loop, self-play, evaluations, the planner
+#                         matches of a read), so the throttle stays on beside them
 #
 # Run by the Windows task PolytopiaTrainingStarter after Ben signs in (tools/throttle.ps1 -Start, which
 # then throttles the VM), or by hand: DELAY=0 bash ~/poly/py_sp/sp_resume.sh. Logs to ~/runs/sp/tracks.log.
@@ -16,7 +18,8 @@ R=/home/greff/runs/sp
 P=/home/greff/poly/py_sp
 log() { echo "$(date '+%F %T') resume: $*" >> $R/tracks.log; }
 running() { pgrep -f "[/]home/greff/$1" > /dev/null; }
-training() { running poly/py_sp/tracks.sh || pgrep -f "[s]p_loop.py $R/" > /dev/null; }
+rotation() { running poly/py_sp/tracks.sh || pgrep -f "[s]p_loop.py $R/" > /dev/null; }
+training() { rotation || pgrep -f "^/home/greff/polyvenv/bin/python" > /dev/null; }
 pending() {
     [ -f $R/TRACKS_STOP ] && return 1
     for t in $(cat $R/tracks.list 2>/dev/null); do
@@ -41,7 +44,7 @@ if [ ! -f $R/WATCHDOG_STOP ] && ! running poly/py_sp/sp_watchdog.sh; then
     LIMIT=120 setsid nohup $P/sp_watchdog.sh > /dev/null 2>&1 < /dev/null &
     log "watchdog started (LIMIT 120)"
 fi
-if ! training; then
+if ! rotation; then
     setsid nohup $P/tracks.sh >> $R/tracks.out 2>&1 < /dev/null &
     log "rotation started (tracks: $(tr '\n' ' ' < $R/tracks.list))"
 fi

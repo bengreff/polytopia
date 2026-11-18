@@ -2387,3 +2387,40 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
       start did nothing.
     - Gen 99's first start, at 14:27, raced the throttle's first status and took 28 processes, so
       it was stopped and restarted through the task. The 200 finished games were kept.
+
+### S11 read (started 2026-11-18): test (1) passes
+
+- **The run:** `s11x` reached gen 107 (its LAST) on 2026-11-16 20:38.
+  - The first try of gen 107's games stalled after about 900 games, around 08:10, and was killed
+    (exit -9) at 15:03; the retry finished them. The cause wasn't found: no watchdog entry, no
+    OOM in dmesg.
+  - Gen 107's evaluation against gen 0 stopped at 20 of 200 games when the loop ended; it is
+    rerun in the read.
+  - The throttle was on most of the time: Roblox was open overnight and most afternoons.
+- **(1) Raw network vs its start, gens 104–107 vs `s10x` gen 95 (measured; the loop's rival
+  evaluations, 200 games each):** 118 + 117 + 118 + 124 = **477/800 = 59.6%**, Wilson CI
+  56.2–63.0, about +68 Elo (derived, CI +43 to +92).
+  - Pre-registered: better above 55%, expected 56–62%, falsifier below 52%. **Passes.**
+  - By generation (vs the same start): 96–101 at 52.5, 52.0, 50.5, 56.5, 57.5, 56.5; 102–107 at
+    61.5, 57.0, 59.0, 58.5, 59.0, 62.0.
+  - From human positions vs the start: gen 96 48.0%, 99 54.5%, 102 54.0%, 105 54.0% (200 games
+    each).
+  - vs gen 0: 78.5–86.5%, gens 104–106 at 83.0, 79.5 and 81.5%. `s10x` gen 95 was 79.5%, so the
+    gain over the start shows little against gen 0.
+- **(4) Indicators, self-play games, per player (gen 95 of `s10x` → mean of `s11x` gens 104–107;
+  measured):**
+  - techs by turn 20: 6.67 → 6.49;
+  - catapult share: 15.4% → 13.6%;
+  - stars banked: 6.32 → 5.13;
+  - cities at turn 10: 3.99 → 3.99; at turn 20: 5.71 → 5.83;
+  - win turn: 31.6 → 27.4; attacks per game: 83.7 → 72.6.
+  - Expected fewer catapults and more techs: catapults down, techs not up. There is no knight
+    column in these indicators.
+- **Running on the PC (`tools/s11_read.sh`, results in `~/runs/s11_read`, throttled while Roblox is
+  open):**
+  - (2) gens 104–107 vs `s10c` gen 95, 200 games each;
+  - gen 107 vs gen 0;
+  - (3) gen 107 + v2 vs `s10x` gen 95 + v2, 200 games.
+  - (3) uses the new `tactics.match --b_net/--b_scorer` and runs from `~/poly/py_read`, a copy of
+    the repo's py/, because `py_sp` has no `plan_agent.py`. A 2-game test there capped at 4 turns
+    ran without errors.
