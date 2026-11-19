@@ -3,7 +3,7 @@
 # the WSL distro with every job in it; self-play resumes from the games already on disk).
 #
 #   sp_resume.sh          start, only if training is pending: the self-play watchdog (tools/sp_watchdog.sh,
-#                         LIMIT 120 for planner v2's long games; not with ~/runs/sp/WATCHDOG_STOP) and the
+#                         LIMIT 45: at 58-140 games an hour (S12, measured) 45 min without a game is a stall; not with ~/runs/sp/WATCHDOG_STOP) and the
 #                         track rotation (tools/tracks.sh), each only if it isn't already running
 #   sp_resume.sh check    exit 0 if training is pending: no ~/runs/sp/TRACKS_STOP, and a track in
 #                         tracks.list without STOP that hasn't reached its LAST generation
@@ -41,8 +41,8 @@ if ! pending; then
     exit 0
 fi
 if [ ! -f $R/WATCHDOG_STOP ] && ! running poly/py_sp/sp_watchdog.sh; then
-    LIMIT=120 setsid nohup $P/sp_watchdog.sh > /dev/null 2>&1 < /dev/null &
-    log "watchdog started (LIMIT 120)"
+    LIMIT=45 setsid nohup $P/sp_watchdog.sh > /dev/null 2>&1 < /dev/null &
+    log "watchdog started (LIMIT 45)"
 fi
 if ! rotation; then
     setsid nohup $P/tracks.sh >> $R/tracks.out 2>&1 < /dev/null &

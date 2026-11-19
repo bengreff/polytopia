@@ -2542,4 +2542,27 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
 - **A bf16 warning (measured):** one shard logged "fast inference for P4 chose differently from
   Net.forward on 1 of 1 positions" (the once-per-network check on the first batch). `s11x` gens
   104–107 logged none. Likely a near-tie on a strategy start; watch whether it recurs.
+- **Night 1 (2026-11-18/19, measured): self-play stalled four times.** Each run made 118–159 games in
+  its first hour, then no games until the watchdog killed it 2 h later (23:00, 02:10, 05:04, 07:57).
+  GPU memory (`hp1d/gpu.log`, every 5 min) rose from 10.4–12.3 GB at each start to 15.0–15.6 GB in
+  about an hour and then stayed flat to the MiB until the kill; it fell about 5 GB at each kill.
+  - Three of the four stalls had no error at all. The likely cause (not proven): the 8 exploration
+    lanes make batches over 128 positions common, and the old code runs those eagerly, so PyTorch's
+    cache grows with every new batch size until the card is full and WSL pages.
+  - GPU faults on top: Windows logged nvlddmkm 13 "Graphics FECS Exception" (with 153) at 17:35:58,
+    21:09:19 and 08:18:02. The 17:36 one killed the S11 read's worker; the 08:18 one killed `hp1d`
+    (its chain retried at 08:20) and one S12 shard. 12 such events in 14 days, 10 of them since
+    2026-11-18 with 4–5 GPU jobs plus Roblox.
+  - 594 of gen 108's 1,500 games by 08:17, in 12 h 40 min.
+- **Fixes (2026-11-19, 08:20–08:30):**
+  - The throughput change went in by hand, mid gen 108, not between generations as pre-registered:
+    waiting for the learning step would have cost about another day of stalls. It makes the same
+    choices, so gen 108's games mix the two versions; the deviation is only that.
+  - Restarting the run by hand left the old run's shards running; they held the engine ports and
+    the retry's shards failed, so the step was restarted once more. sp_loop then used its 3 tries
+    and tracks.sh's failure count is 2: one more sp_loop failure (3 more stalls) stops `s12`.
+  - New run from 08:23 at full speed (28 game processes), GPU at 8.7 GB 2 minutes in (10.4–12.3 GB
+    at last night's starts).
+  - Watchdog limit 120 → 45 min (`tools/sp_resume.sh`): at 58–140 games an hour, 45 minutes without
+    one is a stall, and a stall now costs 45 minutes instead of 2 hours.
 

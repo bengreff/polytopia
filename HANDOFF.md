@@ -30,7 +30,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-18, 19:40): S12 running on the PC; S11 read done
+## Now (2026-11-19, 08:40): S12 gen 108 running (stalls overnight, fixes in); S11 read done
 
 - **S11 read** (research log "S11 read"): (1) 59.6% vs its start, passes; (2) 62.0% vs `s10c` gen 95;
   (3) planner vs planner 103/187 = 55.1% (CI 47.9–62.0): not falsified, not significant; 13 games
@@ -47,11 +47,13 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - Throughput (agent B, `docs/design/throughput.md`): the inference-loop change is merged in the
     repo, 1.11–1.19× (measured). Deploy it to `~/poly/py_sp` only between generations (never while
     a `selfplay.py` of the rotation runs). The lane dedup is not merged (branch
-    `worktree-agent-a67fb6d390cd0d5b7`). **Armed 20:54:** `~/poly/deploy_between_gens.sh` (pid in
-    `~/poly/deploy_between_gens.pid`) copies fast_infer.py, tactics/plan_check.py and selfplay.py from
-    `~/poly/s12_stage/py` at the first learning step with no self-play running, logs "deploy:" to
-    `~/runs/sp/tracks.log` and keeps the old files as `*.prev`. Don't rerun the S12 deploy (it clears
-    `s12_stage`) before then. After it: check the next generation's `g*.log` for errors.
+    `worktree-agent-a67fb6d390cd0d5b7`). **Deployed by hand 2026-11-19 08:20, mid gen 108** (old files
+    `~/poly/py_sp/*.prev`), because self-play stalled four times overnight with GPU memory full.
+  - **Watch:** GPU memory over a run (`~/runs/hp1d/gpu.log`, every 5 min; it rose to ~15.4 GB within
+    an hour on the old code), `~/runs/sp/watchdog.log` (limit now 45 min, pid 77807), and nvlddmkm
+    errors in the Windows System log (GPU faults: 3 on 11-18/19). tracks.sh's failure count for `s12`
+    is 2: one more sp_loop failure stops the track (then remove `~/runs/sp/s12/STOP` once fixed and
+    restart tracks.sh by pid).
 - **hp1d** (HP1 finished to R7's budget, item 7): `tools/hp1_chain.sh` in `~/poly/hp`, results in
   `~/runs/hp1d`, chain pid 50701, about 20 h from 17:32 (derived); runs T1/T3 when done.
 - **Throttle:** new `tools/throttle.ps1` since 19:36 (pid 14216, started by the task, so it sees Ben's
