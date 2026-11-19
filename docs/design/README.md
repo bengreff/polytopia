@@ -16,6 +16,7 @@ the decision log below records what is settled.
 | [weight-space.md](weight-space.md) | Plan v2 (2026-11-04): what the MIT weight-space post really showed (the critique and replications), what carries over (defect-fixing with forward passes, not raw reading or writing), and experiment WSP-1 (critic audit and edit, one policy habit, an ExPO control) |
 | [superhuman-plan.md](superhuman-plan.md) | v6 restrategy (2026-10-30): what holds the network back, the five pillars, and the S9 five-track experiment |
 | [strategy-starts.md](strategy-starts.md) | Strategy-tagged start positions (2026-11-18): 18 kinds of strategy detected in the human games, success rules, counts, and a balanced set of 11,490 start states on the PC |
+| [throughput.md](throughput.md) | Self-play speed with planner v2 in the loop (2026-11-18): where the time goes, the inference-loop change (1.11–1.19×, merged), lane dedup (not merged), how equivalence was checked |
 | [reviews/2026-10-20.md](reviews/2026-10-20.md) | Adversarial review findings, and what was done with each |
 
 ## Goals (Ben, 2026-10-20)

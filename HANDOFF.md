@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-10 evening: S10 read; S11 running, planner v2 in the loop)
+# Handoff: Polytopia AI (2026-11-18 evening: S11 read done; S12 running, the planner on every turn)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -30,18 +30,31 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-18, 15:40): S11 done (gen 107); the read is running on the PC
+## Now (2026-11-18, 19:40): S12 running on the PC; S11 read done
 
-- **Test (1) passes:** gens 104–107 vs their start, 477/800 = 59.6% (CI 56.2–63.0). Research log
-  "S11 read".
-- **Running:** `tools/s11_read.sh` (results in `~/runs/s11_read`, `read.log`, `DONE` when
-  finished):
-  - (2) vs `s10c` gen 95;
-  - gen 107 vs gen 0;
-  - (3) planner vs planner.
-- **Throttle:** pid 12428, started from ssh without `-Start`. With nothing pending, the starter
-  task does nothing. The throttle exits 15 min after the read's last python job.
-- Then: Ben's games against gen 107 + v2. (`s11x`, planner v2 in the loop on half the turns)
+- **S11 read** (research log "S11 read"): (1) 59.6% vs its start, passes; (2) 62.0% vs `s10c` gen 95;
+  (3) planner vs planner 103/187 = 55.1% (CI 47.9–62.0): not falsified, not significant; 13 games
+  lost to one CUDA launch failure at 17:36 with four jobs on the GPU.
+- **S12** (research log "S12", pre-registered; Ben: "Do 1+2+3+4+5+6 ... plus 7. Go."):
+  - Tracks `s12` (main) and `e12` (its search-based exploiter) from `s11x` gen 107
+    (`tools/s12_setup.sh`); yardstick `s11x107`. LAST 119 for both; read at gen 119, about a week
+    (guessed).
+  - The planner on every learner turn with exploration lanes (`planner.json` in each track:
+    4 hot lanes, 4 lanes from gen 0), `train_rl --search_ce 1.0 --kl_exact --cap_loss`, turn cost
+    0.005, strategy starts (`~/polydata/strategy_starts`, share 0.4), league share 0.15.
+  - Code on the PC: `~/poly/py_sp` (S11's kept in `~/poly/py_sp_s11`). Started 19:36: `s12` gen 108
+    first.
+  - Throughput (agent B, `docs/design/throughput.md`): the inference-loop change is merged in the
+    repo, 1.11–1.19× (measured). Deploy it to `~/poly/py_sp` only between generations (never while
+    a `selfplay.py` of the rotation runs). The lane dedup is not merged (branch
+    `worktree-agent-a67fb6d390cd0d5b7`).
+- **hp1d** (HP1 finished to R7's budget, item 7): `tools/hp1_chain.sh` in `~/poly/hp`, results in
+  `~/runs/hp1d`, chain pid 50701, about 20 h from 17:32 (derived); runs T1/T3 when done.
+- **Throttle:** new `tools/throttle.ps1` since 19:36 (pid 14216, started by the task, so it sees Ben's
+  input): 17:00–22:00, and while Roblox or Minecraft has had input in the last 10 min.
+- **Ben's open calls:** send the Midjiwan email (permission for a labelled AI account; draft in the
+  chat of 2026-11-18); BIOS "Restore on AC Power Loss"; keep the power strip on.
+- Then: Ben's games against gen 107 + v2.
 
 - **The PC crashed twice** (research log "S11" run notes, 2026-11-14):
   - Wed 21:41, under S11's load, with a fatal hardware error reported at boot;

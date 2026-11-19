@@ -71,7 +71,7 @@ class FastPolicy:
     def __init__(self, net, device, graphs=True, bf16=True):
         self.net, self.device, self.graphs = net.eval(), device, graphs and device == 'cuda'
         self.bf16 = bf16 and device == 'cuda'
-        self.cache = {}  # (B, N) -> (static inputs, static outputs, graph)
+        self.cache = {}  # (B, N) -> (static inputs, static outputs, graph, staging)
         self.pool = shared_pool() if self.graphs else None
 
     @torch.no_grad()
@@ -83,24 +83,37 @@ class FastPolicy:
         B, N = bucket(n_real, B_BUCKETS), bucket(n_rows, N_BUCKETS)
         if (B, N) not in self.cache:
             self.cache[(B, N)] = self.capture(B, N, inputs)
-        static, out, graph = self.cache[(B, N)]
+        static, out, graph, (dev, host, views, done) = self.cache[(B, N)]
+        # The inputs, padded with zeros to the bucket, are written into one pinned host buffer and sent in one
+        # copy that doesn't wait for the GPU (the same bytes the graph's inputs held before: one copy per
+        # input from pageable memory, after zeroing on the GPU). `done` marks the previous copy from it.
+        done.synchronize()
         for k, v in inputs.items():
-            dst = static[k]
-            src = torch.from_numpy(v)
+            h = views[k]
+            h[n_real:] = 0
             if k in ('legal', 'mask'):
-                dst.zero_()
-                dst[:n_real, :n_rows].copy_(src, non_blocking=True)
+                h[:n_real, n_rows:] = 0
+                h[:n_real, :n_rows] = v
             else:
-                dst[n_real:].zero_()
-                dst[:n_real].copy_(src, non_blocking=True)
+                h[:n_real] = v
+        dev.copy_(host, non_blocking=True)
+        done.record()
         graph.replay()
         return out[0][:n_real, :n_rows], out[1][:n_real]
 
     def capture(self, B, N, example):
-        static = {}
+        # the graph's inputs are views of one device buffer, filled from one pinned host buffer
+        layout, size = [], 0
         for k, v in example.items():
             shape = (B, N) + v.shape[2:] if k in ('legal', 'mask') else (B,) + v.shape[1:]
-            static[k] = torch.zeros(shape, dtype=torch.from_numpy(v[:1]).dtype, device=self.device)
+            dt = torch.from_numpy(v[:1]).dtype
+            n = int(np.prod(shape)) * torch.empty((), dtype=dt).element_size()
+            layout.append((k, shape, dt, size, n))
+            size += -(-n // 64) * 64
+        dev = torch.zeros(size, dtype=torch.uint8, device=self.device)
+        host = torch.zeros(size, dtype=torch.uint8, pin_memory=True)
+        static = {k: dev[o:o + n].view(dt).view(shape) for k, shape, dt, o, n in layout}
+        views = {k: host[o:o + n].view(dt).view(shape).numpy() for k, shape, dt, o, n in layout}
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(s):
@@ -110,7 +123,7 @@ class FastPolicy:
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, pool=self.pool):
             out = self.forward(static)
-        return static, out, graph
+        return static, out, graph, (dev, host, views, torch.cuda.Event())
 
     def forward(self, t):
         with torch.autocast('cuda', dtype=torch.bfloat16, enabled=self.bf16):

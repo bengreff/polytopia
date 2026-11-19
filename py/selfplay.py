@@ -28,8 +28,8 @@ with POLYHOST=qemu (the Android build under QEMU) and the GPU. Two modes:
   one position from each of the first `--seeds` held-out games (ordered by a hash of the game id),
   each played twice with the seats swapped.
 
-Every game process has its own worker thread that steps its slots; one inference thread batches
-the workers' requests per network on the GPU. Tribes are drawn from the seed as in eval_vs_bot.py.
+Every game process has its own worker threads (--groups) that step its slots; one inference thread
+batches the workers' requests per network on the GPU. Tribes are drawn from the seed as in eval_vs_bot.py.
 One Python process tops out at about one core (the GIL), so with many game processes the games are
 split across `--shards` child processes (default: one per 10 game processes), each with its own
 networks, game processes and ports; the parent combines their results.
@@ -113,10 +113,35 @@ class Locked:
         return call
 
 
+def merge_inputs(parts):
+    """eval_vs_bot.batch_inputs of several requests concatenated: the same arrays as batch_inputs over all
+    their positions at once (legal rows padded to the longest list)."""
+    if len(parts) == 1:
+        return parts[0]
+    N = max(p['legal'].shape[1] for p in parts)
+    out = {k: np.concatenate([p[k] for p in parts]) for k in ('tiles', 'globals', 'techs')}
+    n = sum(len(p['mask']) for p in parts)
+    out['legal'] = np.zeros((n, N, 4), np.int16)
+    out['mask'] = np.zeros((n, N), bool)
+    i = 0
+    for p in parts:
+        m, w = p['mask'].shape
+        out['legal'][i:i + m, :w] = p['legal']
+        out['mask'][i:i + m, :w] = p['mask']
+        i += m
+    return out
+
+
 class Inference:
     """Batches decision requests from the worker threads, per network. A request is (key, obs, statuses,
     temperature) and gets back (rows, log-probabilities, values); greedy rows have log-probability 0,
-    values are the network's probability that the player to move wins."""
+    values are the network's probability that the player to move wins.
+
+    The requesting thread builds its own network inputs (eval_vs_bot.batch_inputs), so the one inference
+    thread only merges them. Per batch of requests, every (network, temperature) group is launched on the
+    GPU in turn (graph replay, sampling) and the thread then waits once for all of them before copying the
+    results back: the same kernels in the same order as one wait per group, so the same numbers and the
+    same random draws (docs/design/throughput.md)."""
 
     def __init__(self, nets, device, bf16, max_wait=0.004):
         self.nets, self.device, self.bf16, self.max_wait = nets, device, bf16, max_wait
@@ -137,7 +162,7 @@ class Inference:
     def submit(self, key, obs, statuses, temperature, force=None):
         done = threading.Event()
         box = {}
-        self.q.put((key, obs, statuses, temperature, done, box, force))
+        self.q.put((key, eval_vs_bot.batch_inputs(obs, statuses), temperature, done, box, force))
         return done, box
 
     @staticmethod
@@ -160,33 +185,73 @@ class Inference:
             t0 = time.time()
             by_key = {}
             for it in items:
-                by_key.setdefault((it[0], it[3]), []).append(it)
+                by_key.setdefault((it[0], it[2]), []).append(it)
+            launched = []
             for (key, temperature), group in by_key.items():
                 try:
-                    obs = [o for it in group for o in it[1]]
-                    sts = [s for it in group for s in it[2]]
                     force = None
-                    if any(it[6] is not None for it in group):
-                        force = [x for it in group for x in (it[6] if it[6] is not None else [-1] * len(it[1]))]
-                    rows, logp, value = self.run(key, obs, sts, temperature, force)
-                    k = 0
-                    for it in group:
-                        n = len(it[1])
-                        it[5]['rows'], it[5]['logp'], it[5]['value'] = rows[k:k + n], logp[k:k + n], value[k:k + n]
-                        k += n
+                    if any(it[5] is not None for it in group):
+                        force = [x for it in group for x in (it[5] if it[5] is not None else [-1] * len(it[1]['mask']))]
+                    launched.append((group, self.launch(key, merge_inputs([it[1] for it in group]), temperature, force)))
                 except Exception as e:  # hand the error to the waiting workers
                     for it in group:
-                        it[5]['error'] = e
+                        it[4]['error'] = e
+                        it[3].set()
+            sync_error = None
+            if launched and self.device == 'cuda':
+                try:
+                    torch.cuda.current_stream().synchronize()  # one wait for every group's results
+                except Exception as e:
+                    sync_error = e
+            for group, pending in launched:
+                try:
+                    if sync_error is not None:
+                        raise sync_error
+                    rows, logp, value = self.finish(pending)
+                    k = 0
+                    for it in group:
+                        n = len(it[1]['mask'])
+                        it[4]['rows'], it[4]['logp'], it[4]['value'] = rows[k:k + n], logp[k:k + n], value[k:k + n]
+                        k += n
+                except Exception as e:
+                    for it in group:
+                        it[4]['error'] = e
                 for it in group:
-                    it[4].set()
+                    it[3].set()
             self.busy += time.time() - t0
             self.batches += 1
-            self.positions += sum(len(it[1]) for it in items)
+            self.positions += sum(len(it[1]['mask']) for it in items)
+
+    def run(self, key, obs, statuses, temperature, force=None):
+        """One group at once (launch, wait, finish)."""
+        pending = self.launch(key, eval_vs_bot.batch_inputs(obs, statuses), temperature, force)
+        if self.device == 'cuda':
+            torch.cuda.current_stream().synchronize()
+        return self.finish(pending)
 
     @torch.no_grad()
-    def run(self, key, obs, statuses, temperature, force=None):
-        inputs = eval_vs_bot.batch_inputs(obs, statuses)
-        logits, v = self.fast[key](inputs)
+    def forward(self, key, inputs):
+        """The fast network on inputs; a batch larger than fast_infer's largest graph runs as graph-sized
+        chunks (each row's numbers don't depend on the rows beside it)."""
+        n, B = len(inputs['mask']), fast_infer.B_BUCKETS[-1]
+        if self.device != 'cuda' or n <= B:
+            return self.fast[key](inputs)
+        parts = []
+        for i in range(0, n, B):
+            chunk = {k: v[i:i + B] for k, v in inputs.items()}
+            lo, v = self.fast[key](chunk)
+            parts.append((lo.clone(), v.clone()))  # (graph outputs are reused by the next replay)
+        N = max(p[0].shape[1] for p in parts)
+        lo = torch.cat([torch.nn.functional.pad(p[0], (0, N - p[0].shape[1]), value=float('-inf')) for p in parts])
+        return lo, torch.cat([p[1] for p in parts])
+
+    @torch.no_grad()
+    def launch(self, key, inputs, temperature, force=None):
+        """Queues one group's work on the GPU; finish() copies its results to the host once the stream has
+        been synchronized. (The results are new tensors: a graph's own outputs are cloned, since a later group
+        of the same batch may replay the same graph.)"""
+        logits, v = self.forward(key, inputs)
+        n = len(inputs['mask'])
         if key not in self.checked:  # once per network: the same choices as the plain forward pass
             self.checked.add(key)
             t = {k: torch.from_numpy(x).to(self.device) for k, x in inputs.items()}
@@ -195,18 +260,23 @@ class Inference:
             ref = ref.float().masked_fill(~t['mask'], float('-inf'))
             if not torch.equal(ref.argmax(1), logits.argmax(1)):
                 print(f'warning: fast inference for {key} chose differently from Net.forward on '
-                      f'{int((ref.argmax(1) != logits.argmax(1)).sum())} of {len(obs)} positions', flush=True)
-        value = torch.sigmoid(v.float()).cpu().numpy()
+                      f'{int((ref.argmax(1) != logits.argmax(1)).sum())} of {n} positions', flush=True)
+        value = torch.sigmoid(v.float())
         if temperature is None:  # the scores themselves, padded (planner v2 in the loop, py/search_v2.py)
-            return logits.float().cpu().numpy(), np.zeros(len(obs), np.float32), value
+            return logits.float().clone(), None, value, n
         if temperature <= 0:
-            return logits.argmax(1).cpu().numpy(), np.zeros(len(obs), np.float32), value
+            return logits.argmax(1), None, value, n
         lp = torch.log_softmax(logits / temperature, 1)
         rows = torch.multinomial(lp.exp(), 1).squeeze(1)
         if force is not None:
             f = torch.as_tensor(force, dtype=rows.dtype, device=rows.device)
             rows = torch.where(f >= 0, f, rows)
-        return rows.cpu().numpy(), lp.gather(1, rows[:, None]).squeeze(1).cpu().numpy(), value
+        return rows, lp.gather(1, rows[:, None]).squeeze(1), value, n
+
+    @staticmethod
+    def finish(pending):
+        rows, logp, value, n = pending
+        return rows.cpu().numpy(), (logp.cpu().numpy() if logp is not None else np.zeros(n, np.float32)), value.cpu().numpy()
 
 
 def main():
@@ -227,6 +297,9 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.5, help='training games; matches are greedy')
     ap.add_argument('--procs', type=int, default=30)
     ap.add_argument('--slots', type=int, default=6)
+    ap.add_argument('--groups', type=int, default=2,
+                    help='thread groups per game process (each its own thread; with --search_share each plans one turn '
+                         'at a time, so more groups plan more turns at once; docs/design/throughput.md)')
     ap.add_argument('--port', type=int, default=9200)
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     ap.add_argument('--save_games', default=None, help='matches: keep the games for the web app\'s watch mode, '
@@ -459,7 +532,8 @@ def main():
         while a slot's plan lasts, {slot: the legal row of its next command}. A command not legal in
         the real game (its hidden part differed from the samples) ends the plan."""
         force = {}
-        base = args.search_slots + search.SLOT_STRIDE * (slots[0] % 2)  # this thread group's scratch slots
+        group = slots[0]  # this thread group's index (worker: group g holds slots g, g + groups, ...)
+        base = args.search_slots + search.SLOT_STRIDE * group  # this thread group's scratch slots
         for s in slots_now:
             g = live[s]
             st = g['st']
@@ -469,7 +543,7 @@ def main():
                 g['pturn'], g['plan'] = (st.turn, st.current), []
                 if search.pick(g['seed'], st.turn, st.current, args.search_share):
                     if args.search_v2 is not None:  # this thread group's slots: search_v2.OFFSET * (group + 1) ...
-                        g['plan'], info = search.plan_turn(env, infer, s, g['spec'], args.search_v2, search.OFFSET * (slots[0] % 2 + 1),
+                        g['plan'], info = search.plan_turn(env, infer, s, g['spec'], args.search_v2, search.OFFSET * (group + 1),
                                                            args.search_plans, args.search_samples, args.temperature, rng)
                     else:
                         g['plan'], info = search.plan_turn(env, infer, s, st.current, base, args.search_plans, args.search_samples,
@@ -584,12 +658,14 @@ def main():
             raise
 
     def worker(i):
-        """One game process, its slots in two groups on two threads: while one group waits for the
-        network, the process steps the other (the process serves one request at a time)."""
+        """One game process, its slots in --groups groups on as many threads: while one group waits for
+        the network, the process steps the others (the process serves one request at a time). A group
+        plans one of its slots' turns at a time (--search_share), so the groups are the planners."""
         with polyenv.launch(args.port + i) as raw:
             blob_prefix[0] = struct.pack('<i', raw.info()['game_version'])  # as the game's server sends states
             env = Locked(raw)
-            groups = [list(range(0, args.slots, 2)), list(range(1, args.slots, 2))]
+            n_groups = max(1, min(args.groups, args.slots))
+            groups = [list(range(j, args.slots, n_groups)) for j in range(n_groups)]
             ts = [threading.Thread(target=guarded, args=(run_slots, i, env, grp), daemon=True) for grp in groups if grp]
             for t in ts:
                 t.start()

@@ -2428,7 +2428,18 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   122 + 129 + 122 = **496/800 = 62.0%**, Wilson CI 58.6–65.3, about +85 Elo (derived, CI +60 to
   +110). The S10 read had `s10x` vs `s10c` at 53.2%.
 - **Gen 107 vs gen 0 (rerun, measured):** 168/200 = 84.0% (CI 78.3–88.4).
-- **(3)** was at 142 of 200 games at 17:34, 51–52% so far (interim, not a result).
+- **(3) Gen 107 + v2 vs `s10x` gen 95 + v2 (measured, 15:46–19:32, each side with its own network and
+  critic):** **103/187 = 55.1%**, Wilson CI 47.9–62.0, about +36 Elo (derived, CI −15 to +85). By seat
+  50 and 53; 1 game capped.
+  - Pre-registered: expected at least 55%, falsifier below 50%. **Not falsified, and the point estimate
+    is right at the expected bar, but the CI includes 50%:** this sample can't show that the planner
+    gains from the better network.
+  - 13 games are missing: at 17:36 (derived from the log's elapsed time) one worker died with "CUDA
+    error: unspecified launch failure", and its remaining games weren't played. That was 3 minutes
+    after `hp1d` started, with this read, `hp1d`, the throughput benchmarks and Roblox all on the GPU.
+- **S11 verdict:** the raw network beat its start clearly ((1) 59.6%, (2) 62.0% vs the control's
+  start). With the planner on both sides the gain shrinks to 55% and isn't significant. Indicators:
+  fewer catapults, no more techs.
 - **The watch app** (2026-11-18): a click in the list now plays the game; the server skips legal
   lists while watching, so a 150-turn game opens in 0.2 s instead of 10.7 s (measured, same final
   board). Eight gen 107 vs gen 106 games are in its "Sent by Claude" list. Two hit the 150-turn cap
@@ -2495,3 +2506,27 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
 - **Falsifier:** (1) at or below 52% (about S11's per-12-generation drift without search), or (2) below
   50%. If the exploration lanes are almost never played (< 1% of turns), they aren't finding anything
   and are the first thing to drop.
+- **Smoke tests (PC, 2026-11-18, measured):**
+  - Learner (`~/runs/s12test`, 60 of `s11x`'s gen 107 games, 1 epoch): `--search_ce 1.0 --kl_exact
+    --cap_loss --turn_cost 0.005` ran; the planner-choice cross-entropy fell 0.98 → 0.94 and the exact KL
+    rose 0.0017 → 0.0042 over 100 steps, while the old estimate on the planner's decisions went
+    negative (−0.013), as expected for moves not sampled from the policy.
+  - Self-play, gen 107 with the planner on every turn and the exploration lanes (3 game processes × 4
+    slots, 12 games, 17:31–18:14, throttled and beside HP1, the S11 read and the throughput work): all
+    12 games ended (15–33 turns); 588 planned turns, 7,824 of 7,824 planned commands played, none broken.
+    **Lanes played: network 72.3%, hot 12.2%, prior (gen 0) 10.0%, tactical 4.1%, repair 1.4%.** 15.9 s
+    per planned turn at the median (p90 45, max 95); S11's smoke test had 12.2 s at half the share and
+    without the 8 extra lanes.
+- **Cost (guessed):** about 2–2.5× an S11 generation's 4.7 h until the throughput work lands, plus
+  `e12`'s 500 games, so roughly 12–15 h per `s12` + `e12` round and the read about a week out.
+- **Launch (2026-11-18, measured):** the S11 read finished at 19:32. The S12 code was deployed to
+  `~/poly/py_sp` (S11's code kept in `~/poly/py_sp_s11`) and `s12_setup.sh` ran. The new throttle
+  replaced the old one at 19:36 and the starter task started the rotation, `s12` gen 108 first: 1,500
+  games on 14 game processes (halved by the evening throttle), the planner on every learner turn.
+- **Throughput (item 5), merged 2026-11-18 (`docs/design/throughput.md`):** the inference-loop change
+  (requesters build their own inputs, one GPU wait per batch, pinned staging, large batches in graph
+  chunks): 1.11–1.19× decisions per second in self-play (measured, two back-to-back pairs, PC loaded),
+  43 of 45 inference outputs bit-identical, the other two differing only in bf16 rounding with the same
+  choices on all rows. The lane dedup was not merged. Not yet run: its check on 150 later-turn states.
+  It changes the planner's play only through the 18 s budget: a faster machine skips fewer repairs.
+
