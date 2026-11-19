@@ -2565,4 +2565,11 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     at last night's starts).
   - Watchdog limit 120 → 45 min (`tools/sp_resume.sh`): at 58–140 games an hour, 45 minutes without
     one is a stall, and a stall now costs 45 minutes instead of 2 hours.
+- **After the fixes (2026-11-19 08:23–11:25, measured):** no stall and no new GPU fault in 3 hours.
+  GPU memory held at 11.4–12.2 GB from 10:05 on (the old code reached 15.0–15.6 GB within about an
+  hour every run). Gen 108 went from 594 to 1,274 games: about 225 games an hour at full speed
+  (derived), against 118–159 in each of last night's working hours (throttled, old code).
+  - Derived from that rate: about 6.7 h for `s12`'s 1,500 games at full speed, so roughly 10 h for a
+    round with `e12`'s 500 and the learning steps; with throttled evenings, the read at gen 119 is
+    about a week away again (guessed).
 
