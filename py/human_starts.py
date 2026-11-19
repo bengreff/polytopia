@@ -11,7 +11,8 @@ different moves are skipped). Only the human games' states are kept, never their
 Games from versions before --min_version are skipped.
 
 Output: <out>/<game>_t<turn>_p<player>.state and <out>/index.tsv (file, game, turn, player, tribes,
-interest). Positions come from py/human_midgames.py or py/human_positions.py. With --shard i/k
+interest, and strategy when the positions have that column). Positions come from py/human_midgames.py,
+py/human_positions.py or py/strategy_positions.py (strategy-tagged). With --shard i/k
 (several processes, e.g. on the PC's native engine) a process takes every k-th game and writes
 index_<i>.tsv; concatenate them into index.tsv.
 
@@ -56,7 +57,8 @@ def main():
         i, k = map(int, args.shard.split('/'))
         games, index_name = games[i::k], f'index_{i}.tsv'
     index = open(os.path.join(args.out, index_name), 'w')
-    index.write('file\tgame\tturn\tplayer\ttribes\tinterest\n')
+    tagged = 'strategy' in cols  # py/strategy_positions.py's kind of each position, kept in the index
+    index.write('file\tgame\tturn\tplayer\ttribes\tinterest' + ('\tstrategy' if tagged else '') + '\n')
     saved = failed = 0
     stack = contextlib.ExitStack()
     env = stack.enter_context(polyenv.launch(args.port))
@@ -98,7 +100,8 @@ def main():
                             name = f"{game}_t{r['turn']}_p{r['player']}.state"
                             with open(os.path.join(args.out, name), 'wb') as f:
                                 f.write(blob)
-                            index.write(f"{name}\t{game}\t{r['turn']}\t{r['player']}\t{tribes[0]},{tribes[1]}\t{r.get('interest', '')}\n")
+                            index.write(f"{name}\t{game}\t{r['turn']}\t{r['player']}\t{tribes[0]},{tribes[1]}\t{r.get('interest', '')}"
+                                        + (f"\t{r['strategy']}" if tagged else '') + '\n')
                             saved += 1
                         else:
                             failed += 1

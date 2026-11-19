@@ -2462,9 +2462,9 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   5. **Throughput:** a separate piece of work on planner-in-the-loop self-play speed; merged between
      generations only if it doesn't change what gets played.
   6. **Strategy starts:** training positions from human games a little before a player starts a
-     recognisable strategy, balanced over many kinds (`docs/design/strategy-starts.md`). They replace
-     `human_starts_big` as the training starts (share 0.3 → 0.4) from the first generation after they
-     are built; until then `human_starts_big` as in S11. The evaluation positions stay the same.
+     recognisable strategy, balanced over many kinds (`docs/design/strategy-starts.md`): 18 kinds, 11,490
+     states (10,438 for training), built before the launch. They replace `human_starts_big` as the
+     training starts from gen 108, share 0.3 → 0.4. The evaluation positions stay the same.
   7. **The human pass finished (`hp1d`):** HP1 arm A's stage 1 continued to R7's budget (12k + 88k
      steps on the AI-teacher games), then a fresh 40k-step stage 2 on the championship games, then HP1's
      tests T1 and T3 against R7. Running beside S12 (started 17:32).
