@@ -47,7 +47,11 @@ Paste this file as the prompt for the next session. The design docs live in `doc
   - Throughput (agent B, `docs/design/throughput.md`): the inference-loop change is merged in the
     repo, 1.11–1.19× (measured). Deploy it to `~/poly/py_sp` only between generations (never while
     a `selfplay.py` of the rotation runs). The lane dedup is not merged (branch
-    `worktree-agent-a67fb6d390cd0d5b7`).
+    `worktree-agent-a67fb6d390cd0d5b7`). **Armed 20:54:** `~/poly/deploy_between_gens.sh` (pid in
+    `~/poly/deploy_between_gens.pid`) copies fast_infer.py, tactics/plan_check.py and selfplay.py from
+    `~/poly/s12_stage/py` at the first learning step with no self-play running, logs "deploy:" to
+    `~/runs/sp/tracks.log` and keeps the old files as `*.prev`. Don't rerun the S12 deploy (it clears
+    `s12_stage`) before then. After it: check the next generation's `g*.log` for errors.
 - **hp1d** (HP1 finished to R7's budget, item 7): `tools/hp1_chain.sh` in `~/poly/hp`, results in
   `~/runs/hp1d`, chain pid 50701, about 20 h from 17:32 (derived); runs T1/T3 when done.
 - **Throttle:** new `tools/throttle.ps1` since 19:36 (pid 14216, started by the task, so it sees Ben's

@@ -2529,4 +2529,17 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   43 of 45 inference outputs bit-identical, the other two differing only in bf16 rounding with the same
   choices on all rows. The lane dedup was not merged. Not yet run: its check on 150 later-turn states.
   It changes the planner's play only through the 18 s budget: a faster machine skips fewer repairs.
+  - Smoke test of the merged code with S12's planner settings (PC CPU, 2 slots, so not the GPU the run
+    uses; measured): one 18-turn game, 37 planned turns, saved normally; lanes network 67.6%, hot
+    16.2%, prior 16.2%. Deployed by `tools/deploy_between_gens.sh` (armed 20:54) at the first
+    learning step with no `selfplay.py` running, so no generation's games mix the two versions.
+- **First lane shares, gen 108 (measured, 3,748 planned turns in its first 75 minutes or so):** network
+  67.7%, hot 14.8%, prior (gen 0) 10.8%, tactical 6.5%, repair 0.3%. The exploration lanes are played
+  on 25.6% of turns, above the 5–20% guessed. Repairs fall to 0.3% (1.4% in the smoke test) because
+  the 18 s budget runs out on a loaded machine.
+- **Gen 108 speed (measured):** 71 of 1,500 games in the first 48 minutes, throttled (evening), on
+  14 game processes.
+- **A bf16 warning (measured):** one shard logged "fast inference for P4 chose differently from
+  Net.forward on 1 of 1 positions" (the once-per-network check on the first batch). `s11x` gens
+  104–107 logged none. Likely a near-tie on a strategy start; watch whether it recurs.
 
