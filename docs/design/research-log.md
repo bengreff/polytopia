@@ -2573,3 +2573,23 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     round with `e12`'s 500 and the learning steps; with throttled evenings, the read at gen 119 is
     about a week away again (guessed).
 
+- **Night 2 (2026-11-19/20, measured):**
+  - Gen 108 finished; learning ran with the new losses for the first time (e12 gen 108: kl_exact
+    0.0128, ce_search 1.14); `e12` gen 108 vs `s12` gen 108: 102/200 (51.0%, CI 44.1–57.8).
+  - `s12` gen 109 (from 15:27) stalled twice more, with GPU memory full again: 03:44 (15.2 GB) and
+    06:12 (15.5 GB). Total GPU memory over the night (hp1d's gpu.log, hourly) was 12.0–15.5 GB, with
+    Roblox open the whole time (since 11-16 17:03) and hp1d on the GPU too. So yesterday's 3 clean
+    hours did not settle it: the throughput change helps but the total still reaches the 16 GB
+    limit with three GPU users. Games per hour: 67–82 while throttled, 84–168 at night.
+  - 08:49 (Ben: "Close roblox and any other games", then "Just close everything. Free up that GPU"):
+    closed Roblox, Chrome, Discord, the Omniverse launcher, Phone Link, OneDrive and Settings on the
+    PC. Kept: WSL, Tailscale, FanControl, the NVIDIA service, Windows. GPU memory then 3.5 GB with
+    only gen 109's last game running.
+  - Gen 109 was at 1,499/1,500 games with its last game running 42 min, and the watchdog (45 min) was
+    about to kill try 3 of 3. Paused the watchdog by hand until that self-play exits (60 min cap,
+    `~/runs/sp/wd_pause.sh`). Known flaw: the watchdog can't tell a run's slow last game from a stall.
+  - **hp1d had stopped:** stage 1 finished (88k steps); stage 2 ran out of its 2.5 GB memory cap 6
+    times (22:26–07:46), each time in `validate_value`, which sent 512 positions through the model at
+    once while training uses micro-batches of 64. Each retry resumed, reaching step 15,800 of 40,000.
+    Fixed: `validate_value` now uses `--batch` (as `validate` already did). Restarted 08:55 from
+    step 15,800 (chain pids 98982/98985).

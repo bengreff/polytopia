@@ -30,7 +30,16 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
-## Now (2026-11-19, 08:40): S12 gen 108 running (stalls overnight, fixes in); S11 read done
+## Now (2026-11-20, 09:00): S12 gen 109 at 1,499/1,500 games; games on the PC closed; hp1d fixed and restarted
+
+- **2026-11-20 morning** (research log "Night 2"): gen 109 stalled twice more overnight with GPU memory
+  full (15.2, 15.5 GB) while Roblox and hp1d shared the GPU. At 08:49 Ben had me close Roblox and every
+  other app on the PC ("Free up that GPU"). The watchdog (pid 77807) is paused until gen 109's last game
+  ends, 60 min cap (`~/runs/sp/wd_pause.sh` resumes it; check `~/runs/sp/watchdog.log`). hp1d stage 2
+  had died on 6 out-of-memory errors in `validate_value` (fixed: it uses `--batch`); restarted 08:55
+  from step 15,800 of 40,000, chain pids 98982/98985. The watchdog still can't tell a slow last game
+  from a stall: fix it before it costs a generation.
+
 
 - **S11 read** (research log "S11 read"): (1) 59.6% vs its start, passes; (2) 62.0% vs `s10c` gen 95;
   (3) planner vs planner 103/187 = 55.1% (CI 47.9–62.0): not falsified, not significant; 13 games
@@ -55,7 +64,8 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     is 2: one more sp_loop failure stops the track (then remove `~/runs/sp/s12/STOP` once fixed and
     restart tracks.sh by pid).
 - **hp1d** (HP1 finished to R7's budget, item 7): `tools/hp1_chain.sh` in `~/poly/hp`, results in
-  `~/runs/hp1d`, chain pid 50701, about 20 h from 17:32 (derived); runs T1/T3 when done.
+  `~/runs/hp1d`. Stage 1 done (88k steps); stage 2 restarted 2026-11-20 08:55 at step 15,800 of 40,000
+  (chain pids 98982/98985); runs T1/T3 when done.
 - **Throttle:** new `tools/throttle.ps1` since 19:36 (pid 14216, started by the task, so it sees Ben's
   input): 17:00–22:00, and while Roblox or Minecraft has had input in the last 10 min.
 - **Ben's open calls:** send the Midjiwan email (permission for a labelled AI account; draft in the

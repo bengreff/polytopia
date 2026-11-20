@@ -411,7 +411,7 @@ def main():
                             rec['val_z0' if i == 0 else f'val_z0_{i}'] = validate(net, vs, dev, batch=args.batch, zero_z=True)
                 for i, pos in enumerate(value_sets):
                     if pos is not None:
-                        rec['vval' if i == 0 else f'vval_{i}'] = validate_value(net, pos, dev)
+                        rec['vval' if i == 0 else f'vval_{i}'] = validate_value(net, pos, dev, batch=args.batch)
                 if args.z and val_sets[0]:
                     score = rec['val_z0']['policy']
                     if score < best:
