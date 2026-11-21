@@ -64,8 +64,8 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     is 2: one more sp_loop failure stops the track (then remove `~/runs/sp/s12/STOP` once fixed and
     restart tracks.sh by pid).
 - **hp1d** (HP1 finished to R7's budget, item 7): `tools/hp1_chain.sh` in `~/poly/hp`, results in
-  `~/runs/hp1d`. Stage 1 done (88k steps); stage 2 restarted 2026-11-20 08:55 at step 15,800 of 40,000
-  (chain pids 98982/98985); runs T1/T3 when done.
+  `~/runs/hp1d`. **Done 2026-11-20 14:22:** T1 top-1 44.4% (R7 43.7%), T3 vs R7 91/200 = 45.5%
+  (CI 38.7–52.4): kill line B6 fires, R7 stays gen 0 (research log "hp1d read").
 - **Throttle:** new `tools/throttle.ps1` since 19:36 (pid 14216, started by the task, so it sees Ben's
   input): 17:00–22:00, and while Roblox or Minecraft has had input in the last 10 min.
 - **Ben's open calls:** send the Midjiwan email (permission for a labelled AI account; draft in the

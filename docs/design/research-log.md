@@ -2593,3 +2593,15 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     once while training uses micro-batches of 64. Each retry resumed, reaching step 15,800 of 40,000.
     Fixed: `validate_value` now uses `--batch` (as `validate` already did). Restarted 08:55 from
     step 15,800 (chain pids 98982/98985).
+- **hp1d read (item 7; 2026-11-20 14:22, measured):** stage 2 finished at 40,000 steps after the
+  `validate_value` fix (no more errors). T1 on 150 held-out championship games: top-1 44.4% (44.6%
+  with its own z) against R7's 43.7%; value accuracy 78.5%. T3 head to head vs R7, 200 games, seats
+  swapped: 91/200 = 45.5% (CI 38.7–52.4), 4 capped. HP1's kill line B6 (≤ 52% vs R7) fires again:
+  the bigger network (22M parameters, d 512) trained to R7's full budget imitates humans a little
+  better but doesn't play better than R7 (about −31 Elo, derived; CI −80 to +17). It doesn't replace
+  R7 as gen 0 or the prior lanes' network; arm C stays unbuilt.
+- **Gen 110 runs on 14 game processes, not 28 (2026-11-20, measured):** Roblox and Chrome were
+  reopened at 10:29, the throttle reported "peak" when gen 110 started at 12:44, and sp_loop fixes the
+  count for the whole generation at its start. 48–72 games an hour since; at that rate its 1,040
+  remaining games take about 19 h (derived). Gen 108 vs `s11x107` 50.0%, gen 109 52.5% (CI
+  45.6–59.3); `e12` vs its target 51.0%, 49.5%.
