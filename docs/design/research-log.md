@@ -2605,3 +2605,13 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   count for the whole generation at its start. 48–72 games an hour since; at that rate its 1,040
   remaining games take about 19 h (derived). Gen 108 vs `s11x107` 50.0%, gen 109 52.5% (CI
   45.6–59.3); `e12` vs its target 51.0%, 49.5%.
+- **No throttle from 2026-11-21 10:36 (Ben: "Remove any decision to throttle. Go full speed always.
+  Disregard all roblox and close if necessary if there is no one at the keyboard."):** a change to S12
+  mid-run (item 4 replaced), Ben's call.
+  - `sp_loop.free_procs` always gives 28 game processes (before: 14 from 17:00 to 06:00 and whenever
+    Roblox or Minecraft was in use). From gen 111; gen 110's last 40 games finish on 14.
+  - `tools/throttle.ps1` (same file and task, pid 22812) keeps the VM on all 28 CPUs at Normal, and
+    force-stops the Roblox game after 10 min with no keyboard or mouse input (closing its window made it
+    relaunch to the tray). Roblox Studio and Minecraft are left alone. First run: closed Roblox after 16
+    and 17 min idle (measured).
+  - Gen 110 stalled once more at 00:47 with GPU memory at 15.4 GB.

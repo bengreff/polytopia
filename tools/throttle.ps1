@@ -1,36 +1,35 @@
-# Polytopia's training starter and throttle on the PC (Windows side; Ben, 2026-11-14: "add the starter,
-# make sure it throttles when something else is running (if minecraft or roblox is on) and only starts
-# when we have training we are doing").
+# Polytopia's training starter on the PC (Windows side), and the Roblox closer. The file keeps its old name
+# (throttle.ps1) so the scheduled task that runs it doesn't change.
 #
-# Throttle: the WSL VM runs on the 12 E-core logical CPUs (16-27) at BelowNormal priority from 17:00 to
-# 22:00, and at any hour while Roblox or Minecraft is in use: open, with keyboard or mouse input at the
-# PC in the last 10 minutes (Ben, 2026-11-18: throttle when it's in use, not just open; before that, any
-# open game counted, and Roblox left running for days kept training at half speed). On all 28 logical
-# CPUs at Normal priority otherwise. Checked every minute. It exits, giving the VM the full CPU back, once the training has
-# not been running for 15 minutes. It has to be a Windows process: changing vmmemWSL's affinity needs
-# an elevated process, which a detached WSL job can't reach (2026-11-10: the WSL throttle pinned the VM
-# at 19:52 and never unpinned it).
+# No throttle (Ben, 2026-11-21: "Remove any decision to throttle. Go full speed always. Disregard all roblox
+# and close if necessary if there is no one at the keyboard."). Every minute it keeps the WSL VM on all 28
+# logical CPUs at Normal priority, and if the Roblox game (RobloxPlayerBeta) is open with no keyboard or
+# mouse input at the PC for 10 minutes, it closes it (a forced stop).
+# Roblox Studio is left alone (it can hold unsaved work), and so is Minecraft. Until 2026-11-21 it held the
+# VM on the 12 E-cores at BelowNormal from 17:00 to 22:00 and while Roblox or Minecraft was in use.
+# Input can only be read by a process in the signed-in console session (the task's): a copy started any
+# other way can't tell whether someone is at the PC and never closes Roblox.
+# It exits once the training has not been running for 15 minutes.
 #
 # Starter (-Start): run by the scheduled task PolytopiaTrainingStarter 2 minutes after Ben signs in
 # (elevated, hidden; registered by tools/throttle_task.ps1). It asks WSL whether any training is
 # pending (tools/sp_resume.sh check: a track in ~/runs/sp/tracks.list below its LAST, without STOP,
 # and no TRACKS_STOP). If none is, it does nothing. If one is, it runs sp_resume.sh (watchdog and
-# rotation, each only if not running) and then throttles.
+# rotation, each only if not running) and then keeps watch as above.
 #
 # By hand from ssh: Start-ScheduledTask PolytopiaTrainingStarter (needs Ben signed in), or, with nobody
 # signed in, the WMI launch: Invoke-CimMethod Win32_Process Create -Arguments @{CommandLine=
 # 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\ben\polytopia_throttle.ps1'}
-# Only one throttle runs at a time (a named mutex). Stop: create C:\Users\ben\polytopia_throttle.stop.
-# Log: C:\Users\ben\polytopia_throttle.log; now: polytopia_throttle.status (read by sp_loop.free_procs).
+# Only one copy runs at a time (a named mutex). Stop: create C:\Users\ben\polytopia_throttle.stop.
+# Log: C:\Users\ben\polytopia_throttle.log; now: polytopia_throttle.status.
 param([switch]$Start)
 $dir = 'C:\Users\ben'
 $log = "$dir\polytopia_throttle.log"
 $status = "$dir\polytopia_throttle.status"
 $wsl = "$env:WINDIR\System32\wsl.exe"
 $resume = '/home/greff/poly/py_sp/sp_resume.sh'
-$games = 'RobloxPlayerBeta', 'RobloxStudioBeta', 'Minecraft.Windows'  # plus Java Minecraft (javaw with "minecraft" in its command line)
-
-$idleLimit = 10  # minutes: a game counts as in use if someone touched the keyboard or mouse this recently (Ben, 2026-11-18)
+$roblox = 'RobloxPlayerBeta'  # the game only: Roblox Studio can hold unsaved work
+$idleLimit = 10  # minutes with no keyboard or mouse input = nobody at the keyboard (Ben's definition of in use, 2026-11-18)
 
 Add-Type -Namespace Poly -Name Input -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
@@ -52,21 +51,26 @@ function Idle {
     if ((Get-Process -Id $PID).SessionId -ne [Poly.Input]::WTSGetActiveConsoleSessionId()) { return -1 }
     return [Poly.Input]::IdleMinutes()
 }
-# The game being played, or '': Roblox or Minecraft open AND someone at the PC in the last $idleLimit
-# minutes (an open game nobody has touched doesn't count). If idle time can't be read, open counts.
-function Game {
-    $g = ''
-    $p = Get-Process -Name $games -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($p) { $g = $p.ProcessName }
-    else {
-        $j = Get-CimInstance Win32_Process -Filter "Name = 'javaw.exe' OR Name = 'java.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'minecraft' } | Select-Object -First 1
-        if ($j) { $g = 'Minecraft' }
-    }
-    if (-not $g) { return '' }
+# Closes the Roblox game if it's open and nobody has touched the keyboard or mouse for $idleLimit minutes.
+# Returns a note for the status file.
+$script:blind = $false
+function CloseIdleRoblox {
+    $p = @(Get-Process -Name $roblox -ErrorAction SilentlyContinue)
+    if (-not $p) { return '' }
     $i = Idle
-    if ($i -ge $idleLimit) { return '' }
-    return $(if ($i -lt 0) { "$g(open)" } else { "$g(idle $([int]$i) min)" })
+    if ($i -lt 0) {
+        if (-not $script:blind) { Log "Roblox open, but this copy can't see keyboard or mouse input: left open" }
+        $script:blind = $true
+        return 'Roblox(open,idle-unknown)'
+    }
+    if ($i -lt $idleLimit) { return "Roblox(in-use,idle-$([int]$i)-min)" }
+    # A forced stop: closing its window makes Roblox relaunch itself to the tray (--launch-to-tray, 2026-11-21),
+    # and it keeps nothing on the PC that a close would save.
+    $p | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep 3
+    $left = @(Get-Process -Name $roblox -ErrorAction SilentlyContinue)
+    Log "closed Roblox (pid $($p.Id -join ',')): no keyboard or mouse input for $([int]$i) min$(if ($left) { "; still open: pid $($left.Id -join ',')" })"
+    return 'Roblox(closed)'
 }
 function Apply($mask, $pri) {
     $p = Get-Process vmmemWSL -ErrorAction Stop
@@ -80,35 +84,31 @@ if ($Start -and (Wsl 'bash', $resume, 'check') -ne 0) { Log 'start: no training 
 $mutex = New-Object System.Threading.Mutex($false, 'Global\PolytopiaThrottle')
 try { $mine = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mine = $true }
 if (-not $mine) {
-    Log "throttle already running: this one (pid $PID) exits"
+    Log "already running: this one (pid $PID) exits"
     if ($Start) { Resume }
     exit
 }
 
-Log "throttle started (pid $PID)"
-$last = ''; $failed = $false; $idle = 0; $k = 0
+Log "started (pid $PID): no throttle, VM at full speed; closes Roblox after $idleLimit min with no input"
+$failed = $false; $idle = 0; $k = 0
 while (-not (Test-Path "$dir\polytopia_throttle.stop")) {
-    $h = (Get-Date).Hour
-    $g = Game
-    if ($h -ge 17 -and $h -lt 22) { $why = 'evening' } elseif ($g) { $why = $g } else { $why = '' }
-    if ($why) { $mode = 'peak'; $mask = 0x0FFF0000; $pri = 'BelowNormal' } else { $mode = 'full'; $mask = 0x0FFFFFFF; $pri = 'Normal' }
-    $key = "$mode $($why -replace '\(.*\)', '')"  # the idle minutes in $why change every minute: not a mode change
     try {
-        $out = Apply $mask $pri
-        if ($key -ne $last) { Log "mode $mode $why -> $out" }
-        $last = $key; $failed = $false
+        $out = Apply 0x0FFFFFFF 'Normal'
+        if ($failed) { Log "VM back to full -> $out" }
+        $failed = $false
     } catch {
         $out = "FAILED: $($_.Exception.Message)"
-        if (-not $failed) { Log "mode $mode $why $out" }
-        $last = ''; $failed = $true
+        if (-not $failed) { Log "setting the VM to full $out" }
+        $failed = $true
     }
-    Set-Content $status "$mode $(Get-Date -Format 'HH:mm:ss') $why $out"
-    if ($Start) { Resume; $Start = $false }  # after the first status, so sp_loop's free_procs sees this mode
+    $note = CloseIdleRoblox
+    Set-Content $status "full $(Get-Date -Format 'HH:mm:ss') $note $out"
+    if ($Start) { Resume; $Start = $false }
     if ($k % 5 -eq 0) {  # every 5 minutes: is the training still running?
         if ((Wsl 'bash', $resume, 'status') -eq 0) { $idle = 0 } else { $idle++ }
         if ($idle -ge 3) {
             try { $out = Apply 0x0FFFFFFF 'Normal' } catch { $out = "FAILED: $($_.Exception.Message)" }
-            Log "training not running for 15 minutes: VM back to full ($out); throttle exits"
+            Log "training not running for 15 minutes: VM at full ($out); exits"
             Set-Content $status "full $(Get-Date -Format 'HH:mm:ss') exited $out"
             exit
         }

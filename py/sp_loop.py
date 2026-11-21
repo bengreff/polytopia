@@ -119,25 +119,11 @@ def apply_overrides(run, args):
             setattr(args, k, v)
 
 
-THROTTLE_STATUS = '/mnt/c/Users/ben/polytopia_throttle.status'  # tools/throttle.ps1 on the PC
-
-
-def throttled():
-    """Is the PC's throttle (tools/throttle.ps1) keeping the VM on the E-cores now (17:00-22:00, or
-    Roblox or Minecraft open)? Its status file, if fresh; the evening hours otherwise."""
-    try:
-        if time.time() - os.path.getmtime(THROTTLE_STATUS) < 900:
-            return open(THROTTLE_STATUS).read().split()[0] == 'peak'
-    except (OSError, IndexError):
-        pass
-    return 17 <= time.localtime().tm_hour < 22
-
-
 def free_procs(cap, floor=8):
-    """Game processes for the next step: `cap`, or half of it while the throttle holds the VM on the
-    12 E-cores or 10pm-6am (Ben's other projects, crucible, run then). (On the E-cores alone, s11x
-    played 0.084 games/s with 14 game processes and 0.055 with 28: gen 97 against gen 98, 2026-11-11.)"""
-    return max(floor, cap // 2) if throttled() or not 6 <= time.localtime().tm_hour < 22 else cap
+    """Game processes for the next step: always `cap` (Ben, 2026-11-21: "Remove any decision to throttle. Go
+    full speed always."). Until then it halved them while tools/throttle.ps1 held the VM on the E-cores
+    (17:00-22:00, or Roblox or Minecraft in use) and from 22:00 to 06:00."""
+    return cap
 
 
 RIVAL_KINDS = ('rival', 'hrival')
@@ -305,7 +291,7 @@ def main():
     ap.add_argument('--h2h_seeds', type=int, default=100)
     ap.add_argument('--crazy_seeds', type=int, default=100)
     ap.add_argument('--crazy_every', type=int, default=1)
-    ap.add_argument('--procs', type=int, default=28, help='game processes in the daytime (half at night, when other projects run)')
+    ap.add_argument('--procs', type=int, default=28, help='game processes (always all of them: no throttle since 2026-11-21)')
     ap.add_argument('--slots', type=int, default=6)
     ap.add_argument('--min_procs', type=int, default=8, help='never fewer game processes than this')
     ap.add_argument('--eval_procs', type=int, default=8, help='game processes for the evaluations, which run beside the next generation\'s games')
