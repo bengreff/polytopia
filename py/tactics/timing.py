@@ -28,6 +28,9 @@ def main():
     ap.add_argument('--scorer', default=os.path.join(polyenv.REPO, 'runs/sp/s9v/critic_g083.pt'))
     ap.add_argument('--opts', default=None)
     ap.add_argument('--v1', action='store_true', help='time v1 instead')
+    ap.add_argument('--v3', action='store_true', help='time planner v3 (4 samples, the critic ensemble below)')
+    ap.add_argument('--scorers', default=None, help='--v3: more critics, comma-separated')
+    ap.add_argument('--samples', type=int, default=None, help='fog-safe samples (default 2; 4 with --v3)')
     ap.add_argument('--port', type=int, default=8961)
     ap.add_argument('--env_bin', default=os.path.join(polyenv.REPO, 'build', 'polyhost-mac-det'))
     ap.add_argument('--out', required=True)
@@ -38,10 +41,13 @@ def main():
     spec = polyenv.Spec(tribes=tuple(int(x) for x in args.tribes.split(',')), bots=(None, None), seed=0)
     names = sorted(n for n in os.listdir(args.states) if n.endswith(f'_p{args.player}.state'))
     out = open(args.out, 'a')
-    secs = []
+    secs, secs_per_cmd = [], []
     with polyenv.launch(args.port) as env:
         tactical = None if args.v1 else (json.loads(args.opts) if args.opts else {})
-        P = plan_agent.Planner(env, args.net, args.scorer, dev, 16, 2, 0.5, seed=7, tactical=tactical)
+        if args.v3:
+            tactical['version'] = 3
+        P = plan_agent.Planner(env, args.net, args.scorer, dev, 16, args.samples or (4 if args.v3 else 2), 0.5, seed=7,
+                               tactical=tactical, scorers=args.scorers.split(',') if args.scorers else None)
         for n in names:
             blob = open(os.path.join(args.states, n), 'rb').read()
             t0 = time.time()
@@ -51,9 +57,13 @@ def main():
             info = {k: v for k, v in info.items() if k != 'tactical'}
             out.write(json.dumps(dict(name=n, seconds=round(dt, 2), info=info)) + '\n')
             out.flush()
-            print(n, round(dt, 2), info.get('kind'), info.get('threat_loss'), flush=True)
+            secs_per_cmd.append(dt / max(1, info.get('commands', 1)))
+            print(n, round(dt, 2), info.get('kind'), info.get('threat_loss'), 'commands', info.get('commands'),
+                  'replans', info.get('n_replans', '-'), flush=True)
     print('SUMMARY', json.dumps(dict(n=len(secs), median=round(float(np.median(secs)), 2), p90=round(float(np.percentile(secs, 90)), 2),
-                                     max=round(float(max(secs)), 2), mean=round(float(np.mean(secs)), 2))), flush=True)
+                                     max=round(float(max(secs)), 2), mean=round(float(np.mean(secs)), 2),
+                                     per_command_mean=round(float(np.mean(secs_per_cmd)), 3),
+                                     per_command_overall=round(float(sum(secs) / max(1, sum(s / max(c, 1e-9) for s, c in zip(secs, secs_per_cmd)))), 3))), flush=True)
 
 
 if __name__ == '__main__':
