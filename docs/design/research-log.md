@@ -2685,3 +2685,12 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
   - then no-collapse checks, 100 games each: vs raw gen 0 (R7) and vs CrazyPlus.
 - **Expected (guessed):** the gate 60–70%. **Falsified** below 55%. Bar for Ben's games: ≥ 55% with the lower bound of
   the 95% interval ≥ 50%, and no collapse (≥ 90% vs gen 0, ≥ 95% vs CrazyPlus).
+- **Run notes (2026-11-24, measured):**
+  - Launch 22:08 with 8 + 8 workers: each worker took 1.5–1.9 CPU cores (torch's default threads), so the driver
+    now sets OMP_NUM_THREADS=2; relaunched 22:09. At 22:16 GPU memory was 15.1 GB of 16 at 99% use (this week's stalls
+    came at 15.2–15.5 GB), so relaunched 22:17 with 6 + 6 workers for the screens and 12 for the gate (driver pid
+    17060); 22:19: 11.75 GB, 94%. The 3 games finished before (all v3 losses) are kept.
+  - **Time on the Mac** (test (d), `py/tactics/timing.py --v3`, the network seat's 42 turn starts of Ben's game, the Mac
+    loaded by other projects; `runs/tactics/timing_mac_v3.jsonl`): median 12.97 s per turn, p90 21.9 s, max 29.2 s;
+    **0.92 s per command overall** (529 s for 573 commands); per turn, 0.99 s per command median, 2.31 s max. Within
+    Ben's "average about 1 s per action". Lanes played: network 32, repair 7, tactical 2, kill 1; 22 re-plans.
