@@ -2694,3 +2694,8 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     loaded by other projects; `runs/tactics/timing_mac_v3.jsonl`): median 12.97 s per turn, p90 21.9 s, max 29.2 s;
     **0.92 s per command overall** (529 s for 573 commands); per turn, 0.99 s per command median, 2.31 s max. Within
     Ben's "average about 1 s per action". Lanes played: network 32, repair 7, tactical 2, kill 1; 22 re-plans.
+  - **Stopped early (2026-11-25 ~10:34, Ben: "stop all tasks being run by you on the backhouse computer").** After
+    12 h 16 m the screens had reached only about a third of their games (measured): v3 with gen 107's reply 19 of 35
+    (54.3%), v3 with R7's reply 17 of 37 (45.9%). No gate games were played, so nothing is read against the bars. The
+    run was far slower than planned (v3 turns took tens of seconds per turn on the shared PC; the last logged game's
+    median turn was 68.6 s). Resumable: rerunning `~/poly/v3/v3_gate.sh` skips finished games.

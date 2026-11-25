@@ -30,6 +30,18 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
+## Now (2026-11-25, ~10:35): every Polytopia job on the PC is stopped (Ben)
+
+- Ben: "stop all tasks being run by you on the backhouse computer". The v3 overnight run (driver pid 17060, its 2
+  `tactics.match` runs, 12 workers, 12 engines) was stopped by its process group; GPU back to 732 MiB, 0%.
+- Partial screens (measured): v3 + gen 107 reply 19/35 (54.3%), v3 + R7 reply 17/37 (45.9%); no gate games. Resumable:
+  rerun `~/poly/v3/v3_gate.sh` (finished games are skipped). Only with Ben's go-ahead.
+- Scheduled task **PolytopiaTrainingStarter** (runs `polytopia_throttle.ps1 -Start` at sign-in, which restarts pending
+  training via `sp_resume.sh`) is now **Disabled**, so nothing restarts at the next sign-in. Re-enable:
+  `Enable-ScheduledTask -TaskName PolytopiaTrainingStarter`. The throttle script itself had already exited.
+- **PolytopiaWSLKeepalive** (a hidden `wsl.exe ... sleep infinity`) is left running: it does no work and other
+  sessions' WSL jobs lean on it. Remove only if Ben asks: `schtasks /delete /tn PolytopiaWSLKeepalive /f`.
+
 ## Now (2026-11-24, 22:15): planner v3 built; its overnight gate is running on the PC
 
 - **Planner v3** (research log "Planner v3", pre-registered; `py/tactics/planner3.py`): the fog-fixed engine (hidden
