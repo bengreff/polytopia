@@ -4,6 +4,7 @@ set -u
 S=/home/greff/runs/sp; O=/home/greff/runs/v3; mkdir -p $O
 PY=/home/greff/polyvenv/bin/python
 export POLYHOST=linux POLYHOST_BIN=/home/greff/polylinux/polyhost-v3
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2  # 16 workers: torch would give each all 28 threads
 cd /home/greff/poly/v3/py
 NETS="--net $S/s11x/gen107.pt --scorer $S/s11x/critic_g107.pt"
 ENS="--a_samples 4 --a_scorers $S/s11x/critic_g104.pt,$S/s11x/critic_g105.pt,$S/s11x/critic_g106.pt,$S/s12/critic_g108.pt,$S/s12/critic_g109.pt"

@@ -7,16 +7,24 @@
 #   SCORER=runs/sp/s9v/critic_g083.pt tools/play.sh runs/sp/s9v/gen083.pt
 # With TACTICAL=1 as well, planner v2 (py/tactics/planner2.py: kill chains on offence and defence):
 #   TACTICAL=1 SCORER=runs/sp/s9v/critic_g083.pt tools/play.sh runs/sp/s9v/gen083.pt
+# With V3=1, planner v3 (py/tactics/planner3.py: the fog-fixed engine, 4 samples, the critics of gens 104-109,
+# kill and giant lanes against threats, re-planning; REPLY=<checkpoint> for another reply model, e.g. R7):
+#   V3=1 SCORER=runs/sp/s11x/critic_g107.pt tools/play.sh runs/sp/s11x/gen107.pt
 cd "$(dirname "$0")/.."
 ck=${1:?checkpoint}; port=${2:-8123}
 [ -x build/polyhost-mac ] || ./polyhost/run.sh mac
 name=$(basename "$ck")
 if [ -n "$SCORER" ]; then
     [ -x build/polyhost-mac-play ] || clang++ -std=c++20 -O2 -Wall -o build/polyhost-mac-play polyhost/main.cpp
+    if [ -n "$V3" ]; then
+        [ -x build/polyhost-mac-v3 ] || clang++ -std=c++20 -O2 -Wall -o build/polyhost-mac-v3 polyhost/main.cpp
+        V3_ARGS="--v3 --env_bin $PWD/build/polyhost-mac-v3 --scorers ${SCORERS:-runs/sp/s11x/critic_g104.pt,runs/sp/s11x/critic_g105.pt,runs/sp/s11x/critic_g106.pt,runs/sp/s12/critic_g108.pt,runs/sp/s12/critic_g109.pt}${REPLY:+ --reply_model $REPLY}"
+        SAMPLES=${SAMPLES:-4}
+    fi
     PYTHONPATH=py .venv/bin/python py/agent_server.py "$ck" --port 8131 --stats_port 8132 --planner --scorer "$SCORER" \
-        --plans ${PLANS:-16} --samples ${SAMPLES:-2} ${TACTICAL:+--tactical} &
+        --plans ${PLANS:-16} --samples ${SAMPLES:-2} ${TACTICAL:+--tactical} $V3_ARGS &
     serve="build/polyhost-mac-play"; export POLY_AGENT_STATE=1
-    name="$(basename "$(dirname "$ck")")_$name+planner${TACTICAL:+v2}"
+    name="$(basename "$(dirname "$ck")")_$name+planner${V3:+v3}${TACTICAL:+v2}"
 else
     .venv/bin/python py/agent_server.py "$ck" --port 8131 --stats_port 8132 &
     serve="build/polyhost-mac"

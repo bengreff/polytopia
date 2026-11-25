@@ -218,6 +218,9 @@ def main():
     ap.add_argument('--plan_temperature', type=float, default=0.5)
     ap.add_argument('--tactical', action='store_true', help='--planner: planner v2, with hand-coded tactics (py/tactics/planner2.py)')
     ap.add_argument('--tactical_opts', default=None, help='--tactical: JSON overriding planner2.DEFAULTS')
+    ap.add_argument('--v3', action='store_true', help='--planner: planner v3 (py/tactics/planner3.py; needs build/polyhost-mac-v3)')
+    ap.add_argument('--scorers', default=None, help='--v3: more critics, comma-separated, averaged with --scorer')
+    ap.add_argument('--reply_model', default=None, help="--v3: the opponent's simulated turns (default: the checkpoint)")
     ap.add_argument('--env_port', type=int, default=8135, help='--planner: the planner\'s own engine process')
     ap.add_argument('--env_bin', default=os.path.join(polyenv.REPO, 'build', 'polyhost-mac-det'))
     args = ap.parse_args()
@@ -232,14 +235,18 @@ def main():
         polyenv.NATIVE = True
         env_stack = contextlib.ExitStack()  # held for the server's life: the engine closes with it
         env = env_stack.enter_context(polyenv.launch(args.env_port))
-        tactical = (json.loads(args.tactical_opts) if args.tactical_opts else {}) if args.tactical else None
+        tactical = (json.loads(args.tactical_opts) if args.tactical_opts else {}) if args.tactical or args.v3 else None
+        if args.v3:
+            tactical['version'] = 3
         planner = plan_agent.Planner(env, args.checkpoint, args.scorer, args.device, args.plans, args.samples,
-                                     args.plan_temperature, tactical=tactical)
+                                     args.plan_temperature, tactical=tactical, model_path=args.reply_model,
+                                     scorers=args.scorers.split(',') if args.scorers else None)
         info['planner'] = dict(plans=args.plans, samples=args.samples, temperature=args.plan_temperature,
                                scorer=os.path.abspath(args.scorer) if args.scorer else None, tactical=tactical)
         print(f'agent: planner on, {args.plans} plans x {args.samples} samples at T {args.plan_temperature}, '
               f'scorer {args.scorer}, engine {args.env_bin} on {args.env_port}'
-              + (f', tactics (planner v2) {tactical}' if tactical is not None else ''), flush=True)
+              + (f', tactics (planner v{3 if args.v3 else 2}) {tactical}' if tactical is not None else '')
+              + (f', reply model {args.reply_model}, {len(planner.scorers)} critics' if args.v3 else ''), flush=True)
     stats = Stats(info)
     if args.stats_port:
         serve_stats(stats, args.stats_port)
