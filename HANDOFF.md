@@ -30,6 +30,17 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
 
+## Now (2026-11-25, 14:05): planner v3's full test is running on the PC, to the end
+
+- Ben: "Start the v3 run. It should go all the way, full eval and statistics stored". Driver `~/poly/v3/v3_gate.sh`
+  (= `tools/v3_gate.sh`), **pid 20149**, log `~/runs/v3/driver.log`, statistics `~/runs/v3/stats.md` / `stats.json`
+  (every 30 min and after each stage), `~/runs/v3/DONE` (or `INCOMPLETE`) at the end.
+- Stages: the two screens (resumed at 36 and 37 of 100 games), the 400-game gate for the better reply model, then
+  100 games each vs raw gen 0 and CrazyPlus. Guards: workers fit the free GPU memory, one is stopped above 14.5 GB,
+  a stage with no game for 3 h restarts (research log "Planner v3", run notes).
+- Stop: `kill -- -20149` (whole process group). Resume: rerun the driver; finished games are skipped.
+- After a PC reboot nothing restarts it (PolytopiaTrainingStarter stays disabled: it would restart training).
+
 ## Now (2026-11-25, ~10:35): every Polytopia job on the PC is stopped (Ben)
 
 - Ben: "stop all tasks being run by you on the backhouse computer". The v3 overnight run (driver pid 17060, its 2

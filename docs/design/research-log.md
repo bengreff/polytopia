@@ -2699,3 +2699,17 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     (54.3%), v3 with R7's reply 17 of 37 (45.9%). No gate games were played, so nothing is read against the bars. The
     run was far slower than planned (v3 turns took tens of seconds per turn on the shared PC; the last logged game's
     median turn was 68.6 s). Resumable: rerunning `~/poly/v3/v3_gate.sh` skips finished games.
+  - **Relaunched 2026-11-25 14:03 (Ben: "Start the v3 run. It should go all the way, full eval and statistics
+    stored")**, driver pid 20149, 11 workers (6 + 5). The games themselves are unchanged (same seeds, settings,
+    models); what changed is how the run is kept alive:
+    - **Why:** overnight, no gen 107 screen game was recorded after 02:41 and no R7 one after 08:28, while all 12
+      workers ran at ~97% CPU and the GPU at 100% with 14.7 GB of 16 used; one v3 turn took 23,950 s (measured). Most
+      likely the card ran out of memory and paged (this week's earlier stalls came at 15.2–15.5 GB); not proven.
+    - **Guards** (`tools/v3_gate.sh`): workers per stage fit the free GPU memory (1.3 GB each, at most 12); above
+      14.5 GB one worker is stopped (its games are replayed later); a stage that records no game for 3 h is
+      restarted; each stage retries up to 10 times until all its games are in. Tested on the PC with a fake match.
+    - **Statistics** (`py/tactics/v3_stats.py`): `~/runs/v3/stats.md` and `stats.json`, refreshed every 30 min and
+      after each stage: rates with Wilson 95% intervals, by seat, by seed pair, by tribe, game lengths, v3 time per turn
+      and per command, lanes, and the verdicts against the bars.
+    - A relaunch at 13:51 (driver 19633, 10 workers) went through although its tool call showed as rejected; it was
+      stopped at 14:02 after 1 game because its script was replaced while it ran.
