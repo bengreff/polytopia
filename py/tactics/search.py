@@ -42,6 +42,8 @@ DEFAULTS = dict(
     max_sims=400,   # simulations per search (a time cap)
     captures=True,  # Capture rows are steps too
     lookahead=0.5,  # beam ranking: exact gain so far + lookahead x the estimated gain still available
+    targets=(),     # planner v3's kill lanes: tiles of enemy units worth killing first (a threat's attackers, besiegers)
+    target_bonus=0.0,  # stars added for each of those units killed, on top of its material value
 )
 
 
@@ -94,6 +96,12 @@ class Tactician:
         self.p = dict(DEFAULTS, **params)
         assert len(self.slots) >= self.p['branch']
         self.stats = dict(searches=0, sims=0, seconds=0.0)
+
+    @staticmethod
+    def _enemy_at(obs_me, tile):
+        """Does the side to move see an enemy unit on `tile`? (Its own observation: unit_owner 2 = the enemy.)"""
+        tl = obs_me.tiles.reshape(-1, obs_me.tiles.shape[-1])
+        return 0 <= tile < len(tl) and tl[tile, F['unit']] > 0 and tl[tile, F['unit_owner']] == 2
 
     # ---- estimates (pruning only)
     @staticmethod
@@ -228,6 +236,7 @@ class Tactician:
         obs = env.observe([(src_slot, me), (src_slot, opp)])
         m0 = material(obs[0], obs[1])
         root = Node(env.save(src_slot), [], 0.0, st, obs, state_key(*obs))
+        tgt = [t for t in p['targets'] if self._enemy_at(obs[0], t)]
         self._evaluate(root, me)
         if not root.board.en_units and not (p['captures'] and (legal[:, 0] == CAPTURE).any()):
             return []
@@ -293,6 +302,8 @@ class Tactician:
                     m1 = material(*o)
                     won = st2.ended and st2.winner == me
                     obj = (m1[0] - m0[0]) - (m1[1] - m0[1]) + (WIN_BONUS if won else 0.0)
+                    if tgt:
+                        obj += p['target_bonus'] * sum(1 for t in tgt if not self._enemy_at(o[0], t))
                     if st2.ended and not won:
                         obj -= WIN_BONUS
                     child = Node(env.save(s), node.seq + done_rows[s], obj, st2, o, key,

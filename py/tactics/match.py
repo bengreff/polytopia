@@ -5,6 +5,8 @@ py/turn_search.py. Side A and side B are each one of:
 - v1: plan_agent.Planner as Ben plays it (16 plans, 2 fog-safe samples, the greedy reply, the critic);
 - v2: the same planner with tactics (plan_agent.Planner(tactical=...), py/tactics/planner2.py),
   --a_opts / --b_opts overriding planner2.DEFAULTS;
+- v3 (side A only): planner v3 (py/tactics/planner3.py), with --a_samples, --a_model (the reply model) and
+  --a_scorers (the critic ensemble); --a_opts overrides planner3.DEFAULTS;
 - net:<checkpoint>: the network playing greedily from its own view (no planning);
 - crazyplus: the CrazyPlus bot (py/crazyplus, full view, as in the S10 evaluations).
 Both planners use --net (policy and reply model) and --scorer, unless --b_net / --b_scorer give side
@@ -51,11 +53,12 @@ class Side:
         import eval_vs_bot
         import plan_agent
         self.kind, self.env = kind, env
-        self.stats = dict(turns=0, seconds=0.0, max_seconds=0.0, kinds={}, tac_played=0, repairs_played=0, broken=0)
+        self.stats = dict(turns=0, seconds=0.0, max_seconds=0.0, kinds={}, tac_played=0, repairs_played=0, broken=0,
+                          commands=0, replans=0)
         self.times = []
-        if kind in ('v1', 'v2'):
+        if kind in ('v1', 'v2', 'v3'):
             self.p = copy.copy(base)
-            self.p.tactical = (opts or {}) if kind == 'v2' else None
+            self.p.tactical = dict(opts or {}, version=3) if kind == 'v3' else (opts or {}) if kind == 'v2' else None
             self.p.rng = np.random.default_rng(rng_seed)
         elif kind.startswith('net:'):
             self.net, _ = eval_vs_bot.load_policy(kind[4:], device)
@@ -75,8 +78,10 @@ class Side:
         env = self.env
         me = st.current
         t0 = time.time()
-        if self.kind in ('v1', 'v2'):
+        if self.kind in ('v1', 'v2', 'v3'):
             played, info = self.p.plan_turn(spec, env.save(GAME))
+            self.stats['commands'] += len(played)
+            self.stats['replans'] += int(info.get('n_replans', 0))
             for r in played:
                 k = find(st, r)
                 if k < 0:
@@ -89,7 +94,9 @@ class Side:
             self.stats['broken'] += bool(info.get('broken'))
             if VERBOSE:
                 print(f"  {self.kind} p{me} turn {info.get('turn')}: {info.get('seconds')} s, lane {k_}, "
-                      f"threat {info.get('threat_loss')}, repairs {len(info.get('repairs', []))}, {info.get('times', '')}", flush=True)
+                      f"threat {info.get('threat_loss')}, repairs {len(info.get('repairs', []))}, "
+                      f"commands {len(played)}, replans {info.get('n_replans', '-')}, sieged {info.get('sieged', '-')}, "
+                      f"responses {[r.get('kind') for r in info.get('responses', [])] if 'responses' in info else '-'}", flush=True)
         elif self.kind == 'crazyplus':
             from crazyplus import sim
             n = 0
@@ -135,16 +142,23 @@ def worker(args, jobs, port, out_q, device=None):
     todo = list(jobs)
     while todo:
         with polyenv.launch(port) as env:  # a game process that dies is started again for the next game
-            def planner(net, scorer):
-                p = plan_agent.Planner(env, net, scorer, dev, args.plans, args.samples, args.temperature)
+            def planner(net, scorer, samples=None, model=None, scorers=None):
+                p = plan_agent.Planner(env, net, scorer, dev, args.plans, samples or args.samples, args.temperature,
+                                       model_path=model, scorers=scorers)
                 if not args.graphs:  # no CUDA graphs: less GPU memory per process (the same numbers, a little slower)
-                    for f in (p.net, p.model, p.scorer):
+                    for f in [p.net, p.model, p.scorer] + p.scorers:
                         f.graphs = False
                 return p
             b_nets = (args.b_net or args.net, args.b_scorer or args.scorer)
-            own_b = b_nets != (args.net, args.scorer) and args.b in ('v1', 'v2')
-            base = planner(args.net, args.scorer) if args.a in ('v1', 'v2') or (args.b in ('v1', 'v2') and not own_b) else None
-            base_b = planner(*b_nets) if own_b else base
+            own_b = False
+            if args.a == 'v3':  # side A, planner v3, with its own samples, reply model and critic ensemble
+                base = planner(args.net, args.scorer, args.a_samples, args.a_model,
+                               args.a_scorers.split(',') if args.a_scorers else None)
+                base_b = planner(*b_nets) if args.b in ('v1', 'v2') else None
+            else:
+                own_b = b_nets != (args.net, args.scorer) and args.b in ('v1', 'v2')
+                base = planner(args.net, args.scorer) if args.a in ('v1', 'v2') or (args.b in ('v1', 'v2') and not own_b) else None
+                base_b = planner(*b_nets) if own_b else base
             if own_b and port == args.port:
                 print(f'side B plans with its own networks: {b_nets[0]}, critic {b_nets[1]}', flush=True)
             while todo:
@@ -191,6 +205,9 @@ def main():
     ap.add_argument('--scorer', required=True)
     ap.add_argument('--b_net', default=None, help="side B's policy and reply model, if not --net")
     ap.add_argument('--b_scorer', default=None, help="side B's critic, if not --scorer")
+    ap.add_argument('--a_samples', type=int, default=None, help='side A v3: fog-safe samples (default --samples)')
+    ap.add_argument('--a_model', default=None, help="side A v3: the reply model's checkpoint (default --net)")
+    ap.add_argument('--a_scorers', default=None, help='side A v3: more critics, comma-separated, averaged with --scorer')
     ap.add_argument('--plans', type=int, default=16)
     ap.add_argument('--samples', type=int, default=2)
     ap.add_argument('--temperature', type=float, default=0.5)

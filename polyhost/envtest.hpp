@@ -363,7 +363,7 @@ inline int fogTest(int games, uint64_t seed, int every) {
 struct DeterStats {
     int checks = 0, obsMismatch = 0, notIdempotent = 0, perturbed = 0, leaks = 0, withHiddenCities = 0, cityLeaks = 0;
     int playouts = 0, playoutFailures = 0, historyChecks = 0, historyMismatch = 0;
-    long hiddenUnits = 0, fogUnits = 0, fogTiles = 0, keptCities = 0, techs = 0, trueTechs = 0, wrongTechs = 0, stars = 0, trueStars = 0;
+    long hiddenUnits = 0, fogUnits = 0, fogTiles = 0, keptCities = 0, movedCities = 0, techs = 0, trueTechs = 0, wrongTechs = 0, stars = 0, trueStars = 0;
 };
 
 inline bool sameObs(env::Match& a, env::Match& b, uint8_t viewer, std::string* where = nullptr) {
@@ -428,6 +428,7 @@ inline void checkDeter(env::Api& api, env::Determinizer& det, env::Match& m, Det
     st.fogUnits += rep.fogUnits;
     st.fogTiles += rep.fogTiles;
     st.keptCities += rep.keptCities;
+    st.movedCities += rep.movedCities;
     st.techs += rep.techs;
     st.trueTechs += rep.trueTechs;
     st.wrongTechs += rep.wrongTechs;
@@ -454,7 +455,7 @@ inline void checkDeter(env::Api& api, env::Determinizer& det, env::Match& m, Det
         if (d2.save() != s1 && st.leaks++ < 5) std::printf("  LEAK (turn %u):\n   %s\n", m.turn(), firstDiff(d1.state(), d2.state()).c_str());
     }
     // 4. The known leak: owned cities in the fog are kept, so changing them shows.
-    if (rep.keptCities) {
+    if (rep.keptCities || rep.movedCities) {  // (moved cities keep their true level: a leak still)
         ++st.withHiddenCities;
         env::Match c(api), d3(api);
         c.load(m.spec, m.save());
@@ -473,7 +474,7 @@ inline void checkDeter(env::Api& api, env::Determinizer& det, env::Match& m, Det
         std::string err;
         if (!(unbox<bool>(call(api.g.tryTrigger, nullptr, {d1.state(), &trig})) && trig) &&
             !tryCall(api.g.getMove, nullptr, {d1.state(), d1.player(cur), &none}, &cmd, &err)) {
-            if (st.playoutFailures++ < 5) std::printf("  AI FAILED ON THE SAMPLE (turn %u, player %d): %.900s\n", d1.turn(), cur, err.c_str());
+            if (st.playoutFailures++ < 5) std::printf("  AI FAILED ON THE SAMPLE (turn %u, player %d, viewer %d, moved %d, kept %d): %.900s\n", d1.turn(), cur, viewer, rep.movedCities, rep.keptCities, err.c_str());
             break;
         }
         int bot = d1.botChoice();
@@ -558,8 +559,8 @@ inline int deterTest(int games, uint64_t seed, int every) {
     }
     double n = std::max(st.checks, 1);
     std::printf("\ndeterminize: %d states; per state %.1f invisible units, %.1f units in the fog removed, %.1f fog tiles "
-                "resampled, %.2f enemy cities in the fog kept\n", st.checks, st.hiddenUnits / n, st.fogUnits / n, st.fogTiles / n,
-                st.keptCities / n);
+                "resampled, %.2f hidden enemy cities moved, %.2f kept (no free site)\n", st.checks, st.hiddenUnits / n, st.fogUnits / n,
+                st.fogTiles / n, st.movedCities / n, st.keptCities / n);
     std::printf("opponent techs: %.1f inferred vs %.1f true, %ld inferred but not held (must be 0); stars: %.1f set vs %.1f true\n",
                 st.techs / n, st.trueTechs / n, st.wrongTechs, st.stars / n, st.trueStars / n);
     std::printf("checks: %d observation changes (must be 0), %d not idempotent (must be 0), %d leaks of %d perturbed (must be 0), "

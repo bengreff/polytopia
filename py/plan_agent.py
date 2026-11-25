@@ -33,16 +33,20 @@ END_TURN = {v: k for k, v in polyenv.COMMAND_TYPES.items()}['EndTurn']
 
 class Planner:
     def __init__(self, env, net_path, scorer_path, device, plans=16, samples=2, temperature=0.5, model_path=None, seed=None,
-                 tactical=None):
+                 tactical=None, scorers=None):
         """tactical: None plans as v1 (the default, unchanged); a dict (possibly empty) plans with planner
         v2's tactics (py/tactics/planner2.py: tactical lanes, the opponent's tactical reply, defensive
-        repairs), the dict overriding planner2.DEFAULTS."""
+        repairs), the dict overriding planner2.DEFAULTS; with version 3 in it, planner v3
+        (py/tactics/planner3.py), the rest overriding planner3.DEFAULTS. scorers: more critics, averaged
+        with scorer_path's (v3)."""
         self.tactical = tactical
         self.env, self.device = env, device
         self.K, self.D, self.temperature = plans, samples, temperature
         self.net = fast_infer.FastPolicy(load_net(net_path, device), device, bf16=False)
         self.model = self.net if not model_path else fast_infer.FastPolicy(load_net(model_path, device), device, bf16=False)
         self.scorer = self.net if not scorer_path else fast_infer.FastPolicy(load_net(scorer_path, device), device, bf16=False)
+        # planner v3's critic ensemble: the scorer plus these critics, averaged (py/tactics/planner3.py)
+        self.scorers = [self.scorer] + [fast_infer.FastPolicy(load_net(c, device), device, bf16=False) for c in (scorers or [])]
         self.rng = np.random.default_rng(seed)
 
     def infer(self, net, slots, sts, obs):
@@ -61,6 +65,9 @@ class Planner:
     def plan_turn(self, spec, blob):
         """Loads the real game (blob) and plans the current player's turn. Returns (the commands to play,
         as (type, a, b, arg) rows, End Turn included; a dict about the search)."""
+        if self.tactical is not None and self.tactical.get('version') == 3:
+            from tactics import planner3
+            return planner3.plan_turn(self, spec, blob, {k: v for k, v in self.tactical.items() if k != 'version'})
         if self.tactical is not None:
             from tactics import planner2
             return planner2.plan_turn(self, spec, blob, self.tactical)

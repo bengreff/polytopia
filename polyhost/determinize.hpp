@@ -14,8 +14,9 @@
 //   improvements (villages, ruins, ...) from a map generated with the same settings and tribes and
 //   the sample's seed, with roads, routes and effects cleared. Hidden tiles in enemy territory keep
 //   their owner (the territory is consistent with the city) but lose their improvements;
-// - KNOWN LEAK (v1): enemy cities on unexplored tiles are kept where they are, with their level,
-//   since the game needs a living player's cities; their positions are therefore not resampled;
+// - enemy cities the viewer can't locate (the city and all its territory unexplored) move to a city
+//   site of the sample's map (relocateHiddenCities; until 2026-11-24 they were kept in place, a leak).
+//   Their number and levels still come from the truth;
 // - the opponent's techs are what the viewer can infer: its tribe's starting techs, every tech that
 //   unlocks a unit type of theirs or an improvement they built (ImprovementState.founder) that the
 //   viewer sees, and those techs' prerequisites (units they may have without the tech don't count:
@@ -54,11 +55,13 @@ struct Determinizer {
     size_t unitIdx = off(unitData, "idx"), impIdx = off(impData, "idx"), tribeStartTech = off(tribeData, "startingTech");
     size_t iFounder = off(api.improvement, "founder"), tribeStartUnit = off(tribeData, "startingUnit");
     size_t uBirthClimate = off(api.unit, "birthClimate"), pClimate = off(g.player, "_climate");
+    size_t pStartTile = off(g.player, "startTile");
     const Method* tryTribe = methodWith(gld, "TryGetData", 2, "TribeData");
     const Method* allTech = methodWith(gld, "GetAllTechForTribe", 1, "TribeData");
     const Method* setCurrency = method(g.player, "set_Currency", 1);
     int idOffset = -1;  // CurrentUnitId minus the highest unit id in a new game (found once)
     static constexpr int kCity = 1;  // ImprovementData.Type.City (villages are cities on unowned tiles)
+    static constexpr int kField = 3, kForest = 5;  // TerrainData.Type
     // The opponent's banked stars in a sample: the human championship games' mean at End Turn, turns
     // 3-20 (docs/strategy Part 0). Its income still arrives at the start of its turn.
     static constexpr int kBankedStars = 3;
@@ -69,7 +72,8 @@ struct Determinizer {
         int hiddenUnits = 0;  // removed: invisible enemy units on explored tiles
         int fogUnits = 0;     // removed: units on unexplored tiles
         int fogTiles = 0;     // unexplored tiles resampled
-        int keptCities = 0;   // enemy cities on unexplored tiles (the known leak)
+        int keptCities = 0;   // hidden enemy cities left in place: no free site in the sample (the leak, now rare)
+        int movedCities = 0;  // hidden enemy cities moved to a site of the sample's map (relocateHiddenCities)
         int techs = 0, trueTechs = 0, wrongTechs = 0, stars = 0, trueStars = 0;  // wrongTechs: inferred but not held
     };
 
@@ -161,6 +165,184 @@ struct Determinizer {
         return top;
     }
 
+    // Hidden enemy cities (planner v3, 2026-11-24; v1 kept them in place: the known leak). An enemy city
+    // whose tile and every tile of its territory `viewer` has never explored moves to a city site of the
+    // sample's map: its owner's capital site there for a capital, else a village site, else any field or
+    // forest tile, on land that nobody owns once the hidden cities are lifted, with no city within 1 tile. Its territory
+    // there is every unexplored, unowned tile within its border size. Visible units whose home it was
+    // follow it. A city with an explored territory tile stays: the viewer sees that tile's ruling-city
+    // coordinates, so it knows where the city is. Still taken from the truth: how many hidden cities
+    // there are, and their levels. A hidden city with no free site stays (rep.keptCities).
+    void relocateHiddenCities(Match& dst, const std::vector<Object*>& ftiles, uint8_t viewer, uint64_t seed, Report& rep) {
+        const int W = dst.width, H = dst.height, N = W * H;
+        std::vector<Object*> ts(N, nullptr);
+        for (Object* t : dst.tiles()) {
+            int i = dst.index(at<Coord>(t, api.tCoords));
+            if (i >= 0) ts[i] = t;
+        }
+        struct City { int i; uint8_t owner; bool capital; int border; std::vector<int> terr; bool known; Object* imp; };
+        std::vector<City> cs;
+        std::map<int, int> where;  // city tile index -> position in cs
+        for (int i = 0; i < N; ++i) {
+            Object* t = ts[i];
+            Object* imp = t ? at<Object*>(t, api.tImprovement) : nullptr;
+            uint8_t o = t ? at<uint8_t>(t, api.tOwner) : 0;
+            if (!imp || at<int32_t>(imp, api.iType) != kCity || o == 0 || o == viewer) continue;
+            where[i] = int(cs.size());
+            cs.push_back({i, o, at<uint8_t>(t, api.tCapitalOf) == o, std::max(1, int(at<uint16_t>(imp, api.iBorder))), {}, dst.exploredBy(t, viewer), imp});
+        }
+        for (int i = 0; i < N; ++i) {
+            if (!ts[i]) continue;
+            int r = dst.index(at<Coord>(ts[i], api.tRuling));
+            auto it = r >= 0 ? where.find(r) : where.end();
+            if (it == where.end()) continue;
+            City& c = cs[it->second];
+            if (at<uint8_t>(ts[i], api.tOwner) != c.owner) continue;
+            if (i != c.i) c.terr.push_back(i);
+            if (dst.exploredBy(ts[i], viewer)) c.known = true;
+        }
+        std::vector<int> hidden;
+        for (int k = 0; k < int(cs.size()); ++k)
+            if (!cs[k].known) hidden.push_back(k);
+        if (hidden.empty()) return;
+        struct Orig { int32_t terrain, climate; Object* resource; };
+        std::map<int, Orig> orig;  // the city tile as it was, for a city that stays
+        for (int k : hidden) {
+            Object* t = ts[cs[k].i];
+            orig[cs[k].i] = {at<int32_t>(t, api.tTerrain), at<int32_t>(t, api.tClimate), at<Object*>(t, api.tResource)};
+        }
+        const bool keepAll = std::getenv("DETER_KEEP_ALL") != nullptr;  // (debugging: lift every hidden city and put it back)
+        if (std::getenv("DETER_V1")) {  // (debugging: v1, every hidden city left untouched; counted as kept)
+            rep.keptCities += int(hidden.size());
+            return;
+        }
+        // Placement order from what isn't position: capitals first, then by level, high first.
+        std::stable_sort(hidden.begin(), hidden.end(), [&](int a, int b) {
+            if (cs[a].capital != cs[b].capital) return cs[a].capital;
+            return at<uint16_t>(cs[a].imp, api.iLevel) > at<uint16_t>(cs[b].imp, api.iLevel);
+        });
+        // Lift them: their tiles become unowned sample land (unexplored tiles already have the sample's terrain).
+        std::vector<char> taken(N, 0);  // owned by someone after the lift, or claimed by a placed city
+        std::vector<char> cityAt(N, 0);
+        for (int i = 0; i < N; ++i)
+            if (ts[i]) {
+                taken[i] = at<uint8_t>(ts[i], api.tOwner) != 0;
+                Object* imp = at<Object*>(ts[i], api.tImprovement);
+                cityAt[i] = imp && at<int32_t>(imp, api.iType) == kCity;
+            }
+        for (int k : hidden) {
+            const City& c = cs[k];
+            for (int i : c.terr) {
+                put<uint8_t>(ts[i], api.tOwner, 0);
+                put<uint8_t>(ts[i], api.tCapitalOf, 0);
+                put<Coord>(ts[i], api.tRuling, at<Coord>(ftiles[i], api.tRuling));
+                taken[i] = 0;
+            }
+            Object* t = ts[c.i];
+            Object* ft = ftiles[c.i];
+            Object* fimp = at<Object*>(ft, api.tImprovement);
+            bool unowned = fimp && at<uint8_t>(ft, api.tOwner) == 0;
+            field_set_value(t, fImprovement, unowned ? fimp : nullptr);
+            put<int32_t>(t, api.tTerrain, at<int32_t>(ft, api.tTerrain));
+            put<int32_t>(t, api.tClimate, at<int32_t>(ft, api.tClimate));
+            field_set_value(t, fResource, at<Object*>(ft, api.tResource));
+            clearList(at<Object*>(t, api.tEffects));
+            put<bool>(t, tHasRoad, false);
+            put<bool>(t, api.tRoute, false);
+            put<bool>(t, tHadRoute, false);
+            put<uint8_t>(t, api.tOwner, 0);
+            put<uint8_t>(t, api.tCapitalOf, 0);
+            put<Coord>(t, api.tRuling, at<Coord>(ftiles[c.i], api.tRuling));
+            taken[c.i] = 0;
+            cityAt[c.i] = 0;
+        }
+        auto cheb = [&](int a, int b) { return std::max(std::abs(a % W - b % W), std::abs(a / W - b / W)); };
+        // A site is free if nobody owns it, no city is within 1 tile, and every tile within the city's
+        // border is unexplored (a tile the viewer saw unowned can't be next to a city).
+        auto freeSite = [&](int i, int border) {
+            if (!ts[i] || taken[i]) return false;
+            for (int j = 0; j < N; ++j) {
+                int d = cheb(i, j);
+                if (cityAt[j] && d <= 1 && j != i) return false;  // (the sample's own village on the site is replaced)
+                if (d <= border && ts[j] && dst.exploredBy(ts[j], viewer)) return false;
+            }
+            return true;
+        };
+        // The sample map's sites: [capital of player p] and village sites (cities on unowned tiles).
+        std::map<uint8_t, int> capSite;
+        std::vector<int> villages;
+        for (int i = 0; i < N; ++i) {
+            Object* fimp = ftiles[i] ? at<Object*>(ftiles[i], api.tImprovement) : nullptr;
+            if (!fimp || at<int32_t>(fimp, api.iType) != kCity) continue;
+            uint8_t cap = at<uint8_t>(ftiles[i], api.tCapitalOf);
+            if (cap) capSite[cap] = i;
+            else villages.push_back(i);
+        }
+        std::mt19937_64 rng(seed ^ 0xc17e5u);
+        std::shuffle(villages.begin(), villages.end(), rng);
+        // Then any field or forest tile without an improvement (cities stand on those), in random order.
+        std::vector<int> land;
+        for (int i = 0; i < N; ++i)
+            if (ts[i] && !at<Object*>(ts[i], api.tImprovement)) {
+                int tr = at<int32_t>(ts[i], api.tTerrain);
+                if (tr == kField || tr == kForest) land.push_back(i);
+            }
+        std::shuffle(land.begin(), land.end(), rng);
+        std::vector<Coord> fromC, toC;
+        for (int k : hidden) {
+            const City& c = cs[k];
+            int site = -1;
+            auto cap = capSite.find(c.owner);
+            if (!keepAll && c.capital && cap != capSite.end() && freeSite(cap->second, c.border)) site = cap->second;
+            for (size_t v = 0; !keepAll && site < 0 && v < villages.size(); ++v)
+                if (freeSite(villages[v], c.border)) site = villages[v];
+            for (size_t v = 0; !keepAll && site < 0 && v < land.size(); ++v)
+                if (freeSite(land[v], c.border)) site = land[v];
+            if (site < 0) {  // no free site: put it back where it was, as it was
+                site = c.i;
+                ++rep.keptCities;
+                const Orig& og = orig[c.i];
+                put<int32_t>(ts[site], api.tTerrain, og.terrain);
+                put<int32_t>(ts[site], api.tClimate, og.climate);
+            } else {
+                ++rep.movedCities;
+            }
+            Object* t = ts[site];
+            field_set_value(t, fImprovement, c.imp);
+            field_set_value(t, fResource, nullptr);
+            Coord sc = at<Coord>(t, api.tCoords);
+            put<uint8_t>(t, api.tOwner, c.owner);
+            put<uint8_t>(t, api.tCapitalOf, c.capital ? c.owner : 0);
+            put<Coord>(t, api.tRuling, sc);
+            if (c.capital) put<Coord>(dst.player(c.owner), pStartTile, sc);  // the game finds a capital from it
+            taken[site] = 1;
+            cityAt[site] = 1;
+            for (int i = 0; i < N; ++i)
+                if (i != site && cheb(i, site) <= c.border && ts[i] && !taken[i] && !cityAt[i] && !dst.exploredBy(ts[i], viewer)) {
+                    put<uint8_t>(ts[i], api.tOwner, c.owner);
+                    put<Coord>(ts[i], api.tRuling, sc);
+                    taken[i] = 1;
+                }
+            if (std::getenv("DETER_CITY_DEBUG"))
+                std::printf("    hidden city of %d%s, level %d, border %d, territory %zu: (%d,%d) -> (%d,%d)%s\n", c.owner,
+                            c.capital ? " (capital)" : "", int(at<uint16_t>(c.imp, api.iLevel)), c.border, c.terr.size(), c.i % W, c.i / W,
+                            site % W, site / W, site == c.i ? " kept" : "");
+            fromC.push_back(at<Coord>(ts[c.i], api.tCoords));
+            toC.push_back(sc);
+        }
+        // Visible units whose home was a moved city.
+        for (Object* t : ts)
+            for (Object* u = t ? at<Object*>(t, api.tUnit) : nullptr; u; u = at<Object*>(u, api.uPassenger)) {
+                if (at<uint8_t>(u, api.uOwner) == viewer) continue;
+                Coord h = at<Coord>(u, api.uHome);
+                for (size_t j = 0; j < fromC.size(); ++j)
+                    if (h.x == fromC[j].x && h.y == fromC[j].y) {
+                        put<Coord>(u, api.uHome, toC[j]);
+                        break;
+                    }
+            }
+    }
+
     // dst becomes the determinized copy of src for `viewer` (a player id), with the hidden part drawn
     // from `seed`.
     Report build(Match& src, Match& dst, uint8_t viewer, uint64_t seed) {
@@ -210,10 +392,7 @@ struct Determinizer {
             }
             uint8_t owner = at<uint8_t>(t, api.tOwner);
             bool enemyCity = imp && at<int32_t>(imp, api.iType) == kCity && owner != 0 && owner != viewer;
-            if (enemyCity) {  // the known leak: kept as it is
-                ++rep.keptCities;
-                continue;
-            }
+            if (enemyCity) continue;  // relocateHiddenCities, below, moves it if its whole territory is unexplored
             ++rep.fogTiles;
             put<int32_t>(t, api.tTerrain, at<int32_t>(ft, api.tTerrain));
             put<int32_t>(t, api.tClimate, at<int32_t>(ft, api.tClimate));
@@ -231,6 +410,8 @@ struct Determinizer {
                 put<Coord>(t, api.tRuling, at<Coord>(ft, api.tRuling));
             }
         }
+
+        relocateHiddenCities(dst, ftiles, viewer, seed, rep);
 
         // Enemy units: what the client doesn't show about them.
         for (Object* t : dst.tiles())

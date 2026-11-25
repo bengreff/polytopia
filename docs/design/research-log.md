@@ -2641,3 +2641,47 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
 - **Mac speeds** (M2 Pro, 10 cores, MPS; other projects loading the Mac, load average 5–8): gen 107's network
   8.7 ms for one position, 21.3 ms for 16, 58.4 ms for 64 (1,095 positions/s); CPU 11.8 / 90.0 / 267.9 ms. Engine
   (`polyhost-mac`, one process, random play to turn 14): 1,468 decisions/s; save 0.14 ms, 9 kB per state.
+
+## Planner v3 (pre-registered 2026-11-24, 22:15, before the gate)
+- **Ben's decisions** (10 questions, 2026-11-24): the PC ("Crossword bench is paused. Use PC."), the full gate by
+  morning, judgement-heavy building while Ben is around and heavy tests overnight, solo (no subagents); about 1 s per
+  action as an average ("5s on some is fine"); hidden cities re-sampled; the reply model: try both R7 and gen 107
+  (Ben: "Since our human dataset is somewhat limited I am skeptical"); threat response ("Is an enemy knight in a
+  position where it could do some damage next turn? If so, defend or attack it... if a city is under siege the
+  planner should try to figure out a way to stop that: giant popping, killing that unit"); screen both reply models,
+  then gate the better one; gen 107 + a critic ensemble. Ben on strategy: tribe scripts are fine, city walls are a bad
+  choice, naval play is good, "a solid front line is essential".
+- **What v3 is** (`py/tactics/planner3.py`, a subclass of v2; `plan_agent.Planner(tactical={'version': 3}, scorers=...)`):
+  1. **Fog fix in the engine** (`polyhost/determinize.hpp`, `relocateHiddenCities`): an enemy city whose tile and whole
+     territory the planning seat never explored moves to a site of the sample's own map (the owner's capital site for a
+     capital, else a village site, else any field or forest tile), on unexplored land nobody owns, no city within 1
+     tile, every tile within its border unexplored; its territory is rebuilt there and visible units homed to it follow.
+     A city with any explored territory tile stays (the viewer sees that tile's ruling-city coordinates). Still from the
+     truth: the number of hidden cities and their levels. Engine builds: `build/polyhost-mac-v3`, PC
+     `~/polylinux/polyhost-v3`.
+  2. A critic ensemble: the mean of `critic_g107` (s11x) and the critics of gens 104, 105, 106 (s11x), 108, 109 (s12).
+  3. 4 fog-safe samples (v2: 2).
+  4. Threat response: when the opponent's best tactical reply to one of the 4 best lanes takes material (≥ 1 star), or an
+     enemy unit stands on one of our cities, kill lanes (the tactical search with +4 stars per such unit killed: the
+     reply's attackers, the besiegers; 2 lanes) and a giant lane (the top-move plan taking the SuperUnit reward whenever
+     offered), scored like every lane. v2's repairs on 3 lanes (v2: 2), threat check on 8 lanes (v2: 6).
+  5. Re-planning: the chosen lane is played command by command; when a command shows new tiles or enemy units and ≥ 2
+     planned commands remain, the rest of the turn is planned again (8 network lanes plus the old plan's remainder), at
+     most 3 times a turn. Played commands are never taken back.
+- **Checks done (measured):**
+  - `polyhost detertest 8 11 20` (Mac, 428 states): 0 observation changes, 0 not idempotent, 0 leaks of 428 perturbed,
+    0.45 hidden enemy cities moved per state and 0 left in place (the same games with v1's behaviour: 0.45 left in place).
+    3 playout failures (the game's AI throws NullReferenceException on 3 samples of one game), the same 3 with v1's
+    behaviour (`DETER_V1=1`): a rare pre-existing failure of the built-in AI on samples, which the planners never run.
+    The PC build: 118 states, 0.41 moved, 0 kept, 0 leaks.
+  - Mac smoke games (v3 vs v2, 22 turns, loaded Mac): kill lanes on most threatened turns, a giant lane, 0–2 re-plans a
+    turn; v3 turn medians 5.7–7.6 s at 10–31 commands a turn, about 0.4–0.7 s per action; the slowest turn 33.9 s for
+    24 commands (1.4 s per action).
+- **Protocol** (PC, `tactics.match`, side B = planner v2 as Ben plays it: gen 107, `critic_g107`, 16 plans × 2 samples;
+  both sides on the same fixed engine, so the gate measures v3's search, not the fog fix):
+  - screens: v3 with gen 107's reply and v3 with R7's reply, each vs v2 on seeds 44,000,000–049, both seats: 100 games
+    each; the better rate gets the gate (a tie: gen 107's reply);
+  - **the gate:** seeds 44,100,000–299, both seats, 400 games;
+  - then no-collapse checks, 100 games each: vs raw gen 0 (R7) and vs CrazyPlus.
+- **Expected (guessed):** the gate 60–70%. **Falsified** below 55%. Bar for Ben's games: ≥ 55% with the lower bound of
+  the 95% interval ≥ 50%, and no collapse (≥ 90% vs gen 0, ≥ 95% vs CrazyPlus).
