@@ -2615,3 +2615,29 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     relaunch to the tray). Roblox Studio and Minecraft are left alone. First run: closed Roblox after 16
     and 17 min idle (measured).
   - Gen 110 stalled once more at 00:47 with GPU memory at 15.4 GB.
+
+## Checkpoint 1 (2026-11-24): training stopped; compute, versatility and Mac speeds
+- **Stopped** 2026-11-21 20:31 by the CrosswordBench session at Ben's request (TRACKS_STOP, then tracks.sh, sp_loop
+  and self-play by pid; gen 111 has 148 games). Ben, 2026-11-24: "Ok, no more training. What we have right now is
+  checkpoint 1." Plans: [checkpoint-1.md](checkpoint-1.md).
+- **Compute (measured, lower bound):** 461 hours from 2026-10-21 to 11-21 in which a run wrote a file under `~/runs`
+  on the PC; 865 run-hours (1.9 jobs at a time, derived). ~937k files at ~500–630 decisions per game file (measured on
+  S3 gen 1 and S12 gen 108): roughly 0.5 billion decisions (derived).
+- **Best checkpoint:** `s11x` gen 107 (+ planner v2, `critic_g107`). S12 gens 108–110 vs it: 100/200, 105/200,
+  94/200 = 49.8% pooled; gen 110 vs gen 109 45.5%. `e12` vs its target 51.0%, 49.5%, 51.0%: no exploit found.
+- **hp1d** (above): 45.5% vs R7.
+- **Versatility** (`py/versatility.py`, `py/versatility_records.py`, `py/versatility_report.py`; the 18 detectors of
+  `py/strategy_positions.py` unchanged; self-play games with both seats the same network, from turn 0; games of
+  ≥ 20 turns, episodes started by turn 20; 2,500 sampled human games → 1,186 player-games; gen 0 = S3 gen 1's
+  games, 2,150; gen 107 = S12 gen 108's training games, 694; gen 110 = 58, too few):
+  - effective number of kinds: humans 14.5, gen 0 12.1, gen 107 10.7; within a tribe 13.0, 10.5, 8.9;
+  - tribe dependence (mutual information minus a shuffled-tribe baseline): 0.20, 0.45, 0.42 bits;
+  - naval play by explored water at turn 8 (human terciles, cuts 0.203 and 0.261): humans 21/34/46%, gen 0
+    31/43/51%, gen 107 35/43/54%;
+  - gen 107 vs humans: city wall 0.0% vs 10.5%, defensive line 3.3% vs 10.5%, cloak 0.3% vs 4.5%, rider rush 3.0% vs
+    12.6%, catapult siege 32.3% vs 9.6%, naval landing 34.7% vs 17.0%, giant push 33.6% vs 28.8%.
+  - Before length matching (all games): gen 107's indicators drift too: at gen 110 win turn 38.7 (gen 107: 26.6),
+    boat upgrades 18.4 per player-game (7.5), units trained 89.6 (47.9).
+- **Mac speeds** (M2 Pro, 10 cores, MPS; other projects loading the Mac, load average 5–8): gen 107's network
+  8.7 ms for one position, 21.3 ms for 16, 58.4 ms for 64 (1,095 positions/s); CPU 11.8 / 90.0 / 267.9 ms. Engine
+  (`polyhost-mac`, one process, random play to turn 14): 1,468 decisions/s; save 0.14 ms, 9 kB per state.

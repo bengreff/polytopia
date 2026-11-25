@@ -1,4 +1,4 @@
-# Handoff: Polytopia AI (2026-11-18 evening: S11 read done; S12 running, the planner on every turn)
+# Handoff: Polytopia AI (2026-11-24: training stopped at checkpoint 1; plans for the next generation written)
 
 Paste this file as the prompt for the next session. The design docs live in `docs/design/`:
 `README.md` (decision log), `iteration-plan.md` (the night-1 plan and its status log),
@@ -29,6 +29,20 @@ Paste this file as the prompt for the next session. The design docs live in `doc
     `tools/setup_pc_games.sh`). No Steam is needed. It's bit-identical to the Mac (`py/parity_hosts.py`)
     and ~22× slower per thread.
   - How to reach the PC (school Wi-Fi vs hotspot), launch jobs and share it: memory `backhouse-guide`.
+
+## Now (2026-11-24, 20:30): training stopped; checkpoint 1; plans written, nothing built
+
+- **Training is over for now** (Ben, 2026-11-24: "Ok, no more training. What we have right now is checkpoint 1").
+  The CrosswordBench session stopped it on 2026-11-21 at 20:31 at Ben's request (TRACKS_STOP, then tracks.sh,
+  sp_loop and self-play by pid). Gen 111 has 148 games and no learning. The PC's GPU belongs to CrosswordBench:
+  keep any PC work short and CPU-light, and copy files to the Mac for anything sustained. Don't resume without Ben.
+- **Checkpoint 1** (`docs/design/checkpoint-1.md`): best = `s11x` gen 107 + planner v2 + `critic_g107`, now also on
+  the Mac (`runs/sp/s11x/`; `s12` gens 109/110 and critics in `runs/sp/s12/`). About 461 GPU-hours, ~0.5B decisions.
+  Versatility vs humans measured (research log "Checkpoint 1"): repertoire about three quarters of the humans',
+  tribe-scripted, no city walls.
+- **Next (Ben):** test the current models (section 7 of checkpoint-1.md), then build Plan A (planner v3: fog fix,
+  per-action search, human reply model) and/or Plan B (M2). The planner's fog leak (hidden enemy cities kept in the
+  sampled worlds) is still unfixed.
 
 ## Now (2026-11-20, 09:00): S12 gen 109 at 1,499/1,500 games; games on the PC closed; hp1d fixed and restarted
 

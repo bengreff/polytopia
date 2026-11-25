@@ -17,6 +17,7 @@ the decision log below records what is settled.
 | [superhuman-plan.md](superhuman-plan.md) | v6 restrategy (2026-10-30): what holds the network back, the five pillars, and the S9 five-track experiment |
 | [strategy-starts.md](strategy-starts.md) | Strategy-tagged start positions (2026-11-18): 18 kinds of strategy detected in the human games, success rules, counts, and a balanced set of 11,490 start states on the PC |
 | [throughput.md](throughput.md) | Self-play speed with planner v2 in the loop (2026-11-18): where the time goes, the inference-loop change (1.11–1.19×, merged), lane dedup (not merged), how equivalence was checked |
+| [checkpoint-1.md](checkpoint-1.md) | Checkpoint 1 (2026-11-24, training stopped): compute, the best checkpoint (`s11x` gen 107 + planner v2), how versatile its play is vs humans, Plan A (planner v3, up to 1 s per action on the Mac) and Plan B (the next network and training method) |
 | [reviews/2026-10-20.md](reviews/2026-10-20.md) | Adversarial review findings, and what was done with each |
 
 ## Goals (Ben, 2026-10-20)
