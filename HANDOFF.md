@@ -35,7 +35,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - **Planner v3** (research log "Planner v3", pre-registered; `py/tactics/planner3.py`): the fog-fixed engine (hidden
   enemy cities moved to sample-map sites: `build/polyhost-mac-v3`, PC `~/polylinux/polyhost-v3`), a critic ensemble
   (gens 104-109), 4 samples, kill and giant lanes against threats and sieges, re-planning on reveals.
-- **Overnight run** (PC, `~/poly/v3`, driver `tools/v3_gate.sh` = `~/poly/v3/v3_gate.sh`, pid 16554, log
+- **Overnight run** (PC, `~/poly/v3`, driver `tools/v3_gate.sh` = `~/poly/v3/v3_gate.sh`, pid 17060, log
   `~/runs/v3/driver.log`): two 100-game screens (v3 with gen 107's reply / with R7's reply vs v2), then a 400-game gate
   for the better one, then 100 games each vs raw gen 0 and CrazyPlus. `~/runs/v3/DONE` when finished. Resumable: rerun the
   driver and finished games are skipped. Stop: kill the driver pid and the `tactics.match` pids (workers die with them).
