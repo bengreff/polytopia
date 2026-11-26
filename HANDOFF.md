@@ -38,6 +38,7 @@ Paste this file as the prompt for the next session. The design docs live in `doc
 - Stages: the two screens (resumed at 36 and 37 of 100 games), the 400-game gate for the better reply model, then
   100 games each vs raw gen 0 and CrazyPlus. Guards: workers fit the free GPU memory, one is stopped above 14.5 GB,
   a stage with no game for 3 h restarts (research log "Planner v3", run notes).
+- 21:47: match runner switched to one shared job queue (workers stopped by the guard no longer strand games).
 - Stop: `kill -- -20149` (whole process group). Resume: rerun the driver; finished games are skipped.
 - After a PC reboot nothing restarts it (PolytopiaTrainingStarter stays disabled: it would restart training).
 

@@ -125,6 +125,27 @@ class Side:
         return st
 
 
+class Jobs:
+    """The games still to play, one queue shared by all workers: a worker takes the next game when it is free, so a
+    worker that finishes early or is stopped (the gate driver's memory guard) leaves no games stranded."""
+
+    def __init__(self, q):
+        self.q, self.nxt = q, None
+
+    def __bool__(self):
+        if self.nxt is None:
+            try:
+                self.nxt = self.q.get(timeout=5)
+            except Exception:  # empty: every game has been taken
+                return False
+        return True
+
+    def pop(self, _=0):
+        self.__bool__()
+        j, self.nxt = self.nxt, None
+        return j
+
+
 def worker(args, jobs, port, out_q, device=None):
     if sys.platform.startswith('linux'):  # die with the main process (a stopped run leaves no workers)
         import ctypes
@@ -139,7 +160,7 @@ def worker(args, jobs, port, out_q, device=None):
         torch.set_num_threads(args.cpu_threads)
     a_opts = json.loads(args.a_opts) if args.a_opts else {}
     b_opts = json.loads(args.b_opts) if args.b_opts else {}
-    todo = list(jobs)
+    todo = list(jobs) if isinstance(jobs, list) else Jobs(jobs)
     while todo:
         with polyenv.launch(port) as env:  # a game process that dies is started again for the next game
             def planner(net, scorer, samples=None, model=None, scorers=None):
@@ -232,7 +253,10 @@ def main():
     ctx = mp.get_context('spawn')
     q = ctx.Queue()
     n = args.procs + args.cpu_procs  # --cpu_procs: more workers with CPU inference (the engine, not the GPU, limits a game)
-    ps = [ctx.Process(target=worker, args=(args, jobs[i::n], args.port + i, q, 'cpu' if i >= args.procs else None)) for i in range(n)]
+    jq = ctx.Queue()
+    for j in jobs:
+        jq.put(j)
+    ps = [ctx.Process(target=worker, args=(args, jq, args.port + i, q, 'cpu' if i >= args.procs else None)) for i in range(n)]
     for p in ps:
         p.start()
     results = []

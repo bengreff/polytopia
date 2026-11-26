@@ -2713,3 +2713,10 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
       and per command, lanes, and the verdicts against the bars.
     - A relaunch at 13:51 (driver 19633, 10 workers) went through although its tool call showed as rejected; it was
       stopped at 14:02 after 1 game because its script was replaced while it ran.
+  - **Status 2026-11-25 21:36 (measured):** 151 of 800 games (screens: gen 107 reply 48/86 = 55.8%, R7 reply 29/65 =
+    44.6%), about 10 games an hour since 14:03. Only 4 of the 11 workers were still playing: the memory guard had
+    stopped 4 (GPU memory passed 14.5 GB within 27 min of the launch) and 3 had finished their fixed share of games.
+    `match.py` gave each worker a fixed list (`jobs[i::n]`), so those games waited for the whole stage to end.
+    **Fix:** one shared job queue (`Jobs` in `py/tactics/match.py`): a free worker takes the next game, so a stopped
+    or early worker strands nothing (tested on the Mac: 6 CrazyPlus games on 2 workers, each recorded once). The two
+    screen matches were restarted on it at 21:47 (the driver retried them itself; the 4 games in progress were lost).
