@@ -2720,3 +2720,9 @@ policy_et, policy_types, policy_edit, expo, paired); `turn_search.py --b_scorer/
     **Fix:** one shared job queue (`Jobs` in `py/tactics/match.py`): a free worker takes the next game, so a stopped
     or early worker strands nothing (tested on the Mac: 6 CrazyPlus games on 2 workers, each recorded once). The two
     screen matches were restarted on it at 21:47 (the driver retried them itself; the 4 games in progress were lost).
+  - **Status 2026-11-27 18:54 (measured):** 569 of 800 games. Screens final: gen 107 reply 57/100, R7 reply 50/100, so
+    the gate uses gen 107's reply. Gate so far 192/369 = 52.0% (95% CI 46.9–57.1%); by seat 114/184 as player 1, 78/185
+    as player 2; seed pairs won both 33, split 122, lost both 25. The bar (>= 55% over 400) now needs 28 of the last 31,
+    so the gate will miss it and the 60–70% prediction is falsified (derived). About 8.6 gate games an hour (derived,
+    43 h for 369). GPU memory per worker keeps growing (11 workers at launch, 6 left after 5 guard stops; 14.0 GB for 6,
+    about 2.2 GB each vs 0.9 GB at the start): a planner memory leak or allocator growth, to fix before the next run.
